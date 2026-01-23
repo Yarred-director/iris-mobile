@@ -12,16 +12,35 @@ export default function ChatScreen() {
     { role: 'iris', text: 'Ahoj. Som Iris.' },
   ]);
 
-  const sendMessage = (text: string) => {
-    setMessages((prev) => [...prev, { role: 'user', text }]);
+ const sendMessage = async (text: string) => {
+  if (!text.trim()) return;
 
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { role: 'iris', text: `Počujem ťa: "${text}"` },
-      ]);
-    }, 600);
-  };
+  // pridaj user správu
+  setMessages((prev) => [...prev, { role: 'user', text }]);
+
+  try {
+    const response = await fetch('http://localhost:3001/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: text }),
+    });
+
+    const data = await response.json();
+
+    setMessages((prev) => [
+      ...prev,
+      { role: 'iris', text: data.reply },
+    ]);
+  } catch (error) {
+    setMessages((prev) => [
+      ...prev,
+      { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
+    ]);
+  }
+};
+
 
   return (
     <View style={styles.container}>
