@@ -1,7 +1,10 @@
+const MAX_HISTORY_LENGTH = 20; // 10 user + 10 iris správ
+let conversationHistory = [];
+
+
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
-import fs from 'fs';
 import yaml from 'js-yaml';
 import OpenAI from 'openai';
 
@@ -51,20 +54,22 @@ Output requirements:
 }
 
 let IRIS_SYSTEM_PROMPT = 'You are Iris.';
-
 try {
-  const raw = fs.readFileSync('./master_iris_core.yaml', 'utf8');
-  const parsed = yaml.load(raw);
+  if (process.env.IRIS_CORE_YAML) {
+    const parsed = yaml.load(process.env.IRIS_CORE_YAML);
+    const core = parsed?.IRIS_CORE;
 
-  const core = parsed?.IRIS_CORE;
-  if (!core) {
-    throw new Error('Missing IRIS_CORE root key in YAML');
+    if (!core) {
+      throw new Error('Missing IRIS_CORE root key');
+    }
+
+    IRIS_SYSTEM_PROMPT = buildIrisSystemPrompt(core);
+    console.log('🧠 IRIS_CORE loaded from ENV');
+  } else {
+    console.warn('⚠️ IRIS_CORE_YAML not set, using fallback prompt');
   }
-
-  IRIS_SYSTEM_PROMPT = buildIrisSystemPrompt(core);
-  console.log('🧠 IRIS_CORE loaded from YAML');
 } catch (e) {
-  console.error('❌ IRIS_CORE YAML load failed:', e.message);
+  console.error('❌ IRIS_CORE load failed:', e.message);
 }
 
 const app = express();
@@ -86,22 +91,31 @@ app.post('/chat', async (req, res) => {
       return res.status(400).json({ error: 'Missing message' });
     }
 
-   const response = await client.responses.create({
-  model: 'gpt-4.1', // 🔼 UPGRADE LLM
-  input: [
-    {
-      role: 'system',
-      content: IRIS_SYSTEM_PROMPT,
-    },
-    {
-      role: 'user',
-      content: message,
-    },
-  ],
-});
+    // ✅ 1️⃣ najprv uložiť USER do pamäte
+    conversationHistory.push({ role: 'user', content: message });
 
+    if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+      conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+    }
+
+    // ✅ 2️⃣ request už LEN s históriou
+    const response = await client.responses.create({
+      model: 'gpt-4.1',
+      input: [
+        { role: 'system', content: IRIS_SYSTEM_PROMPT },
+        ...conversationHistory,
+      ],
+    });
 
     const reply = response.output[0].content[0].text;
+
+    // ✅ 3️⃣ uložiť odpoveď Iris
+    conversationHistory.push({ role: 'assistant', content: reply });
+
+    if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+      conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+    }
+
     res.json({ reply });
 
   } catch (err) {
@@ -109,6 +123,7 @@ app.post('/chat', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Backend beží na http://localhost:${PORT}`);
