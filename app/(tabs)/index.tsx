@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import ChatInput from '../components/ChatInput';
+const API_URL =
+  process.env.EXPO_PUBLIC_API_URL ??
+  'https://iris-mobile.onrender.com/chat';
+
 
 type Message = {
   role: 'user' | 'iris';
@@ -19,13 +23,14 @@ export default function ChatScreen() {
   setMessages((prev) => [...prev, { role: 'user', text }]);
 
   try {
-    const response = await fetch('http://localhost:3001/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ message: text }),
-    });
+  const response = await fetch(API_URL, {
+
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ message: text }),
+  });
 
     const data = await response.json();
 
