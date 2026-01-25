@@ -1,10 +1,18 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import ChatInput from '../components/ChatInput';
+
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   'https://iris-mobile.onrender.com/chat';
-
 
 type Message = {
   role: 'user' | 'iris';
@@ -16,55 +24,71 @@ export default function ChatScreen() {
     { role: 'iris', text: 'Ahoj. Som Iris.' },
   ]);
 
- const sendMessage = async (text: string) => {
-  if (!text.trim()) return;
+  const sendMessage = async (text: string) => {
+    if (!text.trim()) return;
 
-  // pridaj user správu
-  setMessages((prev) => [...prev, { role: 'user', text }]);
+    setMessages((prev) => [...prev, { role: 'user', text }]);
 
-  try {
-  const response = await fetch(API_URL, {
+    try {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      });
 
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ message: text }),
-  });
+      const data = await response.json();
 
-    const data = await response.json();
-
-    setMessages((prev) => [
-      ...prev,
-      { role: 'iris', text: data.reply },
-    ]);
-  } catch (error) {
-    setMessages((prev) => [
-      ...prev,
-      { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
-    ]);
-  }
-};
-
+      setMessages((prev) => [...prev, { role: 'iris', text: data.reply }]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
+      ]);
+    }
+  };
 
   return (
-    <View style={styles.container}>
-      <ScrollView style={styles.messages}>
-        {messages.map((m, i) => (
-          <View
-            key={i}
-            style={[
-              styles.bubble,
-              m.role === 'user' ? styles.user : styles.iris,
-            ]}
-          >
-            <Text style={styles.text}>{m.text}</Text>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+    >
+      <View style={styles.container}>
+        {/* IRIS HEADER */}
+        <View style={styles.header}>
+          <View style={styles.avatarWrap}>
+            <Image
+              source={require('../../assets/images/iris/face-default.png')}
+              style={styles.avatar}
+            />
           </View>
-        ))}
-      </ScrollView>
 
-      <ChatInput onSend={sendMessage} />
-    </View>
+          <View>
+            <Text style={styles.headerName}>Iris</Text>
+            <Text style={styles.headerStatus}>with you</Text>
+          </View>
+        </View>
+
+        <ScrollView
+          style={styles.messages}
+          contentContainerStyle={{ paddingBottom: 16 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {messages.map((m, i) => (
+            <View
+              key={i}
+              style={[
+                styles.bubble,
+                m.role === 'user' ? styles.user : styles.iris,
+              ]}
+            >
+              <Text style={styles.text}>{m.text}</Text>
+            </View>
+          ))}
+        </ScrollView>
+
+        <ChatInput onSend={sendMessage} />
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -72,6 +96,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0b0b0f',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1f1f1f',
+    backgroundColor: '#0b0b0b',
+  },
+  avatarWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    overflow: 'hidden',
+    marginRight: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  avatar: {
+    width: '100%',
+    height: '100%',
+  },
+  headerName: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  headerStatus: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
   },
   messages: {
     flex: 1,
