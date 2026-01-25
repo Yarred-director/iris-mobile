@@ -8,6 +8,8 @@ import {
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
 import ChatInput from '../components/ChatInput';
 
 const API_URL =
@@ -48,12 +50,14 @@ export default function ChatScreen() {
   };
 
   return (
+  <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+      keyboardVerticalOffset={96}
     >
       <View style={styles.container}>
-        {/* IRIS HEADER */}
+        {/* HEADER */}
         <View style={styles.header}>
           <View style={styles.avatarWrap}>
             <Image
@@ -68,9 +72,10 @@ export default function ChatScreen() {
           </View>
         </View>
 
+        {/* MESSAGES */}
         <ScrollView
           style={styles.messages}
-          contentContainerStyle={{ paddingBottom: 16 }}
+          contentContainerStyle={{ paddingBottom: 140 }}
           keyboardShouldPersistTaps="handled"
         >
           {messages.map((m, i) => (
@@ -86,11 +91,16 @@ export default function ChatScreen() {
           ))}
         </ScrollView>
 
+        {/* INPUT */}
         <ChatInput onSend={sendMessage} />
       </View>
     </KeyboardAvoidingView>
-  );
+  </SafeAreaView>
+);
+
 }
+
+/* ================= STYLES ================= */
 
 const styles = StyleSheet.create({
   container: {
@@ -148,6 +158,6 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   text: {
-    color: '#fff',
+    color: '#ffffff',
   },
 });
