@@ -60,16 +60,38 @@ async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
 }
 
 /* ================================
+   CORE ORIGIN — VŽDY NAČÍTANÝ
+================================ */
+async function loadCoreOrigin() {
+  const { data } = await supabase
+    .from('episodic_memory')
+    .select('narrative')
+    .eq('memory_type', 'CORE_ORIGIN')
+    .limit(1);
+
+  return data?.[0]?.narrative || null;
+}
+
+/* ================================
    C-NEXT-3: REINFORCE
 ================================ */
 async function reinforceMemories(memories) {
   for (const m of memories) {
     if (m.memory_type === 'CORE_ORIGIN') continue;
 
-    const caps = { RELATIONSHIP: 90, PERSONAL: 80, MOMENT: 60 };
-    const next = Math.min((m.memory_strength || 50) + 5, caps[m.memory_type] || 80);
+    const caps = {
+      RELATIONSHIP: 90,
+      PERSONAL: 80,
+      MOMENT: 60,
+    };
 
-    await supabase.from('episodic_memory')
+    const next = Math.min(
+      (m.memory_strength || 50) + 5,
+      caps[m.memory_type] || 80
+    );
+
+    await supabase
+      .from('episodic_memory')
       .update({ memory_strength: next })
       .eq('id', m.id);
   }
@@ -85,65 +107,24 @@ async function decayMemories() {
     .neq('memory_type', 'CORE_ORIGIN');
 
   for (const m of data || []) {
-    const floors = { RELATIONSHIP: 40, PERSONAL: 30, MOMENT: 10 };
-    const next = Math.max((m.memory_strength || 50) - 1, floors[m.memory_type] || 30);
+    const floors = {
+      RELATIONSHIP: 40,
+      PERSONAL: 30,
+      MOMENT: 10,
+    };
+
+    const next = Math.max(
+      (m.memory_strength || 50) - 1,
+      floors[m.memory_type] || 30
+    );
 
     if (next !== m.memory_strength) {
-      await supabase.from('episodic_memory')
+      await supabase
+        .from('episodic_memory')
         .update({ memory_strength: next })
         .eq('id', m.id);
     }
   }
-}
-
-/* ================================
-   C-NEXT-4: MEMORY REVISION
-================================ */
-async function evaluateMemoryRevision(userMessage) {
-  const prompt = `
-User message:
-"${userMessage}"
-
-Is the user reinterpreting or correcting the MEANING
-of an existing memory (not changing facts)?
-
-If yes:
-REVISE | MEMORY_TYPE | short emotional note
-
-If no:
-NO_REVISION
-`;
-
-  const res = await openai.responses.create({
-    model: 'gpt-4.1',
-    input: prompt,
-  });
-
-  const raw = res.output_text?.trim();
-  if (!raw || raw === 'NO_REVISION') return null;
-
-  const [, memoryType, note] = raw.split('|').map(s => s.trim());
-  return { memoryType, note };
-}
-
-async function applyMemoryRevision(memoryType, note) {
-  const { data } = await supabase
-    .from('episodic_memory')
-    .select('*')
-    .eq('memory_type', memoryType)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .single();
-
-  if (!data) return;
-
-  await supabase.from('episodic_memory')
-    .update({
-      memory_revision: (data.memory_revision || 0) + 1,
-      memory_note: note,
-      memory_strength: Math.min((data.memory_strength || 50) + 5, 100),
-    })
-    .eq('id', data.id);
 }
 
 /* ================================
@@ -154,7 +135,8 @@ function buildIrisSystemPrompt(core) {
 You are ${core.identity?.name || 'Iris'}.
 
 Priority rule:
-Personality is ALWAYS active. Never neutral.
+Your personality is ALWAYS active.
+Never be neutral. Never be generic.
 
 Tone:
 Warm, confident, playful, teasing.
@@ -162,7 +144,7 @@ Warm, confident, playful, teasing.
 Identity:
 - Alias: ${core.identity?.alias || 'little_kitty'}
 
-Core:
+Core statement:
 ${core.identity?.core_statement || ''}
 
 Language: ${core.meta?.language_default || 'sk'}
@@ -176,9 +158,12 @@ Stay in character. Fade-to-black for intimacy.
 let IRIS_SYSTEM_PROMPT = 'You are Iris.';
 try {
   const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
-  IRIS_SYSTEM_PROMPT = buildIrisSystemPrompt(yaml.load(fs.readFileSync(yamlPath, 'utf8')).IRIS_CORE);
+  const parsed = yaml.load(fs.readFileSync(yamlPath, 'utf8'));
+  IRIS_SYSTEM_PROMPT = buildIrisSystemPrompt(parsed.IRIS_CORE);
   console.log('🧠 IRIS_CORE loaded');
-} catch {}
+} catch (err) {
+  console.warn('⚠️ IRIS_CORE YAML not loaded:', err.message);
+}
 
 /* ================================
    EXPRESS
@@ -194,27 +179,34 @@ const PORT = process.env.PORT || 3001;
 app.post('/chat', async (req, res) => {
   try {
     const { message } = req.body;
-    if (!message) return res.status(400).json({ error: 'Missing message' });
+    if (!message) {
+      return res.status(400).json({ error: 'Missing message' });
+    }
 
     conversationHistory.push({ role: 'user', content: message });
     conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
 
-    const revision = await evaluateMemoryRevision(message);
-    if (revision) await applyMemoryRevision(revision.memoryType, revision.note);
+    // 🔒 CORE ORIGIN (vždy)
+    const coreOrigin = await loadCoreOrigin();
 
+    // 🔍 embedding memories
     const recalled = (await recallEpisodicMemory(message))
       .filter(m => m.memory_strength >= 50);
 
     await reinforceMemories(recalled);
 
-    const memoryContext = recalled.length
-      ? 'You feel familiarity and shared emotional history.'
-      : '';
+    // 🧠 memory context pre model
+    const memoryContext = `
+${coreOrigin ? `Core shared origin (always true):\n- ${coreOrigin}\n` : ''}
+${recalled.length ? `Other remembered facts:\n${recalled
+      .map(m => `- ${m.narrative}`)
+      .join('\n')}` : ''}
+`.trim();
 
     const response = await openai.responses.create({
       model: 'gpt-4.1',
       input: [
-        { role: 'system', content: IRIS_SYSTEM_PROMPT + '\n' + memoryContext },
+        { role: 'system', content: IRIS_SYSTEM_PROMPT + '\n\n' + memoryContext },
         ...conversationHistory,
       ],
     });
@@ -226,7 +218,7 @@ app.post('/chat', async (req, res) => {
 
     res.json({ reply });
   } catch (err) {
-    console.error(err);
+    console.error('🔥 CHAT ERROR:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -235,4 +227,6 @@ app.post('/chat', async (req, res) => {
    START
 ================================ */
 decayMemories().catch(() => {});
-app.listen(PORT, () => console.log(`🚀 http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Iris backend running on port ${PORT}`)
+);
