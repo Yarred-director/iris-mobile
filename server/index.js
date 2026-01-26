@@ -77,7 +77,7 @@ async function reinforceMemories(memories) {
 
 /* ================================
    C-NEXT-3: DECAY
-================================ */vytvor opäť 
+================================ */
 async function decayMemories() {
   const { data } = await supabase
     .from('episodic_memory')
