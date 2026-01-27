@@ -22,7 +22,7 @@ let conversationHistory = [];
 ================================ */
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY // ⚠️ service role, nie anon
 );
 
 /* ================================
@@ -174,6 +174,28 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 /* ================================
+   🖼️ AVATAR ENDPOINT (NOVÉ)
+================================ */
+app.get('/api/avatar/current', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('avatars')
+      .select('image_url, variant')
+      .eq('is_active', true)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: 'No active avatar found' });
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error('🔥 AVATAR ERROR:', err);
+    res.status(500).json({ error: 'Avatar fetch failed' });
+  }
+});
+
+/* ================================
    CHAT
 ================================ */
 app.post('/chat', async (req, res) => {
@@ -186,16 +208,14 @@ app.post('/chat', async (req, res) => {
     conversationHistory.push({ role: 'user', content: message });
     conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
 
-    // 🔒 CORE ORIGIN (vždy)
     const coreOrigin = await loadCoreOrigin();
 
-    // 🔍 embedding memories
-    const recalled = (await recallEpisodicMemory(message))
-      .filter(m => m.memory_strength >= 50);
+    const recalled = (await recallEpisodicMemory(message)).filter(
+      m => m.memory_strength >= 50
+    );
 
     await reinforceMemories(recalled);
 
-    // 🧠 memory context pre model
     const memoryContext = `
 ${coreOrigin ? `Core shared origin (always true):\n- ${coreOrigin}\n` : ''}
 ${recalled.length ? `Other remembered facts:\n${recalled

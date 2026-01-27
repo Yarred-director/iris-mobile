@@ -16,6 +16,10 @@ const API_URL =
   process.env.EXPO_PUBLIC_API_URL ??
   'https://iris-mobile.onrender.com/chat';
 
+// 🔹 REMOTE AVATAR URL
+const IRIS_AVATAR_URL =
+  'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/avatars/iris-avatar-v1.png';
+
 type Message = {
   role: 'user' | 'iris';
   text: string;
@@ -50,54 +54,54 @@ export default function ChatScreen() {
   };
 
   return (
-  <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'android' ? 'height' : 'padding'}
-      keyboardVerticalOffset={96}
-    >
-      <View style={styles.container}>
-        {/* HEADER */}
-        <View style={styles.header}>
-          <View style={styles.avatarWrap}>
-            <Image
-              source={require('../../assets/images/iris/face-default.png')}
-              style={styles.avatar}
-            />
-          </View>
-
-          <View>
-            <Text style={styles.headerName}>Iris</Text>
-            <Text style={styles.headerStatus}>with you</Text>
-          </View>
-        </View>
-
-        {/* MESSAGES */}
-        <ScrollView
-          style={styles.messages}
-          contentContainerStyle={{ paddingBottom: 140 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {messages.map((m, i) => (
-            <View
-              key={i}
-              style={[
-                styles.bubble,
-                m.role === 'user' ? styles.user : styles.iris,
-              ]}
-            >
-              <Text style={styles.text}>{m.text}</Text>
+    <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+        keyboardVerticalOffset={96}
+      >
+        <View style={styles.container}>
+          {/* HEADER */}
+          <View style={styles.header}>
+            <View style={styles.avatarWrap}>
+              <Image
+                source={{ uri: IRIS_AVATAR_URL }}
+                style={styles.avatar}
+                resizeMode="cover"
+              />
             </View>
-          ))}
-        </ScrollView>
 
-        {/* INPUT */}
-        <ChatInput onSend={sendMessage} />
-      </View>
-    </KeyboardAvoidingView>
-  </SafeAreaView>
-);
+            <View>
+              <Text style={styles.headerName}>Iris</Text>
+              <Text style={styles.headerStatus}>with you</Text>
+            </View>
+          </View>
 
+          {/* MESSAGES */}
+          <ScrollView
+            style={styles.messages}
+            contentContainerStyle={{ paddingBottom: 140 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            {messages.map((m, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.bubble,
+                  m.role === 'user' ? styles.user : styles.iris,
+                ]}
+              >
+                <Text style={styles.text}>{m.text}</Text>
+              </View>
+            ))}
+          </ScrollView>
+
+          {/* INPUT */}
+          <ChatInput onSend={sendMessage} />
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
 }
 
 /* ================= STYLES ================= */
