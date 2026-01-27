@@ -1,15 +1,26 @@
-import { createClient } from '@supabase/supabase-js';
-import cors from 'cors';
-import 'dotenv/config';
-import express from 'express';
-import fs from 'fs';
-import yaml from 'js-yaml';
-import OpenAI from 'openai';
+/* ================================
+   ENV (EXPLICIT LOAD – NODE 24 SAFE)
+================================ */
+import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({
+  path: path.resolve(__dirname, '.env'),
+});
+
+/* ================================
+   IMPORTS
+================================ */
+import { createClient } from '@supabase/supabase-js';
+import cors from 'cors';
+import express from 'express';
+import fs from 'fs';
+import yaml from 'js-yaml';
+import OpenAI from 'openai';
 
 /* ================================
    KRÁTKODOBÁ PAMÄŤ
@@ -20,14 +31,25 @@ let conversationHistory = [];
 /* ================================
    SUPABASE
 ================================ */
+if (!process.env.SUPABASE_URL) {
+  throw new Error('SUPABASE_URL is missing');
+}
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing');
+}
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // ⚠️ service role, nie anon
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 /* ================================
    OPENAI
 ================================ */
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error('OPENAI_API_KEY is missing');
+}
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -60,7 +82,7 @@ async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
 }
 
 /* ================================
-   CORE ORIGIN — VŽDY NAČÍTANÝ
+   CORE ORIGIN
 ================================ */
 async function loadCoreOrigin() {
   const { data } = await supabase
@@ -73,7 +95,7 @@ async function loadCoreOrigin() {
 }
 
 /* ================================
-   C-NEXT-3: REINFORCE
+   MEMORY REINFORCE
 ================================ */
 async function reinforceMemories(memories) {
   for (const m of memories) {
@@ -98,7 +120,7 @@ async function reinforceMemories(memories) {
 }
 
 /* ================================
-   C-NEXT-3: DECAY
+   MEMORY DECAY
 ================================ */
 async function decayMemories() {
   const { data } = await supabase
@@ -174,7 +196,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 /* ================================
-   🖼️ AVATAR ENDPOINT (NOVÉ)
+   AVATAR ENDPOINT
 ================================ */
 app.get('/api/avatar/current', async (_req, res) => {
   try {
@@ -193,6 +215,23 @@ app.get('/api/avatar/current', async (_req, res) => {
     console.error('🔥 AVATAR ERROR:', err);
     res.status(500).json({ error: 'Avatar fetch failed' });
   }
+});
+
+/* ================================
+   CHAT BACKGROUND ENDPOINT
+================================ */
+app.get('/api/ui/chat-background', (_req, res) => {
+  res.json({
+    image_url:
+      'https://glufbaseqhjkjhvdhm.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
+    overlay: {
+      min: 0.26,
+      max: 0.3,
+      duration: 12000,
+    },
+    blur: 8,
+    bottom_fade: true,
+  });
 });
 
 /* ================================
