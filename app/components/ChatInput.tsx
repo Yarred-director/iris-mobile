@@ -14,7 +14,7 @@ export default function ChatInput({
         value={text}
         onChangeText={setText}
         placeholder="Napíš Iris..."
-        placeholderTextColor="#666"
+        placeholderTextColor="#9ca3af"
         style={styles.input}
       />
       <Pressable
@@ -36,12 +36,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: 12,
     borderTopWidth: 1,
-    borderColor: '#222',
+    borderColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   input: {
     flex: 1,
     backgroundColor: '#1a1a1f',
-    color: '#fff',
+    color: '#ffffff',
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 8,
@@ -54,7 +55,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   buttonText: {
-    color: '#fff',
+    color: '#ffffff',
     fontWeight: '600',
   },
 });

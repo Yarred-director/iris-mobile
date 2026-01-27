@@ -12,11 +12,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ChatInput from '../components/ChatInput';
 
-const API_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  'https://iris-mobile.onrender.com/chat';
+const API_CHAT = 'https://iris-mobile.onrender.com/chat';
 
-// 🔹 REMOTE AVATAR URL
+// AVATAR
 const IRIS_AVATAR_URL =
   'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/avatars/iris-avatar-v1.png';
 
@@ -33,20 +31,19 @@ export default function ChatScreen() {
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
-    setMessages((prev) => [...prev, { role: 'user', text }]);
+    setMessages(prev => [...prev, { role: 'user', text }]);
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await fetch(API_CHAT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
       });
 
       const data = await response.json();
-
-      setMessages((prev) => [...prev, { role: 'iris', text: data.reply }]);
+      setMessages(prev => [...prev, { role: 'iris', text: data.reply }]);
     } catch {
-      setMessages((prev) => [
+      setMessages(prev => [
         ...prev,
         { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
       ]);
@@ -54,62 +51,60 @@ export default function ChatScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'android' ? 'height' : 'padding'}
-        keyboardVerticalOffset={96}
-      >
-        <View style={styles.container}>
-          {/* HEADER */}
-          <View style={styles.header}>
-            <View style={styles.avatarWrap}>
-              <Image
-                source={{ uri: IRIS_AVATAR_URL }}
-                style={styles.avatar}
-                resizeMode="cover"
-              />
-            </View>
-
-            <View>
-              <Text style={styles.headerName}>Iris</Text>
-              <Text style={styles.headerStatus}>with you</Text>
-            </View>
-          </View>
-
-          {/* MESSAGES */}
-          <ScrollView
-            style={styles.messages}
-            contentContainerStyle={{ paddingBottom: 140 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            {messages.map((m, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.bubble,
-                  m.role === 'user' ? styles.user : styles.iris,
-                ]}
-              >
-                <Text style={styles.text}>{m.text}</Text>
+    <View style={styles.root}>
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+          keyboardVerticalOffset={96}
+        >
+          <View style={styles.container}>
+            {/* HEADER */}
+            <View style={styles.header}>
+              <View style={styles.avatarWrap}>
+                <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
               </View>
-            ))}
-          </ScrollView>
 
-          {/* INPUT */}
-          <ChatInput onSend={sendMessage} />
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+              <View>
+                <Text style={styles.headerName}>Iris</Text>
+                <Text style={styles.headerStatus}>with you</Text>
+              </View>
+            </View>
+
+            {/* MESSAGES */}
+            <ScrollView
+              style={styles.messages}
+              contentContainerStyle={{ paddingBottom: 140 }}
+            >
+              {messages.map((m, i) => (
+                <View
+                  key={i}
+                  style={[
+                    styles.bubble,
+                    m.role === 'user' ? styles.user : styles.iris,
+                  ]}
+                >
+                  <Text style={styles.text}>{m.text}</Text>
+                </View>
+              ))}
+            </ScrollView>
+
+            {/* INPUT */}
+            <ChatInput onSend={sendMessage} />
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-/* ================= STYLES ================= */
-
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#0b0b0f', // čisté tmavé pozadie
+  },
   container: {
     flex: 1,
-    backgroundColor: '#0b0b0f',
   },
   header: {
     flexDirection: 'row',
@@ -117,8 +112,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#1f1f1f',
-    backgroundColor: '#0b0b0b',
+    borderBottomColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   avatarWrap: {
     width: 64,
@@ -140,7 +135,7 @@ const styles = StyleSheet.create({
   },
   headerStatus: {
     fontSize: 12,
-    color: '#9ca3af',
+    color: '#cbd5f5',
     marginTop: 2,
   },
   messages: {
@@ -158,7 +153,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
   },
   iris: {
-    backgroundColor: '#1f1f2a',
+    backgroundColor: 'rgba(31,31,42,0.85)',
     alignSelf: 'flex-start',
   },
   text: {
