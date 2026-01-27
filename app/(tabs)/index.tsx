@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Image,
+  ImageBackground,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -12,7 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ChatInput from '../components/ChatInput';
 
-const API_CHAT = 'https://iris-mobile.onrender.com/chat';
+const API_BASE = 'https://iris-mobile.onrender.com';
+const API_CHAT = `${API_BASE}/chat`;
 
 // AVATAR
 const IRIS_AVATAR_URL =
@@ -23,11 +25,30 @@ type Message = {
   text: string;
 };
 
+type BackgroundConfig = {
+  image_url: string;
+  overlay?: {
+    max: number;
+  };
+  blur?: number;
+};
+
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([
     { role: 'iris', text: 'Ahoj. Som Iris.' },
   ]);
 
+  const [bg, setBg] = useState<BackgroundConfig | null>(null);
+
+  /* ================= BACKGROUND ================= */
+  useEffect(() => {
+    fetch(`${API_BASE}/ui/chat-background`)
+      .then(res => res.json())
+      .then(setBg)
+      .catch(() => setBg(null));
+  }, []);
+
+  /* ================= CHAT ================= */
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
@@ -50,8 +71,22 @@ export default function ChatScreen() {
     }
   };
 
-  return (
-    <View style={styles.root}>
+  /* ================= CONTENT ================= */
+  const Content = (
+    <>
+      {/* OVERLAY */}
+      {bg?.image_url && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: `rgba(0,0,0,${bg.overlay?.max ?? 0.35})`,
+            },
+          ]}
+        />
+      )}
+
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           style={{ flex: 1 }}
@@ -94,14 +129,32 @@ export default function ChatScreen() {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </View>
+    </>
   );
+
+  /* ================= RENDER ================= */
+  if (bg?.image_url) {
+    return (
+      <ImageBackground
+        source={{ uri: bg.image_url }}
+        style={styles.root}
+        resizeMode="cover"
+        blurRadius={bg.blur ?? 0}
+      >
+        {Content}
+      </ImageBackground>
+    );
+  }
+
+  return <View style={styles.root}>{Content}</View>;
 }
+
+/* ================= STYLES ================= */
 
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#0b0b0f', // čisté tmavé pozadie
+    backgroundColor: '#0b0b0f',
   },
   container: {
     flex: 1,
