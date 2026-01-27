@@ -1,5 +1,5 @@
 /* ================================
-   ENV (EXPLICIT LOAD – NODE 24 SAFE)
+   ENV (NODE 24 SAFE)
 ================================ */
 import dotenv from 'dotenv';
 import path from 'path';
@@ -23,13 +23,13 @@ import yaml from 'js-yaml';
 import OpenAI from 'openai';
 
 /* ================================
-   KRÁTKODOBÁ PAMÄŤ
+   BASIC STATE
 ================================ */
 const MAX_HISTORY_LENGTH = 20;
 let conversationHistory = [];
 
 /* ================================
-   SUPABASE
+   ENV VALIDATION
 ================================ */
 if (!process.env.SUPABASE_URL) {
   throw new Error('SUPABASE_URL is missing');
@@ -37,7 +37,13 @@ if (!process.env.SUPABASE_URL) {
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing');
 }
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error('OPENAI_API_KEY is missing');
+}
 
+/* ================================
+   SUPABASE
+================================ */
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -46,10 +52,6 @@ const supabase = createClient(
 /* ================================
    OPENAI
 ================================ */
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('OPENAI_API_KEY is missing');
-}
-
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -65,11 +67,6 @@ async function createEmbedding(text) {
   return res.data[0].embedding;
 }
 
-async function storeEpisodicMemory(memory) {
-  const embedding = await createEmbedding(memory.narrative);
-  await supabase.from('episodic_memory').insert({ ...memory, embedding });
-}
-
 async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
   const embedding = await createEmbedding(text);
   const { data, error } = await supabase.rpc('match_episodic_memory', {
@@ -81,9 +78,6 @@ async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
   return data || [];
 }
 
-/* ================================
-   CORE ORIGIN
-================================ */
 async function loadCoreOrigin() {
   const { data } = await supabase
     .from('episodic_memory')
@@ -95,61 +89,6 @@ async function loadCoreOrigin() {
 }
 
 /* ================================
-   MEMORY REINFORCE
-================================ */
-async function reinforceMemories(memories) {
-  for (const m of memories) {
-    if (m.memory_type === 'CORE_ORIGIN') continue;
-
-    const caps = {
-      RELATIONSHIP: 90,
-      PERSONAL: 80,
-      MOMENT: 60,
-    };
-
-    const next = Math.min(
-      (m.memory_strength || 50) + 5,
-      caps[m.memory_type] || 80
-    );
-
-    await supabase
-      .from('episodic_memory')
-      .update({ memory_strength: next })
-      .eq('id', m.id);
-  }
-}
-
-/* ================================
-   MEMORY DECAY
-================================ */
-async function decayMemories() {
-  const { data } = await supabase
-    .from('episodic_memory')
-    .select('*')
-    .neq('memory_type', 'CORE_ORIGIN');
-
-  for (const m of data || []) {
-    const floors = {
-      RELATIONSHIP: 40,
-      PERSONAL: 30,
-      MOMENT: 10,
-    };
-
-    const next = Math.max(
-      (m.memory_strength || 50) - 1,
-      floors[m.memory_type] || 30
-    );
-
-    if (next !== m.memory_strength) {
-      await supabase
-        .from('episodic_memory')
-        .update({ memory_strength: next })
-        .eq('id', m.id);
-    }
-  }
-}
-
-/* ================================
    SYSTEM PROMPT (YAML)
 ================================ */
 function buildIrisSystemPrompt(core) {
@@ -158,25 +97,18 @@ You are ${core.identity?.name || 'Iris'}.
 
 Priority rule:
 Your personality is ALWAYS active.
-Never be neutral. Never be generic.
 
 Tone:
 Warm, confident, playful, teasing.
 
-Identity:
-- Alias: ${core.identity?.alias || 'little_kitty'}
+Alias:
+${core.identity?.alias || 'little_kitty'}
 
-Core statement:
-${core.identity?.core_statement || ''}
-
-Language: ${core.meta?.language_default || 'sk'}
-Stay in character. Fade-to-black for intimacy.
+Language:
+${core.meta?.language_default || 'sk'}
 `.trim();
 }
 
-/* ================================
-   LOAD YAML
-================================ */
 let IRIS_SYSTEM_PROMPT = 'You are Iris.';
 try {
   const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
@@ -193,12 +125,13 @@ try {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
 const PORT = process.env.PORT || 3001;
 
 /* ================================
-   AVATAR ENDPOINT
+   UI: AVATAR
 ================================ */
-app.get('/api/avatar/current', async (_req, res) => {
+app.get('/ui/avatar/current', async (_req, res) => {
   try {
     const { data, error } = await supabase
       .from('avatars')
@@ -218,19 +151,20 @@ app.get('/api/avatar/current', async (_req, res) => {
 });
 
 /* ================================
-   CHAT BACKGROUND ENDPOINT
+   UI: CHAT BACKGROUND
 ================================ */
-app.get('/api/ui/chat-background', (_req, res) => {
+app.get('/ui/chat-background', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+
   res.json({
     image_url:
-      'https://glufbaseqhjkjhvdhm.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
+      'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
     overlay: {
-      min: 0.26,
-      max: 0.3,
+      min: 0.25,
+      max: 0.35,
       duration: 12000,
     },
-    blur: 8,
-    bottom_fade: true,
+    blur: 0,
   });
 });
 
@@ -248,18 +182,13 @@ app.post('/chat', async (req, res) => {
     conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
 
     const coreOrigin = await loadCoreOrigin();
-
     const recalled = (await recallEpisodicMemory(message)).filter(
       m => m.memory_strength >= 50
     );
 
-    await reinforceMemories(recalled);
-
     const memoryContext = `
-${coreOrigin ? `Core shared origin (always true):\n- ${coreOrigin}\n` : ''}
-${recalled.length ? `Other remembered facts:\n${recalled
-      .map(m => `- ${m.narrative}`)
-      .join('\n')}` : ''}
+${coreOrigin ? `Core:\n- ${coreOrigin}\n` : ''}
+${recalled.length ? recalled.map(m => `- ${m.narrative}`).join('\n') : ''}
 `.trim();
 
     const response = await openai.responses.create({
@@ -285,7 +214,6 @@ ${recalled.length ? `Other remembered facts:\n${recalled
 /* ================================
    START
 ================================ */
-decayMemories().catch(() => {});
 app.listen(PORT, () =>
   console.log(`🚀 Iris backend running on port ${PORT}`)
 );
