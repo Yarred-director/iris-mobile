@@ -21,6 +21,9 @@ import express from 'express';
 import fs from 'fs';
 import OpenAI from 'openai';
 
+import { getLLMClient } from './lib/llmClient.js';
+import { MODELS } from './lib/llmModels.js';
+
 /* ================================
    BASIC STATE
 ================================ */
@@ -46,27 +49,6 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-/* ================================
-   LLM CLIENT FACTORY
-================================ */
-function getLLMClient(provider = 'openai') {
-  if (provider === 'grok' && process.env.XAI_API_KEY) {
-    return new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
-      baseURL: 'https://api.x.ai/v1',
-    });
-  }
-
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-  });
-}
-
-const MODELS = {
-  openai: 'gpt-4.1',
-  grok: 'grok-3',
-};
 
 /* ================================
    MEMORY (EMBEDDINGS – OPENAI ONLY)
