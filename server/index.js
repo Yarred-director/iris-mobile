@@ -46,11 +46,7 @@ if (!process.env.OPENAI_API_KEY) {
 ================================ */
 const supabase = createClient(
   process.env.SUPABASE_URL,
-<<<<<<< HEAD
   process.env.SUPABASE_SERVICE_ROLE_KEY
-=======
-  process.env.SUPABASE_SERVICE_ROLE_KEY // service role
->>>>>>> 52be584 (feat(ui): add remote chat background endpoint)
 );
 
 /* ================================
@@ -133,11 +129,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 /* ================================
-<<<<<<< HEAD
-   UI: AVATAR
-=======
    🖼️ AVATAR ENDPOINT
->>>>>>> 52be584 (feat(ui): add remote chat background endpoint)
 ================================ */
 app.get('/ui/avatar/current', async (_req, res) => {
   try {
@@ -159,8 +151,7 @@ app.get('/ui/avatar/current', async (_req, res) => {
 });
 
 /* ================================
-<<<<<<< HEAD
-   UI: CHAT BACKGROUND
+   🖼️ CHAT BACKGROUND (KANONICKÝ)
 ================================ */
 app.get('/ui/chat-background', (_req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=300');
@@ -169,26 +160,12 @@ app.get('/ui/chat-background', (_req, res) => {
     image_url:
       'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
     overlay: {
-      min: 0.25,
-      max: 0.35,
-      duration: 12000,
-    },
-    blur: 0,
-=======
-   🖼️ CHAT BACKGROUND ENDPOINT (NOVÉ)
-================================ */
-app.get('/api/ui/chat-background', (_req, res) => {
-  res.json({
-    image_url:
-      'https://glufbaseqhjkjhvdhm.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
-    overlay: {
       min: 0.26,
       max: 0.30,
       duration: 12000,
     },
-    blur: 8,
+    blur: 0,
     bottom_fade: true,
->>>>>>> 52be584 (feat(ui): add remote chat background endpoint)
   });
 });
 
