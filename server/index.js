@@ -35,6 +35,10 @@ if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_RO
 if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
 if (!process.env.IRIS_CORE_YAML) throw new Error('IRIS_CORE_YAML missing');
 
+if (!process.env.XAI_API_KEY) {
+  console.warn('⚠️ XAI_API_KEY missing – Grok disabled');
+}
+
 /* ================================
    SUPABASE
 ================================ */
@@ -44,17 +48,35 @@ const supabase = createClient(
 );
 
 /* ================================
-   OPENAI
+   LLM CLIENT FACTORY
 ================================ */
-const openai = new OpenAI({
+function getLLMClient(provider = 'openai') {
+  if (provider === 'grok' && process.env.XAI_API_KEY) {
+    return new OpenAI({
+      apiKey: process.env.XAI_API_KEY,
+      baseURL: 'https://api.x.ai/v1',
+    });
+  }
+
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+}
+
+const MODELS = {
+  openai: 'gpt-4.1',
+  grok: 'grok-3',
+};
+
+/* ================================
+   MEMORY (EMBEDDINGS – OPENAI ONLY)
+================================ */
+const embeddingClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ================================
-   MEMORY (EMBEDDINGS)
-================================ */
 async function createEmbedding(text) {
-  const res = await openai.embeddings.create({
+  const res = await embeddingClient.embeddings.create({
     model: 'text-embedding-3-small',
     input: text,
   });
@@ -82,7 +104,7 @@ async function loadCoreOrigin() {
 }
 
 /* ================================
-   SYSTEM PROMPT (MINIMAL)
+   SYSTEM PROMPT
 ================================ */
 function buildSystemPrompt(coreYaml) {
   return `
@@ -154,7 +176,7 @@ app.get('/ui/chat-background', (_req, res) => {
 ================================ */
 app.post('/chat', async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, llm } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
     conversationHistory.push({ role: 'user', content: message });
@@ -170,8 +192,18 @@ ${coreOrigin ? `CORE ORIGIN:\n${coreOrigin}\n` : ''}
 ${recalled.map(m => `MEMORY:\n${m.narrative}`).join('\n\n')}
 `.trim();
 
-    const response = await openai.responses.create({
-      model: 'gpt-4.1',
+    const provider =
+      llm ||
+      process.env.DEFAULT_LLM ||
+      'openai';
+
+    const client = getLLMClient(provider);
+    const model = MODELS[provider] || MODELS.openai;
+
+    console.log('🤖 LLM USED:', provider);
+
+    const response = await client.responses.create({
+      model,
       input: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: memoryContext },
