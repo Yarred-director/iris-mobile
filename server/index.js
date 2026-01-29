@@ -159,10 +159,8 @@ app.post('/chat', async (req, res) => {
     const recalled = await recallEpisodicMemory(message);
     const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
 
-    // ---- ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
 
-      // OpenAI → Grok
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
           { role: 'system', content: systemPrompt },
@@ -171,7 +169,6 @@ app.post('/chat', async (req, res) => {
         ];
       }
 
-      // Grok → OpenAI (reset, no carryover)
       if (activeLLM === 'grok' && nextLLM === 'openai') {
         historyOpenAI = [
           { role: 'system', content: systemPrompt },
@@ -212,6 +209,9 @@ app.post('/chat', async (req, res) => {
       historyGrok.push({ role: 'assistant', content: reply });
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
     }
+
+    // 🔍 DEBUG ROUTING
+    console.log('🤖 ACTIVE LLM:', activeLLM);
 
     res.json({ reply });
 
