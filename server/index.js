@@ -68,7 +68,7 @@ async function createEmbedding(text) {
 }
 
 /* ================================
-   MEMORY LOADERS  ✅ FIX
+   MEMORY LOADERS
 ================================ */
 async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
   const embedding = await createEmbedding(text);
@@ -102,7 +102,23 @@ async function loadSummaries(limit = 2) {
 }
 
 /* ================================
-   BEHAVIOR ENGINE (FSM)
+   REINFORCEMENT + DECAY
+================================ */
+async function reinforceMemory(memId, boost = 0.05) {
+  await supabase.rpc('reinforce_memory', {
+    mem_id: memId,
+    boost,
+  });
+}
+
+async function decayMemories(rate = 0.001) {
+  await supabase.rpc('decay_memories', {
+    decay_rate: rate,
+  });
+}
+
+/* ================================
+   BEHAVIOR FSM
 ================================ */
 function updateBehaviorState(message, currentState) {
   const text = message.toLowerCase();
@@ -167,6 +183,59 @@ function deriveBehaviorProfileFromSummaries(summaries) {
 }
 
 /* ================================
+   IRIS MEMORY JUDGE
+================================ */
+async function irisMemoryJudge(snippet) {
+  const prompt = `
+Decide if this moment should be stored as long-term memory.
+
+If NOT important:
+{ "store": false }
+
+If important:
+{
+  "store": true,
+  "memory_type": "EPISODIC or PROFILE",
+  "importance": number between 0.3 and 1.0,
+  "summary": "keyword style memory with emotional layer"
+}
+
+Rules:
+- No dialogue
+- Third person
+- Keyword style
+- Focus on meaning
+
+Moment:
+${snippet}
+`.trim();
+
+  const res = await getLLMClient('openai').responses.create({
+    model: MODELS.openai,
+    input: [{ role: 'user', content: prompt }],
+  });
+
+  try {
+    return JSON.parse(res.output_text);
+  } catch {
+    return { store: false };
+  }
+}
+
+async function writeMemory({ summary, memory_type, importance }) {
+  const embedding = await createEmbedding(summary);
+
+  await supabase.from('episodic_memory').insert({
+    title: memory_type === 'PROFILE' ? 'Profile Shift' : 'Episodic Moment',
+    narrative: summary,
+    people: ['Iris', 'User'],
+    memory_type,
+    importance,
+    embedding,
+  });
+}
+
+/* ================================
    SYSTEM PROMPT
 ================================ */
 const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
@@ -183,10 +252,10 @@ ${coreYaml}
 ${coreOrigin || 'None'}
 
 === RELATIONSHIP SUMMARY ===
-${summaries.length ? summaries.map(s => `- ${s.narrative}`).join('\n') : 'None'}
+${summaries.map(s => `- ${s.narrative}`).join('\n') || 'None'}
 
 === EPISODIC MEMORY ===
-${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
+${episodic.map(m => `- ${m.narrative}`).join('\n') || 'None'}
 
 === CURRENT INNER STATE ===
 Tone: ${behaviorProfile.tone}
@@ -204,19 +273,6 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 /* ================================
-   UI: SPLASH
-================================ */
-app.get('/ui/splash', async (req, res) => {
-  const { data } = await supabase
-    .from('ui_config')
-    .select('image_url, overlay, blur')
-    .eq('key', 'splash_loading')
-    .single();
-
-  res.json(data || null);
-});
-
-/* ================================
    CHAT
 ================================ */
 app.post('/chat', async (req, res) => {
@@ -226,8 +282,19 @@ app.post('/chat', async (req, res) => {
 
     behaviorState = updateBehaviorState(message, behaviorState);
 
+    // 🔁 DECAY on each interaction
+    await decayMemories(0.001);
+
     const coreOrigin = await loadCoreOrigin();
     const episodic = await recallEpisodicMemory(message);
+
+    // 🔁 REINFORCE recalled memories
+    for (const mem of episodic) {
+      if (mem.importance < 1.0) {
+        await reinforceMemory(mem.id);
+      }
+    }
+
     const summaries = await loadSummaries();
     const behaviorProfile = deriveBehaviorProfileFromSummaries(summaries);
 
@@ -250,7 +317,14 @@ app.post('/chat', async (req, res) => {
     historyOpenAI.push({ role: 'assistant', content: reply });
     historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
 
+    // 🧠 MEMORY JUDGE WRITE
+    const decision = await irisMemoryJudge(`User: ${message}\nIris: ${reply}`);
+    if (decision?.store) {
+      await writeMemory(decision);
+    }
+
     res.json({ reply });
+
   } catch (err) {
     console.error('🔥 CHAT ERROR:', err);
     res.status(500).json({ error: err.message });
