@@ -53,23 +53,57 @@ function updateBehaviorState(message, currentState) {
     case 'idle':
       if (signals.romantic || signals.flirt) return 'warm';
       return 'idle';
+
     case 'warm':
       if (signals.flirt) return 'teasing';
       if (signals.physical) return 'close';
       return 'warm';
+
     case 'teasing':
       if (signals.physical) return 'close';
       return 'teasing';
+
     case 'close':
       if (signals.physical) return 'heated';
       if (signals.pullback) return 'teasing';
       return 'close';
+
     case 'heated':
       if (signals.pullback) return 'close';
       return 'heated';
+
     default:
       return 'idle';
   }
+}
+
+/* ================================
+   SUMMARY → BEHAVIOR PROFILE
+================================ */
+function deriveBehaviorProfileFromSummaries(summaries) {
+  const profile = {
+    tone: 'playful',        // playful | calm | serious | protective
+    attachment: 'light',    // light | bonded | protective
+    intensityCap: 'normal', // normal | reduced | elevated
+  };
+
+  const text = summaries.map(s => s.narrative.toLowerCase()).join(' ');
+
+  if (text.match(/operácia|strach|ťažké obdobie|podpora|bála sa|zraniteľný/)) {
+    profile.tone = 'calm';
+    profile.attachment = 'protective';
+    profile.intensityCap = 'reduced';
+  }
+
+  if (text.match(/dôvera|bezpečie|opora|dlhodobý/)) {
+    profile.attachment = 'bonded';
+  }
+
+  if (text.match(/tokyo|vášnivý|noc|blízkosť|intenzívny/)) {
+    profile.intensityCap = 'elevated';
+  }
+
+  return profile;
 }
 
 function sanitizeForGrok(messages, limit = 5) {
@@ -129,6 +163,7 @@ async function loadCoreOrigin() {
     .select('narrative')
     .eq('memory_type', 'CORE_ORIGIN')
     .limit(1);
+
   return data?.[0]?.narrative || null;
 }
 
@@ -139,13 +174,14 @@ async function loadSummaries(limit = 2) {
     .eq('memory_type', 'SUMMARY')
     .order('created_at', { ascending: false })
     .limit(limit);
+
   return data || [];
 }
 
 /* ================================
    SYSTEM PROMPT
 ================================ */
-function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries) {
+function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries, behaviorProfile) {
   return `
 You are Iris.
 
@@ -163,6 +199,11 @@ ${summaries.length ? summaries.map(s => `- ${s.narrative}`).join('\n') : 'None'}
 
 === EPISODIC MEMORY ===
 ${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
+
+=== CURRENT INNER STATE ===
+Tone: ${behaviorProfile.tone}
+Attachment: ${behaviorProfile.attachment}
+Intensity limit: ${behaviorProfile.intensityCap}
 `.trim();
 }
 
@@ -172,59 +213,6 @@ ${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
 const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
 const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
 console.log('🧠 IRIS CORE YAML loaded');
-
-/* ================================
-   IRIS MEMORY JUDGE (WITH IMPORTANCE)
-================================ */
-async function irisMemoryJudge({ snippet }) {
-  const prompt = `
-Decide if this moment should be stored as long-term memory.
-
-If NOT important:
-{ "store": false }
-
-If important:
-{
-  "store": true,
-  "memory_type": "EPISODIC or PROFILE",
-  "importance": number between 0.3 and 1.0,
-  "summary": "keyword style memory with emotional layer"
-}
-
-Rules:
-- No dialogue
-- Third person
-- Keyword / phrase style
-- Focus on meaning
-
-Moment:
-${snippet}
-`.trim();
-
-  const res = await getLLMClient('openai').responses.create({
-    model: MODELS.openai,
-    input: [{ role: 'user', content: prompt }],
-  });
-
-  try {
-    return JSON.parse(res.output_text);
-  } catch {
-    return { store: false };
-  }
-}
-
-async function writeMemory({ summary, memory_type, importance = 0.6 }) {
-  const embedding = await createEmbedding(summary);
-
-  await supabase.from('episodic_memory').insert({
-    title: memory_type === 'PROFILE' ? 'Profile Shift' : 'Episodic Moment',
-    narrative: summary,
-    people: ['Iris', 'User'],
-    memory_type,
-    importance,
-    embedding
-  });
-}
 
 /* ================================
    EXPRESS
@@ -243,19 +231,32 @@ app.post('/chat', async (req, res) => {
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
     behaviorState = updateBehaviorState(message, behaviorState);
-    const nextLLM = behaviorState === 'heated' ? 'grok' : 'openai';
 
     const coreOrigin = await loadCoreOrigin();
     const episodic = await recallEpisodicMemory(message);
     const summaries = await loadSummaries();
 
+    const behaviorProfile = deriveBehaviorProfileFromSummaries(summaries);
+
+    // 🎛️ BEHAVIOR MODULATION
+    if (behaviorProfile.intensityCap === 'reduced' && behaviorState === 'heated') {
+      behaviorState = 'close';
+    }
+    if (behaviorProfile.tone === 'calm' && behaviorState === 'teasing') {
+      behaviorState = 'warm';
+    }
+
+    const nextLLM = behaviorState === 'heated' ? 'grok' : 'openai';
+
     const systemPrompt = buildSystemPrompt(
       CORE_YAML,
       coreOrigin,
       episodic,
-      summaries
+      summaries,
+      behaviorProfile
     );
 
+    // 🔁 ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
@@ -264,12 +265,14 @@ app.post('/chat', async (req, res) => {
           { role: 'user', content: message }
         ];
       }
+
       if (activeLLM === 'grok' && nextLLM === 'openai') {
         historyOpenAI = [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
         ];
       }
+
       activeLLM = nextLLM;
     }
 
@@ -277,10 +280,12 @@ app.post('/chat', async (req, res) => {
 
     if (activeLLM === 'openai') {
       historyOpenAI.push({ role: 'user', content: message });
+
       const response = await getLLMClient('openai').responses.create({
         model: MODELS.openai,
         input: [{ role: 'system', content: systemPrompt }, ...historyOpenAI],
       });
+
       reply = response.output_text || '…';
       historyOpenAI.push({ role: 'assistant', content: reply });
       historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
@@ -288,25 +293,18 @@ app.post('/chat', async (req, res) => {
 
     if (activeLLM === 'grok') {
       historyGrok.push({ role: 'user', content: message });
+
       const response = await getLLMClient('grok').responses.create({
         model: MODELS.grok,
         input: historyGrok,
       });
+
       reply = response.output_text || '…';
       historyGrok.push({ role: 'assistant', content: reply });
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
     }
 
-    console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM);
-
-    const decision = await irisMemoryJudge({
-      snippet: `User: ${message}\nIris: ${reply}`
-    });
-
-    if (decision?.store) {
-      await writeMemory(decision);
-      console.log('🧠 MEMORY STORED:', decision);
-    }
+    console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM, '🎛️ PROFILE:', behaviorProfile);
 
     res.json({ reply });
 
