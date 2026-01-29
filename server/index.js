@@ -27,8 +27,33 @@ import { MODELS } from './lib/llmModels.js';
 /* ================================
    BASIC STATE
 ================================ */
-const MAX_HISTORY_LENGTH = 20;
-let conversationHistory = [];
+const MAX_HISTORY_LENGTH = 200;
+
+// 🔥 ODDelené histórie
+let historyOpenAI = [];
+let historyGrok = [];
+let activeLLM = 'openai';
+
+/* ================================
+   ROUTING (TEMP – neskôr BehaviorEngine)
+================================ */
+function decideLLM(message) {
+  const physicalKeywords = [
+    'nahá','dotyk','bozk','telo','prs','vojsť',
+    'tvrdý','panva','styk','vlhk'
+  ];
+  const lowered = message.toLowerCase();
+  return physicalKeywords.some(k => lowered.includes(k))
+    ? 'grok'
+    : 'openai';
+}
+
+function sanitizeForGrok(messages, limit = 5) {
+  return messages.slice(-limit).map(m => ({
+    role: m.role,
+    content: '[previous context summarized]'
+  }));
+}
 
 /* ================================
    ENV VALIDATION
@@ -51,7 +76,7 @@ const supabase = createClient(
 );
 
 /* ================================
-   MEMORY (EMBEDDINGS – OPENAI ONLY)
+   MEMORY (EMBEDDINGS – OPENAI)
 ================================ */
 const embeddingClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -88,7 +113,7 @@ async function loadCoreOrigin() {
 /* ================================
    SYSTEM PROMPT
 ================================ */
-function buildSystemPrompt(coreYaml) {
+function buildSystemPrompt(coreYaml, coreOrigin, recalledMemories) {
   return `
 You are Iris.
 
@@ -96,28 +121,26 @@ Everything about your identity, behavior, tone, boundaries,
 language, intimacy and memory handling is defined BELOW.
 You must strictly follow it.
 
-Do not invent personality.
-Do not add traits.
-Do not override rules.
-
 === IRIS CORE (AUTHORITATIVE) ===
 ${coreYaml}
+
+=== CORE ORIGIN (HARD TRUTH) ===
+${coreOrigin || 'None'}
+
+=== EPISODIC MEMORY (SOFT RECALL) ===
+${recalledMemories.length
+  ? recalledMemories.map(m => `- ${m.narrative}`).join('\n')
+  : 'None'}
 `.trim();
 }
 
 /* ================================
    LOAD YAML
 ================================ */
-let SYSTEM_PROMPT = 'You are Iris.';
-
-try {
-  const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
-  const rawYaml = fs.readFileSync(yamlPath, 'utf8');
-  SYSTEM_PROMPT = buildSystemPrompt(rawYaml);
-  console.log('🧠 IRIS CORE YAML loaded');
-} catch (err) {
-  console.error('❌ FAILED TO LOAD IRIS CORE YAML:', err.message);
-}
+let CORE_YAML = '';
+const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
+CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
+console.log('🧠 IRIS CORE YAML loaded');
 
 /* ================================
    EXPRESS
@@ -128,77 +151,73 @@ app.use(express.json());
 const PORT = process.env.PORT || 3001;
 
 /* ================================
-   AVATAR
-================================ */
-app.get('/ui/avatar/current', async (_req, res) => {
-  const { data } = await supabase
-    .from('avatars')
-    .select('image_url, variant')
-    .eq('is_active', true)
-    .single();
-
-  res.json(data);
-});
-
-/* ================================
-   BACKGROUND
-================================ */
-app.get('/ui/chat-background', (_req, res) => {
-  res.json({
-    image_url:
-      'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/backgrounds/chat_default.png',
-    overlay: { min: 0.26, max: 0.3, duration: 12000 },
-    blur: 0,
-    bottom_fade: true,
-  });
-});
-
-/* ================================
    CHAT
 ================================ */
 app.post('/chat', async (req, res) => {
   try {
-    const { message, llm } = req.body;
+    const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
-    conversationHistory.push({ role: 'user', content: message });
-    conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+    const nextLLM = decideLLM(message);
 
     const coreOrigin = await loadCoreOrigin();
     const recalled = await recallEpisodicMemory(message);
+    const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
 
-    console.log('🔁 RECALL:', recalled.map(m => m.narrative));
+    // 🔁 ONE-WAY BRIDGE
+    if (nextLLM !== activeLLM) {
 
-    const memoryContext = `
-${coreOrigin ? `CORE ORIGIN:\n${coreOrigin}\n` : ''}
-${recalled.map(m => `MEMORY:\n${m.narrative}`).join('\n\n')}
-`.trim();
+      // OpenAI → Grok (POVOLENÉ)
+      if (activeLLM === 'openai' && nextLLM === 'grok') {
+        historyGrok = [
+          { role: 'system', content: systemPrompt },
+          ...sanitizeForGrok(historyOpenAI),
+          { role: 'user', content: message }
+        ];
+      }
 
-    const provider =
-      llm ||
-      process.env.DEFAULT_LLM ||
-      'openai';
+      // Grok → OpenAI (RESET – ZAKÁZANÝ PRENOS)
+      if (activeLLM === 'grok' && nextLLM === 'openai') {
+        historyOpenAI = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: message }
+        ];
+      }
 
-    const client = getLLMClient(provider);
-    const model = MODELS[provider] || MODELS.openai;
+      activeLLM = nextLLM;
+    }
 
-    console.log('🤖 LLM USED:', provider);
+    let reply;
 
-    const response = await client.responses.create({
-      model,
-      input: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'system', content: memoryContext },
-        ...conversationHistory,
-      ],
-    });
+    if (activeLLM === 'openai') {
+      historyOpenAI.push({ role: 'user', content: message });
 
-    const reply = response.output_text || '…';
+      const response = await getLLMClient('openai').responses.create({
+        model: MODELS.openai,
+        input: historyOpenAI,
+      });
 
-    conversationHistory.push({ role: 'assistant', content: reply });
-    conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+      reply = response.output_text || '…';
+      historyOpenAI.push({ role: 'assistant', content: reply });
+      historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
+    }
 
+    if (activeLLM === 'grok') {
+      historyGrok.push({ role: 'user', content: message });
+
+      const response = await getLLMClient('grok').responses.create({
+        model: MODELS.grok,
+        input: historyGrok,
+      });
+
+      reply = response.output_text || '…';
+      historyGrok.push({ role: 'assistant', content: reply });
+      historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
+    }
+
+    console.log('🤖 ACTIVE LLM:', activeLLM);
     res.json({ reply });
+
   } catch (err) {
     console.error('🔥 CHAT ERROR:', err);
     res.status(500).json({ error: err.message });
