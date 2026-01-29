@@ -107,12 +107,15 @@ async function decayMemories() {
 }
 
 /* ================================
-   BEHAVIOR + ROUTING
+   BEHAVIOR + ROUTING  ✅ FIXED
 ================================ */
 function detectState(text) {
   const t = text.toLowerCase();
 
-  if (/nahá|vlhk|panva|tvrdý|vojsť|sex|intímn/.test(t)) return 'heated';
+  // 🔥 erotic / physical → GROK
+  if (/nahá|vlhk|panva|tvrd|vojsť|sex|intím|zadok|prsia|tlap|chyti|pritla|stisn|telo|bok|bozk/.test(t))
+    return 'heated';
+
   if (/bozk|dotyk|pritiah|pohlad/.test(t)) return 'close';
   if (/rande|večer|spolu/.test(t)) return 'warm';
 
@@ -220,25 +223,30 @@ try{
 
   const core = await loadCoreOrigin();
   const episodic = await recallEpisodicMemory(message);
-  for(const m of episodic) if(m.importance<1) await reinforceMemory(m.id);
+  for(const m of episodic) if(m.importance < 1) await reinforceMemory(m.id);
 
   const summaries = await loadSummaries();
   const systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-  // 🔁 SWITCH LLM — wipe OpenAI when entering GROK
+  /* 🔥 CRITICAL FIX — system prompt ALWAYS for OpenAI */
+  if (nextLLM === 'openai' && historyOpenAI.length === 0) {
+    historyOpenAI.push({ role:'system', content: systemPrompt });
+  }
+
+  /* 🔁 SWITCH LLM */
   if(nextLLM !== activeLLM){
     if(nextLLM === 'grok'){
       historyGrok = [
-        {role:'system',content:systemPrompt},
+        { role:'system', content: systemPrompt },
         ...sanitizeForGrok(historyOpenAI),
-        {role:'user',content:message}
+        { role:'user', content: message }
       ];
-      historyOpenAI = []; // 🔥 prevent erotic leak back
+      historyOpenAI = []; // 🚫 erotic isolation
     }
     if(nextLLM === 'openai'){
       historyOpenAI = [
-        {role:'system',content:systemPrompt},
-        {role:'user',content:message}
+        { role:'system', content: systemPrompt },
+        { role:'user', content: message }
       ];
     }
     activeLLM = nextLLM;
@@ -246,26 +254,26 @@ try{
 
   let reply;
 
-  if(activeLLM==='openai'){
-    historyOpenAI.push({role:'user',content:message});
+  if(activeLLM === 'openai'){
+    historyOpenAI.push({ role:'user', content: message });
     const r = await getLLMClient('openai').responses.create({
-      model:MODELS.openai,
-      input:historyOpenAI
+      model: MODELS.openai,
+      input: historyOpenAI
     });
-    reply=r.output_text||'…';
-    historyOpenAI.push({role:'assistant',content:reply});
-    historyOpenAI=historyOpenAI.slice(-MAX_HISTORY);
+    reply = r.output_text || '…';
+    historyOpenAI.push({ role:'assistant', content: reply });
+    historyOpenAI = historyOpenAI.slice(-MAX_HISTORY);
   }
 
-  if(activeLLM==='grok'){
-    historyGrok.push({role:'user',content:message});
+  if(activeLLM === 'grok'){
+    historyGrok.push({ role:'user', content: message });
     const r = await getLLMClient('grok').responses.create({
-      model:MODELS.grok,
-      input:historyGrok
+      model: MODELS.grok,
+      input: historyGrok
     });
-    reply=r.output_text||'…';
-    historyGrok.push({role:'assistant',content:reply});
-    historyGrok=historyGrok.slice(-MAX_HISTORY);
+    reply = r.output_text || '…';
+    historyGrok.push({ role:'assistant', content: reply });
+    historyGrok = historyGrok.slice(-MAX_HISTORY);
   }
 
   console.log(`💬 REPLY BY ${activeLLM.toUpperCase()}`);
@@ -273,11 +281,11 @@ try{
   const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
   if(decision?.store) await writeMemory(decision);
 
-  res.json({reply});
+  res.json({ reply });
 
 }catch(e){
  console.error('🔥 CHAT ERROR:',e);
- res.status(500).json({error:e.message});
+ res.status(500).json({ error:e.message });
 }});
 
 /* ================================
