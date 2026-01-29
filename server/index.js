@@ -161,6 +161,7 @@ app.post('/chat', async (req, res) => {
     const nextLLM = decideLLM(message);
 
     const coreOrigin = await loadCoreOrigin();
+    console.log("🔥 CORE_ORIGIN:", coreOrigin);
     const recalled = await recallEpisodicMemory(message);
     const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
 
