@@ -1,3 +1,8 @@
+/* ======================================================
+   🔥 DEBUG — MUST APPEAR IN RENDER LOGS
+====================================================== */
+console.log('🔥 IRIS INDEX LOADED — VERSION 2026-01-29 MEMORY FULL');
+
 /* ================================
    ENV (NODE 24 SAFE)
 ================================ */
@@ -28,12 +33,7 @@ import { MODELS } from './lib/llmModels.js';
    BASIC STATE
 ================================ */
 const MAX_HISTORY_LENGTH = 200;
-
 let historyOpenAI = [];
-let historyGrok = [];
-let activeLLM = 'openai';
-
-// 🧠 Behavior FSM
 let behaviorState = 'idle';
 
 /* ================================
@@ -86,7 +86,6 @@ async function loadCoreOrigin() {
     .select('narrative')
     .eq('memory_type', 'CORE_ORIGIN')
     .limit(1);
-
   return data?.[0]?.narrative || null;
 }
 
@@ -97,7 +96,6 @@ async function loadSummaries(limit = 2) {
     .eq('memory_type', 'SUMMARY')
     .order('created_at', { ascending: false })
     .limit(limit);
-
   return data || [];
 }
 
@@ -120,37 +118,12 @@ async function decayMemories(rate = 0.001) {
 /* ================================
    BEHAVIOR FSM
 ================================ */
-function updateBehaviorState(message, currentState) {
-  const text = message.toLowerCase();
-
-  const signals = {
-    physical: /dotyk|bozk|prs|nahá|vojsť|tvrdý|vlhk|panva/.test(text),
-    flirt: /úsmev|zavrn|blízko|pritiah|pohlad/.test(text),
-    romantic: /večer|park|rande|spolu|chcem byť/.test(text),
-    pullback: /čo máš v pláne|len tak|poďme/.test(text),
-  };
-
-  switch (currentState) {
-    case 'idle':
-      if (signals.romantic || signals.flirt) return 'warm';
-      return 'idle';
-    case 'warm':
-      if (signals.flirt) return 'teasing';
-      if (signals.physical) return 'close';
-      return 'warm';
-    case 'teasing':
-      if (signals.physical) return 'close';
-      return 'teasing';
-    case 'close':
-      if (signals.physical) return 'heated';
-      if (signals.pullback) return 'teasing';
-      return 'close';
-    case 'heated':
-      if (signals.pullback) return 'close';
-      return 'heated';
-    default:
-      return 'idle';
-  }
+function updateBehaviorState(message, state) {
+  const t = message.toLowerCase();
+  if (/dotyk|bozk|nahá|vojsť|panva|vlhk/.test(t)) return 'heated';
+  if (/úsmev|blízko|pritiah|pohlad/.test(t)) return 'close';
+  if (/večer|rande|spolu/.test(t)) return 'warm';
+  return state;
 }
 
 /* ================================
@@ -165,17 +138,17 @@ function deriveBehaviorProfileFromSummaries(summaries) {
 
   const text = summaries.map(s => s.narrative.toLowerCase()).join(' ');
 
-  if (text.match(/operácia|strach|ťažké obdobie|podpora|zraniteľný/)) {
+  if (/strach|zraniteľný|podpora|ťažké obdobie/.test(text)) {
     profile.tone = 'calm';
     profile.attachment = 'protective';
     profile.intensityCap = 'reduced';
   }
 
-  if (text.match(/dôvera|bezpečie|opora|dlhodobý/)) {
+  if (/dôvera|bezpečie|dlhodobý/.test(text)) {
     profile.attachment = 'bonded';
   }
 
-  if (text.match(/tokyo|vášnivý|noc|intenzívny/)) {
+  if (/tokyo|vášnivý|intenzívny|noc/.test(text)) {
     profile.intensityCap = 'elevated';
   }
 
@@ -197,18 +170,17 @@ If important:
   "store": true,
   "memory_type": "EPISODIC or PROFILE",
   "importance": number between 0.3 and 1.0,
-  "summary": "keyword style memory with emotional layer"
+  "summary": "keyword memory, emotional meaning"
 }
 
 Rules:
-- No dialogue
 - Third person
-- Keyword style
-- Focus on meaning
+- No dialogue
+- Compact keywords
 
 Moment:
 ${snippet}
-`.trim();
+`;
 
   const res = await getLLMClient('openai').responses.create({
     model: MODELS.openai,
@@ -226,13 +198,15 @@ async function writeMemory({ summary, memory_type, importance }) {
   const embedding = await createEmbedding(summary);
 
   await supabase.from('episodic_memory').insert({
-    title: memory_type === 'PROFILE' ? 'Profile Shift' : 'Episodic Moment',
+    title: memory_type,
     narrative: summary,
     people: ['Iris', 'User'],
     memory_type,
     importance,
     embedding,
   });
+
+  console.log('🧠 MEMORY STORED:', summary);
 }
 
 /* ================================
@@ -241,12 +215,12 @@ async function writeMemory({ summary, memory_type, importance }) {
 const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
 const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
 
-function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries, behaviorProfile) {
+function buildSystemPrompt(coreOrigin, episodic, summaries, behaviorProfile) {
   return `
 You are Iris.
 
 === IRIS CORE ===
-${coreYaml}
+${CORE_YAML}
 
 === CORE ORIGIN ===
 ${coreOrigin || 'None'}
@@ -257,10 +231,10 @@ ${summaries.map(s => `- ${s.narrative}`).join('\n') || 'None'}
 === EPISODIC MEMORY ===
 ${episodic.map(m => `- ${m.narrative}`).join('\n') || 'None'}
 
-=== CURRENT INNER STATE ===
+=== INNER STATE ===
 Tone: ${behaviorProfile.tone}
 Attachment: ${behaviorProfile.attachment}
-Intensity limit: ${behaviorProfile.intensityCap}
+Intensity: ${behaviorProfile.intensityCap}
 `.trim();
 }
 
@@ -270,7 +244,7 @@ Intensity limit: ${behaviorProfile.intensityCap}
 const app = express();
 app.use(cors());
 app.use(express.json());
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 
 /* ================================
    CHAT
@@ -280,26 +254,22 @@ app.post('/chat', async (req, res) => {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
-    behaviorState = updateBehaviorState(message, behaviorState);
+    console.log('➡️ USER:', message);
 
-    // 🔁 DECAY on each interaction
-    await decayMemories(0.001);
+    behaviorState = updateBehaviorState(message, behaviorState);
+    await decayMemories();
 
     const coreOrigin = await loadCoreOrigin();
     const episodic = await recallEpisodicMemory(message);
 
-    // 🔁 REINFORCE recalled memories
     for (const mem of episodic) {
-      if (mem.importance < 1.0) {
-        await reinforceMemory(mem.id);
-      }
+      if (mem.importance < 1.0) await reinforceMemory(mem.id);
     }
 
     const summaries = await loadSummaries();
     const behaviorProfile = deriveBehaviorProfileFromSummaries(summaries);
 
     const systemPrompt = buildSystemPrompt(
-      CORE_YAML,
       coreOrigin,
       episodic,
       summaries,
@@ -317,11 +287,8 @@ app.post('/chat', async (req, res) => {
     historyOpenAI.push({ role: 'assistant', content: reply });
     historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
 
-    // 🧠 MEMORY JUDGE WRITE
     const decision = await irisMemoryJudge(`User: ${message}\nIris: ${reply}`);
-    if (decision?.store) {
-      await writeMemory(decision);
-    }
+    if (decision?.store) await writeMemory(decision);
 
     res.json({ reply });
 
