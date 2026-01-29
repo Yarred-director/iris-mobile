@@ -18,8 +18,6 @@ dotenv.config({
 import { createClient } from '@supabase/supabase-js';
 import cors from 'cors';
 import express from 'express';
-import fs from 'fs';
-import OpenAI from 'openai';
 
 import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
@@ -82,9 +80,9 @@ function updateBehaviorState(message, currentState) {
 ================================ */
 function deriveBehaviorProfileFromSummaries(summaries) {
   const profile = {
-    tone: 'playful',        // playful | calm | serious | protective
-    attachment: 'light',    // light | bonded | protective
-    intensityCap: 'normal', // normal | reduced | elevated
+    tone: 'playful',
+    attachment: 'light',
+    intensityCap: 'normal',
   };
 
   const text = summaries.map(s => s.narrative.toLowerCase()).join(' ');
@@ -109,7 +107,7 @@ function deriveBehaviorProfileFromSummaries(summaries) {
 function sanitizeForGrok(messages, limit = 5) {
   return messages.slice(-limit).map(m => ({
     role: m.role,
-    content: '[previous context summarized]'
+    content: '[previous context summarized]',
   }));
 }
 
@@ -130,97 +128,37 @@ const supabase = createClient(
 );
 
 /* ================================
-   EMBEDDINGS (OPENAI)
-================================ */
-const embeddingClient = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-async function createEmbedding(text) {
-  const res = await embeddingClient.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: text,
-  });
-  return res.data[0].embedding;
-}
-
-/* ================================
-   MEMORY LOADERS
-================================ */
-async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
-  const embedding = await createEmbedding(text);
-  const { data } = await supabase.rpc('match_episodic_memory', {
-    query_embedding: embedding,
-    match_threshold: threshold,
-    match_count: count,
-  });
-  return data || [];
-}
-
-async function loadCoreOrigin() {
-  const { data } = await supabase
-    .from('episodic_memory')
-    .select('narrative')
-    .eq('memory_type', 'CORE_ORIGIN')
-    .limit(1);
-
-  return data?.[0]?.narrative || null;
-}
-
-async function loadSummaries(limit = 2) {
-  const { data } = await supabase
-    .from('episodic_memory')
-    .select('narrative')
-    .eq('memory_type', 'SUMMARY')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  return data || [];
-}
-
-/* ================================
-   SYSTEM PROMPT
-================================ */
-function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries, behaviorProfile) {
-  return `
-You are Iris.
-
-Everything about your identity, behavior, tone, boundaries,
-language and memory handling is defined BELOW.
-
-=== IRIS CORE ===
-${coreYaml}
-
-=== CORE ORIGIN ===
-${coreOrigin || 'None'}
-
-=== RELATIONSHIP SUMMARY ===
-${summaries.length ? summaries.map(s => `- ${s.narrative}`).join('\n') : 'None'}
-
-=== EPISODIC MEMORY ===
-${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
-
-=== CURRENT INNER STATE ===
-Tone: ${behaviorProfile.tone}
-Attachment: ${behaviorProfile.attachment}
-Intensity limit: ${behaviorProfile.intensityCap}
-`.trim();
-}
-
-/* ================================
-   LOAD YAML
-================================ */
-const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
-const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
-console.log('🧠 IRIS CORE YAML loaded');
-
-/* ================================
    EXPRESS
 ================================ */
 const app = express();
 app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 3001;
+
+/* ================================
+   UI: SPLASH (NEW ✅)
+================================ */
+app.get('/ui/splash', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('ui_config')
+      .select('image_url, overlay, blur')
+      .eq('key', 'splash_loading')
+      .single();
+
+    if (error || !data) {
+      return res.status(200).json(null);
+    }
+
+    res.json({
+      image_url: data.image_url,
+      overlay: data.overlay ?? 0,
+      blur: data.blur ?? 0,
+    });
+  } catch {
+    res.status(200).json(null);
+  }
+});
 
 /* ================================
    CHAT
@@ -238,7 +176,6 @@ app.post('/chat', async (req, res) => {
 
     const behaviorProfile = deriveBehaviorProfileFromSummaries(summaries);
 
-    // 🎛️ BEHAVIOR MODULATION
     if (behaviorProfile.intensityCap === 'reduced' && behaviorState === 'heated') {
       behaviorState = 'close';
     }
@@ -256,20 +193,19 @@ app.post('/chat', async (req, res) => {
       behaviorProfile
     );
 
-    // 🔁 ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
           { role: 'system', content: systemPrompt },
           ...sanitizeForGrok(historyOpenAI),
-          { role: 'user', content: message }
+          { role: 'user', content: message },
         ];
       }
 
       if (activeLLM === 'grok' && nextLLM === 'openai') {
         historyOpenAI = [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: message }
+          { role: 'user', content: message },
         ];
       }
 
@@ -304,10 +240,7 @@ app.post('/chat', async (req, res) => {
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
     }
 
-    console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM, '🎛️ PROFILE:', behaviorProfile);
-
     res.json({ reply });
-
   } catch (err) {
     console.error('🔥 CHAT ERROR:', err);
     res.status(500).json({ error: err.message });
