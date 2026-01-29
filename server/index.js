@@ -1,5 +1,10 @@
+/* ======================================================
+   🔥 DEBUG
+====================================================== */
+console.log('🔥 IRIS INDEX LOADED — DUAL LLM ROUTING ACTIVE');
+
 /* ================================
-   ENV (NODE 24 SAFE)
+   ENV
 ================================ */
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -9,9 +14,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config({
-  path: path.resolve(__dirname, '.env'),
-});
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 /* ================================
    IMPORTS
@@ -25,19 +28,17 @@ import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
 
 /* ================================
-   BASIC STATE
+   STATE
 ================================ */
-const MAX_HISTORY_LENGTH = 200;
+const MAX_HISTORY = 200;
 
 let historyOpenAI = [];
 let historyGrok = [];
 let activeLLM = 'openai';
-
-// 🧠 Behavior FSM
 let behaviorState = 'idle';
 
 /* ================================
-   ENV VALIDATION
+   VALIDATION
 ================================ */
 if (!process.env.SUPABASE_URL) throw new Error('SUPABASE_URL missing');
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY missing');
@@ -53,11 +54,9 @@ const supabase = createClient(
 );
 
 /* ================================
-   OPENAI (EMBEDDINGS)
+   EMBEDDINGS
 ================================ */
-const embeddingClient = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const embeddingClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function createEmbedding(text) {
   const res = await embeddingClient.embeddings.create({
@@ -68,14 +67,14 @@ async function createEmbedding(text) {
 }
 
 /* ================================
-   MEMORY LOADERS  ✅ FIX
+   MEMORY
 ================================ */
-async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
+async function recallEpisodicMemory(text) {
   const embedding = await createEmbedding(text);
   const { data } = await supabase.rpc('match_episodic_memory', {
     query_embedding: embedding,
-    match_threshold: threshold,
-    match_count: count,
+    match_threshold: 0.6,
+    match_count: 3,
   });
   return data || [];
 }
@@ -86,112 +85,114 @@ async function loadCoreOrigin() {
     .select('narrative')
     .eq('memory_type', 'CORE_ORIGIN')
     .limit(1);
-
   return data?.[0]?.narrative || null;
 }
 
-async function loadSummaries(limit = 2) {
+async function loadSummaries() {
   const { data } = await supabase
     .from('episodic_memory')
     .select('narrative')
     .eq('memory_type', 'SUMMARY')
     .order('created_at', { ascending: false })
-    .limit(limit);
-
+    .limit(2);
   return data || [];
 }
 
-/* ================================
-   BEHAVIOR ENGINE (FSM)
-================================ */
-function updateBehaviorState(message, currentState) {
-  const text = message.toLowerCase();
+async function reinforceMemory(id) {
+  await supabase.rpc('reinforce_memory', { mem_id: id, boost: 0.05 });
+}
 
-  const signals = {
-    physical: /dotyk|bozk|prs|nahá|vojsť|tvrdý|vlhk|panva/.test(text),
-    flirt: /úsmev|zavrn|blízko|pritiah|pohlad/.test(text),
-    romantic: /večer|park|rande|spolu|chcem byť/.test(text),
-    pullback: /čo máš v pláne|len tak|poďme/.test(text),
-  };
-
-  switch (currentState) {
-    case 'idle':
-      if (signals.romantic || signals.flirt) return 'warm';
-      return 'idle';
-    case 'warm':
-      if (signals.flirt) return 'teasing';
-      if (signals.physical) return 'close';
-      return 'warm';
-    case 'teasing':
-      if (signals.physical) return 'close';
-      return 'teasing';
-    case 'close':
-      if (signals.physical) return 'heated';
-      if (signals.pullback) return 'teasing';
-      return 'close';
-    case 'heated':
-      if (signals.pullback) return 'close';
-      return 'heated';
-    default:
-      return 'idle';
-  }
+async function decayMemories() {
+  await supabase.rpc('decay_memories', { decay_rate: 0.001 });
 }
 
 /* ================================
-   SUMMARY → BEHAVIOR PROFILE
+   BEHAVIOR + ROUTING
 ================================ */
-function deriveBehaviorProfileFromSummaries(summaries) {
-  const profile = {
-    tone: 'playful',
-    attachment: 'light',
-    intensityCap: 'normal',
-  };
+function detectState(text) {
+  const t = text.toLowerCase();
 
-  const text = summaries.map(s => s.narrative.toLowerCase()).join(' ');
+  if (/nahá|vlhk|panva|tvrdý|vojsť|sex|intímn/.test(t)) return 'heated';
+  if (/bozk|dotyk|pritiah|pohlad/.test(t)) return 'close';
+  if (/rande|večer|spolu/.test(t)) return 'warm';
 
-  if (text.match(/operácia|strach|ťažké obdobie|podpora|zraniteľný/)) {
-    profile.tone = 'calm';
-    profile.attachment = 'protective';
-    profile.intensityCap = 'reduced';
-  }
+  return 'idle';
+}
 
-  if (text.match(/dôvera|bezpečie|opora|dlhodobý/)) {
-    profile.attachment = 'bonded';
-  }
-
-  if (text.match(/tokyo|vášnivý|noc|intenzívny/)) {
-    profile.intensityCap = 'elevated';
-  }
-
-  return profile;
+function sanitizeForGrok(messages, limit = 6) {
+  return messages.slice(-limit).map(m => ({
+    role: m.role,
+    content: '[previous context summarized]'
+  }));
 }
 
 /* ================================
-   SYSTEM PROMPT
+   MEMORY JUDGE (OPENAI ONLY)
 ================================ */
-const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
-const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
+async function irisMemoryJudge(snippet) {
+  const res = await getLLMClient('openai').responses.create({
+    model: MODELS.openai,
+    input: [{
+      role: 'user',
+      content: `
+Return JSON only.
 
-function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries, behaviorProfile) {
-  return `
+If not important:
+{ "store": false }
+
+If important:
+{
+ "store": true,
+ "memory_type": "EPISODIC or PROFILE",
+ "importance": 0.3-1.0,
+ "summary": "keyword emotional memory"
+}
+
+Moment:
+${snippet}`
+    }]
+  });
+
+  try { return JSON.parse(res.output_text); }
+  catch { return { store:false }; }
+}
+
+async function writeMemory(m) {
+  const emb = await createEmbedding(m.summary);
+  await supabase.from('episodic_memory').insert({
+    title: m.memory_type,
+    narrative: m.summary,
+    people:['Iris','User'],
+    memory_type:m.memory_type,
+    importance:m.importance,
+    embedding:emb
+  });
+  console.log('🧠 MEMORY STORED:', m.summary);
+}
+
+/* ================================
+   PROMPT
+================================ */
+const CORE_YAML = fs.readFileSync(
+  path.resolve(__dirname, process.env.IRIS_CORE_YAML),
+  'utf8'
+);
+
+function buildSystemPrompt(core, episodic, summaries) {
+return `
 You are Iris.
 
 === IRIS CORE ===
-${coreYaml}
+${CORE_YAML}
 
 === CORE ORIGIN ===
-${coreOrigin || 'None'}
+${core||'None'}
 
-=== RELATIONSHIP SUMMARY ===
-${summaries.length ? summaries.map(s => `- ${s.narrative}`).join('\n') : 'None'}
+=== SUMMARY ===
+${summaries.map(s=>`- ${s.narrative}`).join('\n')||'None'}
 
-=== EPISODIC MEMORY ===
-${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
-
-=== CURRENT INNER STATE ===
-Tone: ${behaviorProfile.tone}
-Attachment: ${behaviorProfile.attachment}
-Intensity limit: ${behaviorProfile.intensityCap}
+=== EPISODIC ===
+${episodic.map(m=>`- ${m.narrative}`).join('\n')||'None'}
 `.trim();
 }
 
@@ -201,65 +202,87 @@ Intensity limit: ${behaviorProfile.intensityCap}
 const app = express();
 app.use(cors());
 app.use(express.json());
-const PORT = process.env.PORT || 3001;
-
-/* ================================
-   UI: SPLASH
-================================ */
-app.get('/ui/splash', async (req, res) => {
-  const { data } = await supabase
-    .from('ui_config')
-    .select('image_url, overlay, blur')
-    .eq('key', 'splash_loading')
-    .single();
-
-  res.json(data || null);
-});
 
 /* ================================
    CHAT
 ================================ */
-app.post('/chat', async (req, res) => {
-  try {
-    const { message } = req.body;
-    if (!message) return res.status(400).json({ error: 'Missing message' });
+app.post('/chat', async (req,res)=>{
+try{
+  const { message } = req.body;
+  console.log('➡️ USER:', message);
 
-    behaviorState = updateBehaviorState(message, behaviorState);
+  behaviorState = detectState(message);
+  const nextLLM = behaviorState === 'heated' ? 'grok' : 'openai';
 
-    const coreOrigin = await loadCoreOrigin();
-    const episodic = await recallEpisodicMemory(message);
-    const summaries = await loadSummaries();
-    const behaviorProfile = deriveBehaviorProfileFromSummaries(summaries);
+  console.log(`🤖 ROUTE → ${nextLLM.toUpperCase()} | STATE=${behaviorState}`);
 
-    const systemPrompt = buildSystemPrompt(
-      CORE_YAML,
-      coreOrigin,
-      episodic,
-      summaries,
-      behaviorProfile
-    );
+  await decayMemories();
 
-    historyOpenAI.push({ role: 'user', content: message });
+  const core = await loadCoreOrigin();
+  const episodic = await recallEpisodicMemory(message);
+  for(const m of episodic) if(m.importance<1) await reinforceMemory(m.id);
 
-    const response = await getLLMClient('openai').responses.create({
-      model: MODELS.openai,
-      input: [{ role: 'system', content: systemPrompt }, ...historyOpenAI],
-    });
+  const summaries = await loadSummaries();
+  const systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    const reply = response.output_text || '…';
-    historyOpenAI.push({ role: 'assistant', content: reply });
-    historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
-
-    res.json({ reply });
-  } catch (err) {
-    console.error('🔥 CHAT ERROR:', err);
-    res.status(500).json({ error: err.message });
+  // 🔁 SWITCH LLM — wipe OpenAI when entering GROK
+  if(nextLLM !== activeLLM){
+    if(nextLLM === 'grok'){
+      historyGrok = [
+        {role:'system',content:systemPrompt},
+        ...sanitizeForGrok(historyOpenAI),
+        {role:'user',content:message}
+      ];
+      historyOpenAI = []; // 🔥 prevent erotic leak back
+    }
+    if(nextLLM === 'openai'){
+      historyOpenAI = [
+        {role:'system',content:systemPrompt},
+        {role:'user',content:message}
+      ];
+    }
+    activeLLM = nextLLM;
   }
-});
+
+  let reply;
+
+  if(activeLLM==='openai'){
+    historyOpenAI.push({role:'user',content:message});
+    const r = await getLLMClient('openai').responses.create({
+      model:MODELS.openai,
+      input:historyOpenAI
+    });
+    reply=r.output_text||'…';
+    historyOpenAI.push({role:'assistant',content:reply});
+    historyOpenAI=historyOpenAI.slice(-MAX_HISTORY);
+  }
+
+  if(activeLLM==='grok'){
+    historyGrok.push({role:'user',content:message});
+    const r = await getLLMClient('grok').responses.create({
+      model:MODELS.grok,
+      input:historyGrok
+    });
+    reply=r.output_text||'…';
+    historyGrok.push({role:'assistant',content:reply});
+    historyGrok=historyGrok.slice(-MAX_HISTORY);
+  }
+
+  console.log(`💬 REPLY BY ${activeLLM.toUpperCase()}`);
+
+  const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
+  if(decision?.store) await writeMemory(decision);
+
+  res.json({reply});
+
+}catch(e){
+ console.error('🔥 CHAT ERROR:',e);
+ res.status(500).json({error:e.message});
+}});
 
 /* ================================
    START
 ================================ */
-app.listen(PORT, () =>
-  console.log(`🚀 Iris backend running on port ${PORT}`)
-);
+app.listen(process.env.PORT||10000,()=>{
+ console.log('🚀 Iris backend running');
+});
