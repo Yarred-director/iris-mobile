@@ -53,25 +53,20 @@ function updateBehaviorState(message, currentState) {
     case 'idle':
       if (signals.romantic || signals.flirt) return 'warm';
       return 'idle';
-
     case 'warm':
       if (signals.flirt) return 'teasing';
       if (signals.physical) return 'close';
       return 'warm';
-
     case 'teasing':
       if (signals.physical) return 'close';
       return 'teasing';
-
     case 'close':
       if (signals.physical) return 'heated';
       if (signals.pullback) return 'teasing';
       return 'close';
-
     case 'heated':
       if (signals.pullback) return 'close';
       return 'heated';
-
     default:
       return 'idle';
   }
@@ -134,7 +129,6 @@ async function loadCoreOrigin() {
     .select('narrative')
     .eq('memory_type', 'CORE_ORIGIN')
     .limit(1);
-
   return data?.[0]?.narrative || null;
 }
 
@@ -145,7 +139,6 @@ async function loadSummaries(limit = 2) {
     .eq('memory_type', 'SUMMARY')
     .order('created_at', { ascending: false })
     .limit(limit);
-
   return data || [];
 }
 
@@ -158,7 +151,6 @@ You are Iris.
 
 Everything about your identity, behavior, tone, boundaries,
 language and memory handling is defined BELOW.
-You must strictly follow it.
 
 === IRIS CORE ===
 ${coreYaml}
@@ -182,9 +174,9 @@ const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
 console.log('🧠 IRIS CORE YAML loaded');
 
 /* ================================
-   IRIS MEMORY JUDGE
+   IRIS MEMORY JUDGE (WITH IMPORTANCE)
 ================================ */
-async function irisMemoryJudge({ systemPrompt, snippet }) {
+async function irisMemoryJudge({ snippet }) {
   const prompt = `
 Decide if this moment should be stored as long-term memory.
 
@@ -195,12 +187,12 @@ If important:
 {
   "store": true,
   "memory_type": "EPISODIC or PROFILE",
+  "importance": number between 0.3 and 1.0,
   "summary": "keyword style memory with emotional layer"
 }
 
 Rules:
 - No dialogue
-- No explicit sex
 - Third person
 - Keyword / phrase style
 - Focus on meaning
@@ -221,7 +213,7 @@ ${snippet}
   }
 }
 
-async function writeMemory({ summary, memory_type }) {
+async function writeMemory({ summary, memory_type, importance = 0.6 }) {
   const embedding = await createEmbedding(summary);
 
   await supabase.from('episodic_memory').insert({
@@ -229,6 +221,7 @@ async function writeMemory({ summary, memory_type }) {
     narrative: summary,
     people: ['Iris', 'User'],
     memory_type,
+    importance,
     embedding
   });
 }
@@ -263,7 +256,6 @@ app.post('/chat', async (req, res) => {
       summaries
     );
 
-    // 🔁 ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
@@ -272,14 +264,12 @@ app.post('/chat', async (req, res) => {
           { role: 'user', content: message }
         ];
       }
-
       if (activeLLM === 'grok' && nextLLM === 'openai') {
         historyOpenAI = [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
         ];
       }
-
       activeLLM = nextLLM;
     }
 
@@ -287,15 +277,10 @@ app.post('/chat', async (req, res) => {
 
     if (activeLLM === 'openai') {
       historyOpenAI.push({ role: 'user', content: message });
-
       const response = await getLLMClient('openai').responses.create({
         model: MODELS.openai,
-        input: [
-          { role: 'system', content: systemPrompt },
-          ...historyOpenAI
-        ],
+        input: [{ role: 'system', content: systemPrompt }, ...historyOpenAI],
       });
-
       reply = response.output_text || '…';
       historyOpenAI.push({ role: 'assistant', content: reply });
       historyOpenAI = historyOpenAI.slice(-MAX_HISTORY_LENGTH);
@@ -303,12 +288,10 @@ app.post('/chat', async (req, res) => {
 
     if (activeLLM === 'grok') {
       historyGrok.push({ role: 'user', content: message });
-
       const response = await getLLMClient('grok').responses.create({
         model: MODELS.grok,
         input: historyGrok,
       });
-
       reply = response.output_text || '…';
       historyGrok.push({ role: 'assistant', content: reply });
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
@@ -316,15 +299,13 @@ app.post('/chat', async (req, res) => {
 
     console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM);
 
-    // 🧠 MEMORY JUDGE
     const decision = await irisMemoryJudge({
-      systemPrompt,
       snippet: `User: ${message}\nIris: ${reply}`
     });
 
     if (decision?.store) {
       await writeMemory(decision);
-      console.log('🧠 MEMORY STORED:', decision.memory_type, decision.summary);
+      console.log('🧠 MEMORY STORED:', decision);
     }
 
     res.json({ reply });
