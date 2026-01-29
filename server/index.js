@@ -33,11 +33,11 @@ let historyOpenAI = [];
 let historyGrok = [];
 let activeLLM = 'openai';
 
-// 🧠 Behavior state
+// 🧠 Behavior FSM
 let behaviorState = 'idle';
 
 /* ================================
-   BEHAVIOR ENGINE
+   BEHAVIOR ENGINE (FSM)
 ================================ */
 function updateBehaviorState(message, currentState) {
   const text = message.toLowerCase();
@@ -46,7 +46,7 @@ function updateBehaviorState(message, currentState) {
     physical: /dotyk|bozk|prs|nahá|vojsť|tvrdý|vlhk|panva/.test(text),
     flirt: /úsmev|zavrn|blízko|pritiah|pohlad/.test(text),
     romantic: /večer|park|rande|spolu|chcem byť/.test(text),
-    pullback: /čo máš v pláne|poďme|len tak/.test(text),
+    pullback: /čo máš v pláne|len tak|poďme/.test(text),
   };
 
   switch (currentState) {
@@ -101,7 +101,7 @@ const supabase = createClient(
 );
 
 /* ================================
-   MEMORY (EMBEDDINGS – OPENAI)
+   EMBEDDINGS (OPENAI)
 ================================ */
 const embeddingClient = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -115,6 +115,9 @@ async function createEmbedding(text) {
   return res.data[0].embedding;
 }
 
+/* ================================
+   MEMORY LOADERS
+================================ */
 async function recallEpisodicMemory(text, threshold = 0.6, count = 3) {
   const embedding = await createEmbedding(text);
   const { data } = await supabase.rpc('match_episodic_memory', {
@@ -135,27 +138,39 @@ async function loadCoreOrigin() {
   return data?.[0]?.narrative || null;
 }
 
+async function loadSummaries(limit = 2) {
+  const { data } = await supabase
+    .from('episodic_memory')
+    .select('narrative')
+    .eq('memory_type', 'SUMMARY')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  return data || [];
+}
+
 /* ================================
    SYSTEM PROMPT
 ================================ */
-function buildSystemPrompt(coreYaml, coreOrigin, recalledMemories) {
+function buildSystemPrompt(coreYaml, coreOrigin, episodic, summaries) {
   return `
 You are Iris.
 
 Everything about your identity, behavior, tone, boundaries,
-language, intimacy and memory handling is defined BELOW.
+language and memory handling is defined BELOW.
 You must strictly follow it.
 
-=== IRIS CORE (AUTHORITATIVE) ===
+=== IRIS CORE ===
 ${coreYaml}
 
-=== CORE ORIGIN (HARD TRUTH) ===
+=== CORE ORIGIN ===
 ${coreOrigin || 'None'}
 
-=== EPISODIC MEMORY (SOFT RECALL) ===
-${recalledMemories.length
-  ? recalledMemories.map(m => `- ${m.narrative}`).join('\n')
-  : 'None'}
+=== RELATIONSHIP SUMMARY ===
+${summaries.length ? summaries.map(s => `- ${s.narrative}`).join('\n') : 'None'}
+
+=== EPISODIC MEMORY ===
+${episodic.length ? episodic.map(m => `- ${m.narrative}`).join('\n') : 'None'}
 `.trim();
 }
 
@@ -165,6 +180,58 @@ ${recalledMemories.length
 const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
 const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
 console.log('🧠 IRIS CORE YAML loaded');
+
+/* ================================
+   IRIS MEMORY JUDGE
+================================ */
+async function irisMemoryJudge({ systemPrompt, snippet }) {
+  const prompt = `
+Decide if this moment should be stored as long-term memory.
+
+If NOT important:
+{ "store": false }
+
+If important:
+{
+  "store": true,
+  "memory_type": "EPISODIC or PROFILE",
+  "summary": "keyword style memory with emotional layer"
+}
+
+Rules:
+- No dialogue
+- No explicit sex
+- Third person
+- Keyword / phrase style
+- Focus on meaning
+
+Moment:
+${snippet}
+`.trim();
+
+  const res = await getLLMClient('openai').responses.create({
+    model: MODELS.openai,
+    input: [{ role: 'user', content: prompt }],
+  });
+
+  try {
+    return JSON.parse(res.output_text);
+  } catch {
+    return { store: false };
+  }
+}
+
+async function writeMemory({ summary, memory_type }) {
+  const embedding = await createEmbedding(summary);
+
+  await supabase.from('episodic_memory').insert({
+    title: memory_type === 'PROFILE' ? 'Profile Shift' : 'Episodic Moment',
+    narrative: summary,
+    people: ['Iris', 'User'],
+    memory_type,
+    embedding
+  });
+}
 
 /* ================================
    EXPRESS
@@ -182,16 +249,21 @@ app.post('/chat', async (req, res) => {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
-    // 🧠 update behavior
     behaviorState = updateBehaviorState(message, behaviorState);
-
     const nextLLM = behaviorState === 'heated' ? 'grok' : 'openai';
 
     const coreOrigin = await loadCoreOrigin();
-    const recalled = await recallEpisodicMemory(message);
-    const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
+    const episodic = await recallEpisodicMemory(message);
+    const summaries = await loadSummaries();
 
-    // ---- ONE WAY BRIDGE
+    const systemPrompt = buildSystemPrompt(
+      CORE_YAML,
+      coreOrigin,
+      episodic,
+      summaries
+    );
+
+    // 🔁 ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
@@ -243,6 +315,17 @@ app.post('/chat', async (req, res) => {
     }
 
     console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM);
+
+    // 🧠 MEMORY JUDGE
+    const decision = await irisMemoryJudge({
+      systemPrompt,
+      snippet: `User: ${message}\nIris: ${reply}`
+    });
+
+    if (decision?.store) {
+      await writeMemory(decision);
+      console.log('🧠 MEMORY STORED:', decision.memory_type, decision.summary);
+    }
 
     res.json({ reply });
 
