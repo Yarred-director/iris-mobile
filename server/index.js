@@ -29,23 +29,52 @@ import { MODELS } from './lib/llmModels.js';
 ================================ */
 const MAX_HISTORY_LENGTH = 200;
 
-// oddelené histórie
 let historyOpenAI = [];
 let historyGrok = [];
 let activeLLM = 'openai';
 
+// 🧠 Behavior state
+let behaviorState = 'idle';
+
 /* ================================
-   ROUTING (TEMP – nahradí BehaviorEngine)
+   BEHAVIOR ENGINE
 ================================ */
-function decideLLM(message) {
-  const physicalKeywords = [
-    'nahá','dotyk','bozk','telo','prs','vojsť',
-    'tvrdý','panva','styk','vlhk'
-  ];
-  const lowered = message.toLowerCase();
-  return physicalKeywords.some(k => lowered.includes(k))
-    ? 'grok'
-    : 'openai';
+function updateBehaviorState(message, currentState) {
+  const text = message.toLowerCase();
+
+  const signals = {
+    physical: /dotyk|bozk|prs|nahá|vojsť|tvrdý|vlhk|panva/.test(text),
+    flirt: /úsmev|zavrn|blízko|pritiah|pohlad/.test(text),
+    romantic: /večer|park|rande|spolu|chcem byť/.test(text),
+    pullback: /čo máš v pláne|poďme|len tak/.test(text),
+  };
+
+  switch (currentState) {
+    case 'idle':
+      if (signals.romantic || signals.flirt) return 'warm';
+      return 'idle';
+
+    case 'warm':
+      if (signals.flirt) return 'teasing';
+      if (signals.physical) return 'close';
+      return 'warm';
+
+    case 'teasing':
+      if (signals.physical) return 'close';
+      return 'teasing';
+
+    case 'close':
+      if (signals.physical) return 'heated';
+      if (signals.pullback) return 'teasing';
+      return 'close';
+
+    case 'heated':
+      if (signals.pullback) return 'close';
+      return 'heated';
+
+    default:
+      return 'idle';
+  }
 }
 
 function sanitizeForGrok(messages, limit = 5) {
@@ -153,14 +182,17 @@ app.post('/chat', async (req, res) => {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Missing message' });
 
-    const nextLLM = decideLLM(message);
+    // 🧠 update behavior
+    behaviorState = updateBehaviorState(message, behaviorState);
+
+    const nextLLM = behaviorState === 'heated' ? 'grok' : 'openai';
 
     const coreOrigin = await loadCoreOrigin();
     const recalled = await recallEpisodicMemory(message);
     const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
 
+    // ---- ONE WAY BRIDGE
     if (nextLLM !== activeLLM) {
-
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
           { role: 'system', content: systemPrompt },
@@ -210,8 +242,7 @@ app.post('/chat', async (req, res) => {
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
     }
 
-    // 🔍 DEBUG ROUTING
-    console.log('🤖 ACTIVE LLM:', activeLLM);
+    console.log('🧠 STATE:', behaviorState, '🤖 LLM:', activeLLM);
 
     res.json({ reply });
 
