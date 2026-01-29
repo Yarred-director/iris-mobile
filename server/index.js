@@ -29,13 +29,13 @@ import { MODELS } from './lib/llmModels.js';
 ================================ */
 const MAX_HISTORY_LENGTH = 200;
 
-// 🔥 ODDelené histórie
+// oddelené histórie
 let historyOpenAI = [];
 let historyGrok = [];
 let activeLLM = 'openai';
 
 /* ================================
-   ROUTING (TEMP – neskôr BehaviorEngine)
+   ROUTING (TEMP – nahradí BehaviorEngine)
 ================================ */
 function decideLLM(message) {
   const physicalKeywords = [
@@ -62,10 +62,6 @@ if (!process.env.SUPABASE_URL) throw new Error('SUPABASE_URL missing');
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY missing');
 if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY missing');
 if (!process.env.IRIS_CORE_YAML) throw new Error('IRIS_CORE_YAML missing');
-
-if (!process.env.XAI_API_KEY) {
-  console.warn('⚠️ XAI_API_KEY missing – Grok disabled');
-}
 
 /* ================================
    SUPABASE
@@ -137,9 +133,8 @@ ${recalledMemories.length
 /* ================================
    LOAD YAML
 ================================ */
-let CORE_YAML = '';
 const yamlPath = path.resolve(__dirname, process.env.IRIS_CORE_YAML);
-CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
+const CORE_YAML = fs.readFileSync(yamlPath, 'utf8');
 console.log('🧠 IRIS CORE YAML loaded');
 
 /* ================================
@@ -161,14 +156,13 @@ app.post('/chat', async (req, res) => {
     const nextLLM = decideLLM(message);
 
     const coreOrigin = await loadCoreOrigin();
-    console.log("🔥 CORE_ORIGIN:", coreOrigin);
     const recalled = await recallEpisodicMemory(message);
     const systemPrompt = buildSystemPrompt(CORE_YAML, coreOrigin, recalled);
 
-    // 🔁 ONE-WAY BRIDGE
+    // ---- ONE-WAY BRIDGE
     if (nextLLM !== activeLLM) {
 
-      // OpenAI → Grok (POVOLENÉ)
+      // OpenAI → Grok
       if (activeLLM === 'openai' && nextLLM === 'grok') {
         historyGrok = [
           { role: 'system', content: systemPrompt },
@@ -177,7 +171,7 @@ app.post('/chat', async (req, res) => {
         ];
       }
 
-      // Grok → OpenAI (RESET – ZAKÁZANÝ PRENOS)
+      // Grok → OpenAI (reset, no carryover)
       if (activeLLM === 'grok' && nextLLM === 'openai') {
         historyOpenAI = [
           { role: 'system', content: systemPrompt },
@@ -195,7 +189,10 @@ app.post('/chat', async (req, res) => {
 
       const response = await getLLMClient('openai').responses.create({
         model: MODELS.openai,
-        input: historyOpenAI,
+        input: [
+          { role: 'system', content: systemPrompt },
+          ...historyOpenAI
+        ],
       });
 
       reply = response.output_text || '…';
@@ -216,7 +213,6 @@ app.post('/chat', async (req, res) => {
       historyGrok = historyGrok.slice(-MAX_HISTORY_LENGTH);
     }
 
-    console.log('🤖 ACTIVE LLM:', activeLLM);
     res.json({ reply });
 
   } catch (err) {
