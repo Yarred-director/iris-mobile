@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ChatInput from '../components/ChatInput';
+import TypingIndicator from '../components/TypingIndicator';
 
 const API_BASE = 'https://iris-mobile.onrender.com';
 const API_CHAT = `${API_BASE}/chat`;
@@ -36,6 +37,7 @@ export default function ChatScreen() {
   ]);
 
   const [bg, setBg] = useState<BackgroundConfig | null>(null);
+  const [isTyping, setIsTyping] = useState(false);
 
   /* ================= BACKGROUND ================= */
   useEffect(() => {
@@ -53,6 +55,7 @@ export default function ChatScreen() {
     if (!text.trim()) return;
 
     setMessages(prev => [...prev, { role: 'user', text }]);
+    setIsTyping(true);
 
     try {
       const response = await fetch(API_CHAT, {
@@ -68,6 +71,8 @@ export default function ChatScreen() {
         ...prev,
         { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
       ]);
+    } finally {
+      setIsTyping(false);
     }
   };
 
@@ -103,6 +108,13 @@ export default function ChatScreen() {
             <Text style={styles.text}>{m.text}</Text>
           </View>
         ))}
+
+        {/* TYPING INDICATOR */}
+        {isTyping && (
+          <View style={{ marginLeft: 8, marginBottom: 8 }}>
+            <TypingIndicator />
+          </View>
+        )}
       </ScrollView>
 
       {/* INPUT */}
@@ -111,13 +123,14 @@ export default function ChatScreen() {
   );
 
   /* ================= RENDER ================= */
-  const Body = Platform.OS === 'ios' ? (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-      {Screen}
-    </KeyboardAvoidingView>
-  ) : (
-    Screen
-  );
+  const Body =
+    Platform.OS === 'ios' ? (
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        {Screen}
+      </KeyboardAvoidingView>
+    ) : (
+      Screen
+    );
 
   if (bg?.image_url) {
     return (
@@ -139,11 +152,7 @@ export default function ChatScreen() {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.root}>
-      {Body}
-    </SafeAreaView>
-  );
+  return <SafeAreaView style={styles.root}>{Body}</SafeAreaView>;
 }
 
 /* ================= STYLES ================= */
