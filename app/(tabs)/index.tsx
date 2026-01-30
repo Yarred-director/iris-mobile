@@ -16,7 +16,6 @@ import ChatInput from '../components/ChatInput';
 const API_BASE = 'https://iris-mobile.onrender.com';
 const API_CHAT = `${API_BASE}/chat`;
 
-// AVATAR
 const IRIS_AVATAR_URL =
   'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/avatars/iris-avatar-v1.png';
 
@@ -43,11 +42,8 @@ export default function ChatScreen() {
     fetch(`${API_BASE}/ui/chat-background`)
       .then(res => res.json())
       .then(data => {
-        if (data?.image_url) {
-          setBg(data);
-        } else {
-          setBg(null);
-        }
+        if (data?.image_url) setBg(data);
+        else setBg(null);
       })
       .catch(() => setBg(null));
   }, []);
@@ -76,52 +72,53 @@ export default function ChatScreen() {
   };
 
   /* ================= CONTENT ================= */
-  const Content = (
-    <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'android' ? 'height' : 'padding'}
-        keyboardVerticalOffset={96}
-      >
-        <View style={styles.container}>
-          {/* HEADER */}
-          <View style={styles.header}>
-            <View style={styles.avatarWrap}>
-              <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
-            </View>
-
-            <View>
-              <Text style={styles.headerName}>Iris</Text>
-              <Text style={styles.headerStatus}>with you</Text>
-            </View>
-          </View>
-
-          {/* MESSAGES */}
-          <ScrollView
-            style={styles.messages}
-            contentContainerStyle={{ paddingBottom: 140 }}
-          >
-            {messages.map((m, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.bubble,
-                  m.role === 'user' ? styles.user : styles.iris,
-                ]}
-              >
-                <Text style={styles.text}>{m.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
-
-          {/* INPUT */}
-          <ChatInput onSend={sendMessage} />
+  const Screen = (
+    <View style={styles.container}>
+      {/* HEADER */}
+      <View style={styles.header}>
+        <View style={styles.avatarWrap}>
+          <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+
+        <View>
+          <Text style={styles.headerName}>Iris</Text>
+          <Text style={styles.headerStatus}>with you</Text>
+        </View>
+      </View>
+
+      {/* MESSAGES */}
+      <ScrollView
+        style={styles.messages}
+        contentContainerStyle={{ paddingBottom: 12 }}
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.map((m, i) => (
+          <View
+            key={i}
+            style={[
+              styles.bubble,
+              m.role === 'user' ? styles.user : styles.iris,
+            ]}
+          >
+            <Text style={styles.text}>{m.text}</Text>
+          </View>
+        ))}
+      </ScrollView>
+
+      {/* INPUT */}
+      <ChatInput onSend={sendMessage} />
+    </View>
   );
 
   /* ================= RENDER ================= */
+  const Body = Platform.OS === 'ios' ? (
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      {Screen}
+    </KeyboardAvoidingView>
+  ) : (
+    Screen
+  );
+
   if (bg?.image_url) {
     return (
       <ImageBackground
@@ -130,23 +127,23 @@ export default function ChatScreen() {
         resizeMode="cover"
         blurRadius={bg.blur ?? 0}
       >
-        {/* OVERLAY */}
         <View
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            {
-              backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})`,
-            },
+            { backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})` },
           ]}
         />
-
-        {Content}
+        <SafeAreaView style={{ flex: 1 }}>{Body}</SafeAreaView>
       </ImageBackground>
     );
   }
 
-  return <View style={styles.root}>{Content}</View>;
+  return (
+    <SafeAreaView style={styles.root}>
+      {Body}
+    </SafeAreaView>
+  );
 }
 
 /* ================= STYLES ================= */
@@ -198,7 +195,7 @@ const styles = StyleSheet.create({
   bubble: {
     maxWidth: '80%',
     padding: 12,
-    borderRadius: 10,
+    borderRadius: 14,
     marginBottom: 10,
   },
   user: {
