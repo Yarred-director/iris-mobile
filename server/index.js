@@ -67,14 +67,14 @@ async function createEmbedding(text) {
 }
 
 /* ================================
-   MEMORY
+   MEMORY  ✅ FIXED
 ================================ */
 async function recallEpisodicMemory(text) {
   const embedding = await createEmbedding(text);
   const { data } = await supabase.rpc('match_episodic_memory', {
     query_embedding: embedding,
-    match_threshold: 0.6,
-    match_count: 3,
+    match_threshold: 0.45,
+    match_count: 6,
   });
   return data || [];
 }
@@ -107,12 +107,11 @@ async function decayMemories() {
 }
 
 /* ================================
-   BEHAVIOR + ROUTING  ✅ FIXED
+   BEHAVIOR + ROUTING
 ================================ */
 function detectState(text) {
   const t = text.toLowerCase();
 
-  // 🔥 erotic / physical → GROK
   if (/nahá|vlhk|panva|tvrd|vojsť|sex|intím|zadok|prsia|tlap|chyti|pritla|stisn|telo|bok|bozk/.test(t))
     return 'heated';
 
@@ -130,7 +129,7 @@ function sanitizeForGrok(messages, limit = 6) {
 }
 
 /* ================================
-   MEMORY JUDGE (OPENAI ONLY)
+   MEMORY JUDGE
 ================================ */
 async function irisMemoryJudge(snippet) {
   const res = await getLLMClient('openai').responses.create({
@@ -228,12 +227,10 @@ try{
   const summaries = await loadSummaries();
   const systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-  /* 🔥 CRITICAL FIX — system prompt ALWAYS for OpenAI */
   if (nextLLM === 'openai' && historyOpenAI.length === 0) {
     historyOpenAI.push({ role:'system', content: systemPrompt });
   }
 
-  /* 🔁 SWITCH LLM */
   if(nextLLM !== activeLLM){
     if(nextLLM === 'grok'){
       historyGrok = [
@@ -241,7 +238,7 @@ try{
         ...sanitizeForGrok(historyOpenAI),
         { role:'user', content: message }
       ];
-      historyOpenAI = []; // 🚫 erotic isolation
+      historyOpenAI = [];
     }
     if(nextLLM === 'openai'){
       historyOpenAI = [
@@ -276,8 +273,6 @@ try{
     historyGrok = historyGrok.slice(-MAX_HISTORY);
   }
 
-  console.log(`💬 REPLY BY ${activeLLM.toUpperCase()}`);
-
   const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
   if(decision?.store) await writeMemory(decision);
 
@@ -288,9 +283,6 @@ try{
  res.status(500).json({ error:e.message });
 }});
 
-/* ================================
-   START
-================================ */
 app.listen(process.env.PORT||10000,()=>{
  console.log('🚀 Iris backend running');
 });
