@@ -27,9 +27,7 @@ type Message = {
 
 type BackgroundConfig = {
   image_url: string;
-  overlay?: {
-    max: number;
-  };
+  overlay?: number;
   blur?: number;
 };
 
@@ -44,7 +42,13 @@ export default function ChatScreen() {
   useEffect(() => {
     fetch(`${API_BASE}/ui/chat-background`)
       .then(res => res.json())
-      .then(setBg)
+      .then(data => {
+        if (data?.image_url) {
+          setBg(data);
+        } else {
+          setBg(null);
+        }
+      })
       .catch(() => setBg(null));
   }, []);
 
@@ -73,63 +77,48 @@ export default function ChatScreen() {
 
   /* ================= CONTENT ================= */
   const Content = (
-    <>
-      {/* OVERLAY */}
-      {bg?.image_url && (
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              backgroundColor: `rgba(0,0,0,${bg.overlay?.max ?? 0.35})`,
-            },
-          ]}
-        />
-      )}
-
-      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'android' ? 'height' : 'padding'}
-          keyboardVerticalOffset={96}
-        >
-          <View style={styles.container}>
-            {/* HEADER */}
-            <View style={styles.header}>
-              <View style={styles.avatarWrap}>
-                <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
-              </View>
-
-              <View>
-                <Text style={styles.headerName}>Iris</Text>
-                <Text style={styles.headerStatus}>with you</Text>
-              </View>
+    <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'android' ? 'height' : 'padding'}
+        keyboardVerticalOffset={96}
+      >
+        <View style={styles.container}>
+          {/* HEADER */}
+          <View style={styles.header}>
+            <View style={styles.avatarWrap}>
+              <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
             </View>
 
-            {/* MESSAGES */}
-            <ScrollView
-              style={styles.messages}
-              contentContainerStyle={{ paddingBottom: 140 }}
-            >
-              {messages.map((m, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.bubble,
-                    m.role === 'user' ? styles.user : styles.iris,
-                  ]}
-                >
-                  <Text style={styles.text}>{m.text}</Text>
-                </View>
-              ))}
-            </ScrollView>
-
-            {/* INPUT */}
-            <ChatInput onSend={sendMessage} />
+            <View>
+              <Text style={styles.headerName}>Iris</Text>
+              <Text style={styles.headerStatus}>with you</Text>
+            </View>
           </View>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </>
+
+          {/* MESSAGES */}
+          <ScrollView
+            style={styles.messages}
+            contentContainerStyle={{ paddingBottom: 140 }}
+          >
+            {messages.map((m, i) => (
+              <View
+                key={i}
+                style={[
+                  styles.bubble,
+                  m.role === 'user' ? styles.user : styles.iris,
+                ]}
+              >
+                <Text style={styles.text}>{m.text}</Text>
+              </View>
+            ))}
+          </ScrollView>
+
+          {/* INPUT */}
+          <ChatInput onSend={sendMessage} />
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 
   /* ================= RENDER ================= */
@@ -141,6 +130,17 @@ export default function ChatScreen() {
         resizeMode="cover"
         blurRadius={bg.blur ?? 0}
       >
+        {/* OVERLAY */}
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})`,
+            },
+          ]}
+        />
+
         {Content}
       </ImageBackground>
     );
