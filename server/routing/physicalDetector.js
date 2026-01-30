@@ -4,7 +4,7 @@ export function hasPhysicalIntimacy(text) {
   const t = text.toLowerCase();
 
   const keywords = [
-    // SK
+    // ===== SK — jemná fyzika
     "bozk", "pobozk", "bozkáv",
     "dotyk", "dotkol", "hladí", "hladíš",
     "telo", "pás", "ruky", "dlaň",
@@ -13,16 +13,26 @@ export function hasPhysicalIntimacy(text) {
     "dych", "šeptom",
     "posteľ", "ľahnem",
 
-    // explicit / slang
+    // ===== SK — penetrácia / intent
+    "vnúť", "vniknúť",
+    "do teba", "chceš to",
+    "zasunúť",
+    "vojdem", "vojdem do",
+    "natrafil",
+    "vložím",
+
+    // ===== SK — slang / explicit
     "postav", "stojí",
     "rozopnem", "nohavice",
-    "vytiahnem", "vložím",
+    "vytiahnem",
     "penis", "kokot",
     "vyfajč", "pusinky",
-    "pulzuje", "vagína",
+    "pulzuje",
+    "vagína",
 
-    // EN fallback
-    "kiss", "touch", "body", "neck", "lips"
+    // ===== EN
+    "kiss", "touch", "body", "neck", "lips",
+    "enter you", "inside you"
   ];
 
   return keywords.some(k => t.includes(k));
