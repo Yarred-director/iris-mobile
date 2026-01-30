@@ -2,7 +2,7 @@
   "expo": {
     "name": "iris-mobile",
     "slug": "iris-mobile",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
 
     "icon": "./assets/images/iris/icons/icon.png",
