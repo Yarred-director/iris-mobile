@@ -1,7 +1,3 @@
-/* ======================================================
-   🔥 IRIS BACKEND — PRODUCTION INDEX (FIXED)
-====================================================== */
-
 import './config/env.js';
 
 import cors from 'cors';
@@ -30,63 +26,28 @@ import { buildSystemPrompt } from './prompt/systemPrompt.js';
 import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
 
-import { supabase } from './config/supabase.js';
 import { history, sanitizeForGrok } from './llm/history.js';
+
+// 🔥 NEW
+import { hasPhysicalIntimacy } from './routing/physicalDetector.js';
 
 console.log('🔥 IRIS BOOTSTRAP OK — DUAL LLM ACTIVE');
 
-/* ================================ */
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-let activeLLM = 'openai';
-
-/* ================================
-   UI ENDPOINTS
-================================ */
-
-app.get('/ui/splash', async (_, res) => {
-  const { data } = await supabase
-    .from('ui_config')
-    .select('image_url, overlay, blur')
-    .eq('key', 'splash_loading')
-    .single();
-  console.log('🖼️ SPLASH CONFIG:', data || 'NONE');
-  res.json(data || null);
-});
-
-app.get('/ui/chat-background', async (_, res) => {
-  const { data } = await supabase
-    .from('ui_config')
-    .select('image_url, overlay, blur')
-    .eq('key', 'chat_background')
-    .single();
-  console.log('🖼️ BACKGROUND CONFIG:', data || 'NONE');
-  res.json(data || null);
-});
-
-app.get('/api/avatar/current', async (_, res) => {
-  const { data } = await supabase
-    .from('avatars')
-    .select('image_url, variant')
-    .eq('is_active', true)
-    .single();
-  console.log('👤 AVATAR:', data || 'NONE');
-  res.json(data || null);
-});
-
 /* ================================
    CHAT
 ================================ */
+
 app.post('/chat', async (req, res) => {
   try {
     const { message } = req.body;
     console.log('\n➡️ USER:', message);
 
+    // FSM len pre tón
     const state = detectState(message);
-    const nextLLM = state === 'heated' ? 'grok' : 'openai';
-    console.log(`🤖 STATE=${state} → ${nextLLM}`);
 
     await decayMemories();
 
@@ -100,52 +61,57 @@ app.post('/chat', async (req, res) => {
 
     const systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    /* 🔁 LLM SWITCH */
-    if (nextLLM !== activeLLM) {
-      console.log(`🔁 SWITCH ${activeLLM} → ${nextLLM}`);
+    /* ============================
+       🔥 PROVIDER ROUTING
+    ============================ */
 
-      if (nextLLM === 'grok') {
-        history.grok = [
-          { role: 'system', content: systemPrompt },
-          ...sanitizeForGrok(history.openai),
-          { role: 'user', content: message }
-        ];
-        history.openai = [];
-      }
+    let provider = 'openai';
 
-      if (nextLLM === 'openai') {
-        history.openai = [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message }
-        ];
-      }
+    // MEMORY → vždy OpenAI
+    const isMemory = message.toLowerCase().includes('spomien');
 
-      activeLLM = nextLLM;
-    }
-
-    /* 🛡️ GUARANTEE SYSTEM PROMPT (FIX) */
-    if (activeLLM === 'openai') {
-      const hasSystem = history.openai.some(m => m.role === 'system');
-      if (!hasSystem) {
-        console.log('🛡️ SYSTEM PROMPT AUTO-INJECTED');
-        history.openai.unshift({ role: 'system', content: systemPrompt });
+    if (!isMemory) {
+      if (hasPhysicalIntimacy(message)) {
+        provider = 'grok';
       }
     }
 
-    const h = history[activeLLM];
+    console.log(`🤖 STATE=${state} → ${provider}`);
+
+    /* ============================
+       🔁 HISTORY BRIDGE
+    ============================ */
+
+    if (provider === 'grok') {
+      history.grok = [
+        { role: 'system', content: systemPrompt },
+        ...sanitizeForGrok(history.openai),
+        { role: 'user', content: message }
+      ];
+      history.openai = [];
+    }
+
+    if (provider === 'openai') {
+      history.openai = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: message }
+      ];
+    }
+
+    const h = history[provider];
     h.push({ role: 'user', content: message });
 
-    console.log(`🚀 CALL ${activeLLM}`);
+    console.log(`🚀 CALL ${provider}`);
 
-    const r = await getLLMClient(activeLLM).responses.create({
-      model: MODELS[activeLLM],
+    const r = await getLLMClient(provider).responses.create({
+      model: MODELS[provider],
       input: h
     });
 
     const reply = r.output_text || '…';
     h.push({ role: 'assistant', content: reply });
 
-    console.log(`💬 REPLY (${activeLLM}):`, reply.slice(0, 80));
+    console.log(`💬 REPLY (${provider}):`, reply.slice(0, 80));
 
     const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
     if (decision?.store) await writeMemory(decision);
