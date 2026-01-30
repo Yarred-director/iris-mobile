@@ -1,6 +1,6 @@
 /* ======================================================
    🔥 IRIS BACKEND — PRODUCTION INDEX
-   DUAL LLM ROUTING + MEMORY + HARD LOGGING
+   DUAL LLM ROUTING + MEMORY + UI ENDPOINTS + HARD LOGGING
 ====================================================== */
 
 import './config/env.js';
@@ -33,6 +33,8 @@ import { MODELS } from './lib/llmModels.js';
 
 import { history, sanitizeForGrok } from './llm/history.js';
 
+import { supabase } from './config/supabase.js';
+
 console.log('🔥 IRIS BOOTSTRAP OK — DUAL LLM ACTIVE');
 
 /* ================================
@@ -44,34 +46,83 @@ app.use(express.json());
 
 let activeLLM = 'openai';
 
-/* ================================
-   CHAT ENDPOINT
-================================ */
+/* ======================================================
+   🖼️ UI ENDPOINTS (DB DRIVEN)
+====================================================== */
+
+/* ---------- SPLASH ---------- */
+app.get('/ui/splash', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('ui_config')
+      .select('image_url, overlay, blur')
+      .eq('key', 'splash_loading')
+      .single();
+
+    console.log('🖼️ SPLASH CONFIG:', data || 'NONE');
+
+    res.json(data || null);
+  } catch (e) {
+    console.error('❌ SPLASH ERROR:', e);
+    res.json(null);
+  }
+});
+
+/* ---------- CHAT BACKGROUND ---------- */
+app.get('/ui/chat-background', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('ui_config')
+      .select('image_url, overlay, blur')
+      .eq('key', 'chat_background')
+      .single();
+
+    console.log('🖼️ BACKGROUND CONFIG:', data || 'NONE');
+
+    res.json(data || null);
+  } catch (e) {
+    console.error('❌ BACKGROUND ERROR:', e);
+    res.json(null);
+  }
+});
+
+/* ---------- AVATAR ---------- */
+app.get('/api/avatar/current', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('avatars')
+      .select('image_url, variant')
+      .eq('is_active', true)
+      .single();
+
+    console.log('👤 AVATAR:', data || 'NONE');
+
+    res.json(data || null);
+  } catch (e) {
+    console.error('❌ AVATAR ERROR:', e);
+    res.json(null);
+  }
+});
+
+/* ======================================================
+   💬 CHAT ENDPOINT
+====================================================== */
 app.post('/chat', async (req, res) => {
   try {
     const { message } = req.body;
 
-    /* ----------------------------
-       INPUT
-    ----------------------------- */
     console.log('\n➡️ USER MESSAGE:', message);
 
-    /* ----------------------------
-       BEHAVIOR + ROUTING
-    ----------------------------- */
+    /* ---------- STATE + ROUTING ---------- */
     const state = detectState(message);
     const nextLLM = state === 'heated' ? 'grok' : 'openai';
 
     console.log(`🤖 STATE=${state} → NEXT_LLM=${nextLLM.toUpperCase()}`);
 
-    /* ----------------------------
-       MEMORY DECAY (GLOBAL)
-    ----------------------------- */
+    /* ---------- MEMORY DECAY ---------- */
     await decayMemories();
 
-    /* ----------------------------
-       MEMORY RECALL
-    ----------------------------- */
+    /* ---------- MEMORY RECALL ---------- */
     const core = await loadCoreOrigin();
     const episodic = await recallEpisodicMemory(message);
     const summaries = await loadSummaries();
@@ -81,34 +132,21 @@ app.post('/chat', async (req, res) => {
       episodic.map(m => ({
         id: m.id,
         importance: m.importance,
-        narrative: m.narrative.slice(0, 80)
+        narrative: m.narrative.slice(0, 60)
       }))
     );
 
-    console.log(
-      '📜 SUMMARIES:',
-      summaries.map(s => s.narrative.slice(0, 80))
-    );
-
-    /* ----------------------------
-       MEMORY REINFORCEMENT
-    ----------------------------- */
+    /* ---------- REINFORCEMENT ---------- */
     for (const m of episodic) {
-      if (m.importance < 1) {
-        await reinforceMemory(m.id);
-      }
+      if (m.importance < 1) await reinforceMemory(m.id);
     }
 
-    /* ----------------------------
-       SYSTEM PROMPT
-    ----------------------------- */
+    /* ---------- SYSTEM PROMPT ---------- */
     const systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    /* ----------------------------
-       LLM SWITCHING
-    ----------------------------- */
+    /* ---------- LLM SWITCH ---------- */
     if (nextLLM !== activeLLM) {
-      console.log(`🔁 SWITCH ${activeLLM.toUpperCase()} → ${nextLLM.toUpperCase()}`);
+      console.log(`🔁 SWITCH ${activeLLM} → ${nextLLM}`);
 
       if (nextLLM === 'grok') {
         history.grok = [
@@ -116,7 +154,7 @@ app.post('/chat', async (req, res) => {
           ...sanitizeForGrok(history.openai),
           { role: 'user', content: message }
         ];
-        history.openai = []; // 🔒 erotic isolation
+        history.openai = [];
       }
 
       if (nextLLM === 'openai') {
@@ -129,23 +167,7 @@ app.post('/chat', async (req, res) => {
       activeLLM = nextLLM;
     }
 
-    /* ----------------------------
-       🛡️ CRITICAL SYSTEM GUARD
-    ----------------------------- */
-    if (activeLLM === 'openai') {
-      const hasSystem = history.openai.some(m => m.role === 'system');
-      if (!hasSystem) {
-        console.log('🛡️ SYSTEM PROMPT RE-INJECTED (OpenAI)');
-        history.openai.unshift({ role: 'system', content: systemPrompt });
-      }
-    }
-
-    console.log(
-      '📜 HISTORY ROLES:',
-      history[activeLLM].map(m => m.role)
-    );
-
-    // ❌ HARD FAIL — radšej crash než fake Iris
+    /* ---------- SYSTEM GUARD ---------- */
     if (
       activeLLM === 'openai' &&
       !history.openai.some(m => m.role === 'system')
@@ -153,9 +175,7 @@ app.post('/chat', async (req, res) => {
       throw new Error('SYSTEM PROMPT MISSING — REFUSING TO ANSWER');
     }
 
-    /* ----------------------------
-       LLM CALL
-    ----------------------------- */
+    /* ---------- LLM CALL ---------- */
     const h = history[activeLLM];
     h.push({ role: 'user', content: message });
 
@@ -169,25 +189,15 @@ app.post('/chat', async (req, res) => {
     const reply = r.output_text || '…';
     h.push({ role: 'assistant', content: reply });
 
-    console.log(
-      `💬 REPLY FROM ${activeLLM.toUpperCase()}:`,
-      reply.slice(0, 120)
-    );
+    console.log(`💬 REPLY (${activeLLM}):`, reply.slice(0, 100));
 
-    /* ----------------------------
-       MEMORY JUDGE
-    ----------------------------- */
+    /* ---------- MEMORY JUDGE ---------- */
     const decision = await irisMemoryJudge(
       `User:${message}\nIris:${reply}`
     );
 
-    if (decision?.store) {
-      await writeMemory(decision);
-    }
+    if (decision?.store) await writeMemory(decision);
 
-    /* ----------------------------
-       RESPONSE
-    ----------------------------- */
     res.json({ reply });
 
   } catch (e) {
