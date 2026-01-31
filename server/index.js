@@ -3,6 +3,10 @@ import './config/env.js';
 import cors from 'cors';
 import express from 'express';
 
+import { getSceneFacts } from './memory/sceneFacts.js';
+import { sessionMiddleware } from './middleware/session.js';
+import { detectSceneKey } from './routing/sceneDetector.js';
+
 import { detectState } from './behavior/state.js';
 
 import {
@@ -36,6 +40,7 @@ console.log('🔥 IRIS BOOTSTRAP OK — DUAL LLM ACTIVE');
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(sessionMiddleware);
 
 /* ================================
    CHAT
@@ -55,24 +60,46 @@ app.post('/chat', async (req, res) => {
     const { memories: episodic, meta: recallMeta } = await recallEpisodicMemory(message);
     const summaries = await loadSummaries();
 
+    // 🔐 user & scene (NO HARDCODE)
+    const userId = req.userId;
+    const sceneKey = detectSceneKey({ message, episodic });
+
+    const sceneFacts = await getSceneFacts(userId, sceneKey);
+
+    // reinforcement
     for (const m of episodic) {
-      // len ak to pole existuje (v2)
       if (typeof m.importance === 'number' && m.importance < 1) {
         await reinforceMemory(m.id);
       }
     }
 
-    // ✅ SYSTEM PROMPT JE TOTO (string)
+    // 🧠 SYSTEM PROMPT
     let systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    // ✅ CONFIDENCE GATE: keď recall nie je istý, zakáž vymýšľanie faktov
-    if (!recallMeta?.confident) {
+    // 🔒 HARD FACTS (scene_facts have priority)
+    if (sceneFacts.length > 0) {
+      const factsText = sceneFacts
+        .map(f => `- ${sceneKey}.${f.fact_key} = ${f.fact_value}`)
+        .join('\n');
+
+      systemPrompt += `
+
+HARD FACTS (must be treated as true):
+${factsText}
+
+Rules:
+- Use HARD FACTS verbatim when the user asks about them.
+- If a needed fact is missing, say you don't know and ask the user.
+- Do NOT invent specific factual details.`;
+    }
+
+    // 🛟 AIRBAG – len ak NIE SÚ facts
+    if (!recallMeta?.confident && sceneFacts.length === 0) {
       systemPrompt += `
 
 IMPORTANT:
-- If you are not sure about factual details from memory, do NOT invent specifics.
-- Say you don't have that information stored, or ask a clarifying question.
-- Do not guess model names, dates, locations, parking spots, or other concrete details.`;
+- If you are not sure about factual details, do NOT invent specifics.
+- Say you don't have that detail stored and ask the user.`;
     }
 
     /* ============================
@@ -84,10 +111,8 @@ IMPORTANT:
     // MEMORY → vždy OpenAI
     const isMemory = message.toLowerCase().includes('spomien');
 
-    if (!isMemory) {
-      if (hasPhysicalIntimacy(message)) {
-        provider = 'grok';
-      }
+    if (!isMemory && hasPhysicalIntimacy(message)) {
+      provider = 'grok';
     }
 
     console.log(`🤖 STATE=${state} → ${provider}`);
@@ -111,10 +136,6 @@ IMPORTANT:
         { role: 'user', content: message }
       ];
     }
-
-    // ❌ TOTO ODSTRÁNIME:
-    // const h = history[provider];
-    // h.push({ role: 'user', content: message });
 
     const h = history[provider];
 
