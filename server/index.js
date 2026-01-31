@@ -52,14 +52,28 @@ app.post('/chat', async (req, res) => {
     await decayMemories();
 
     const core = await loadCoreOrigin();
-    const episodic = await recallEpisodicMemory(message);
+    const { memories: episodic, meta: recallMeta } = await recallEpisodicMemory(message);
     const summaries = await loadSummaries();
 
     for (const m of episodic) {
-      if (m.importance < 1) await reinforceMemory(m.id);
+      // len ak to pole existuje (v2)
+      if (typeof m.importance === 'number' && m.importance < 1) {
+        await reinforceMemory(m.id);
+      }
     }
 
-    const systemPrompt = buildSystemPrompt(core, episodic, summaries);
+    // ✅ SYSTEM PROMPT JE TOTO (string)
+    let systemPrompt = buildSystemPrompt(core, episodic, summaries);
+
+    // ✅ CONFIDENCE GATE: keď recall nie je istý, zakáž vymýšľanie faktov
+    if (!recallMeta?.confident) {
+      systemPrompt += `
+
+IMPORTANT:
+- If you are not sure about factual details from memory, do NOT invent specifics.
+- Say you don't have that information stored, or ask a clarifying question.
+- Do not guess model names, dates, locations, parking spots, or other concrete details.`;
+    }
 
     /* ============================
        🔥 PROVIDER ROUTING
@@ -98,8 +112,11 @@ app.post('/chat', async (req, res) => {
       ];
     }
 
+    // ❌ TOTO ODSTRÁNIME:
+    // const h = history[provider];
+    // h.push({ role: 'user', content: message });
+
     const h = history[provider];
-    h.push({ role: 'user', content: message });
 
     console.log(`🚀 CALL ${provider}`);
 
