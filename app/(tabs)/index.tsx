@@ -9,16 +9,14 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
 import ChatInput from '../components/ChatInput';
 import TypingIndicator from '../components/TypingIndicator';
 
 const API_BASE = 'https://iris-mobile.onrender.com';
 const API_CHAT = `${API_BASE}/chat`;
-
-const IRIS_AVATAR_URL =
-  'https://glufbaseqhjkljhvdhmh.supabase.co/storage/v1/object/public/avatars/iris-avatar-v1.png';
 
 type Message = {
   role: 'user' | 'iris';
@@ -31,26 +29,40 @@ type BackgroundConfig = {
   blur?: number;
 };
 
+type UIManifest = {
+  splash?: any;
+  chatBackground?: BackgroundConfig;
+  avatar?: { image_url?: string };
+};
+
 export default function ChatScreen() {
+  const insets = useSafeAreaInsets();
+
   const [messages, setMessages] = useState<Message[]>([
     { role: 'iris', text: 'Ahoj. Som Iris.' },
   ]);
 
   const [bg, setBg] = useState<BackgroundConfig | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string>(DEFAULT_AVATAR_URL);
   const [isTyping, setIsTyping] = useState(false);
 
-  /* ================= BACKGROUND ================= */
+  // UI manifest zo Supabase (background + avatar)
   useEffect(() => {
-    fetch(`${API_BASE}/ui/chat-background`)
+    fetch(UI_MANIFEST_URL, { cache: 'no-store' })
       .then(res => res.json())
-      .then(data => {
-        if (data?.image_url) setBg(data);
-        else setBg(null);
+      .then((data: UIManifest) => {
+        setBg(data?.chatBackground ?? null);
+        const nextAvatar = data?.avatar?.image_url;
+        if (typeof nextAvatar === 'string' && nextAvatar.length > 0) {
+          setAvatarUrl(nextAvatar);
+        }
       })
-      .catch(() => setBg(null));
+      .catch(() => {
+        setBg(null);
+        setAvatarUrl(DEFAULT_AVATAR_URL);
+      });
   }, []);
 
-  /* ================= CHAT ================= */
   const sendMessage = async (text: string) => {
     if (!text.trim()) return;
 
@@ -76,13 +88,12 @@ export default function ChatScreen() {
     }
   };
 
-  /* ================= CONTENT ================= */
   const Screen = (
     <View style={styles.container}>
       {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.avatarWrap}>
-          <Image source={{ uri: IRIS_AVATAR_URL }} style={styles.avatar} />
+          <Image source={{ uri: avatarUrl }} style={styles.avatar} />
         </View>
 
         <View>
@@ -109,7 +120,6 @@ export default function ChatScreen() {
           </View>
         ))}
 
-        {/* TYPING INDICATOR */}
         {isTyping && (
           <View style={{ marginLeft: 8, marginBottom: 8 }}>
             <TypingIndicator />
@@ -118,19 +128,21 @@ export default function ChatScreen() {
       </ScrollView>
 
       {/* INPUT */}
-      <ChatInput onSend={sendMessage} />
+      <View style={{ paddingBottom: Math.max(insets.bottom, 10) }}>
+        <ChatInput onSend={sendMessage} />
+      </View>
     </View>
   );
 
-  /* ================= RENDER ================= */
-  const Body =
-    Platform.OS === 'ios' ? (
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-        {Screen}
-      </KeyboardAvoidingView>
-    ) : (
-      Screen
-    );
+  const Body = (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : insets.top}
+    >
+      {Screen}
+    </KeyboardAvoidingView>
+  );
 
   if (bg?.image_url) {
     return (
@@ -154,8 +166,6 @@ export default function ChatScreen() {
 
   return <SafeAreaView style={styles.root}>{Body}</SafeAreaView>;
 }
-
-/* ================= STYLES ================= */
 
 const styles = StyleSheet.create({
   root: {

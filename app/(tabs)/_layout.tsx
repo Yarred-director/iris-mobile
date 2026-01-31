@@ -2,9 +2,8 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 
+import { UI_MANIFEST_URL } from '../../constants/ui';
 import LoadingScreen from '../loading';
-
-const API_BASE = 'https://iris-mobile.onrender.com';
 
 type SplashConfig = {
   image_url: string;
@@ -19,16 +18,13 @@ export default function RootLayout() {
   useEffect(() => {
     const boot = async () => {
       try {
-        const res = await fetch(`${API_BASE}/ui/splash`);
+        const res = await fetch(UI_MANIFEST_URL, { cache: 'no-store' });
         const data = await res.json();
-
-        if (data?.image_url) {
-          setSplash(data);
-        }
+        setSplash(data?.splash ?? null);
       } catch {
         setSplash(null);
       } finally {
-        // UX delay – splash má čas sa ukázať
+        // malý UX delay, aby to nepôsobilo ako blik
         setTimeout(() => setBooted(true), 300);
       }
     };
@@ -36,12 +32,11 @@ export default function RootLayout() {
     boot();
   }, []);
 
-  // 🔥 SPLASH FÁZA
-  if (!booted && splash) {
+  // Remote splash fáza (vždy, aj s fallbackom)
+  if (!booted) {
     return <LoadingScreen config={splash} />;
   }
 
-  // 🚀 APP
   return (
     <>
       <Stack screenOptions={{ headerShown: false }} />

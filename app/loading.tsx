@@ -1,5 +1,10 @@
 import { StatusBar } from 'expo-status-bar';
-import { ImageBackground, StyleSheet, View } from 'react-native';
+import {
+  ImageBackground,
+  ImageSourcePropType,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 type SplashConfig = {
   image_url: string;
@@ -8,27 +13,30 @@ type SplashConfig = {
 };
 
 type Props = {
-  config: SplashConfig;
+  config?: SplashConfig | null;
 };
 
+// ✅ Fallback obrázok MUSÍ existovať lokálne
+const FALLBACK: ImageSourcePropType = require('../assets/images/iris/icons/icon.png');
+
 export default function LoadingScreen({ config }: Props) {
-  const overlayOpacity = config.overlay ?? 0.35;
-  const blur = config.blur ?? 0;
+  const overlayOpacity = config?.overlay ?? 0.35;
+  const blur = config?.blur ?? 0;
+
+  const source = config?.image_url ? { uri: config.image_url } : FALLBACK;
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
-
       <ImageBackground
-        source={{ uri: config.image_url }}
+        source={source}
         style={styles.image}
         resizeMode="cover"
         blurRadius={blur}
       >
-        {/* overlay */}
         <View
           style={[
-            StyleSheet.absoluteFill,
+            StyleSheet.absoluteFillObject,
             { backgroundColor: `rgba(0,0,0,${overlayOpacity})` },
           ]}
         />

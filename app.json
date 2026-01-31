@@ -34,8 +34,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/images/iris/icons/icon.png",
+          "imageWidth": 220,
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
