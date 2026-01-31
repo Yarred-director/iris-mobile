@@ -4,9 +4,7 @@
     "slug": "iris-mobile",
     "version": "1.0.3",
     "orientation": "portrait",
-
     "icon": "./assets/images/iris/icons/icon.png",
-
     "scheme": "irismobile",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
@@ -21,7 +19,18 @@
 
     "android": {
       "package": "com.yarreddirector.iris",
-      "softwareKeyboardLayoutMode": "resize"
+      "softwareKeyboardLayoutMode": "resize",
+      "splash": {
+        "image": "./assets/images/iris/icons/splash.png",
+        "resizeMode": "cover",
+        "backgroundColor": "#000000"
+      }
+    },
+
+    "splash": {
+      "image": "./assets/images/iris/icons/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#000000"
     },
 
     "web": {
@@ -34,9 +43,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/iris/icons/icon.png",
-          "imageWidth": 220,
-          "resizeMode": "contain",
+          "image": "./assets/images/iris/icons/splash.png",
+          "resizeMode": "cover",
           "backgroundColor": "#000000"
         }
       ]

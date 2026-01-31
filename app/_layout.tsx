@@ -1,9 +1,8 @@
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-
 import { UI_MANIFEST_URL } from '../constants/ui';
-import LoadingScreen from './loading';
 
 type SplashConfig = {
   image_url: string;
@@ -15,9 +14,11 @@ type UIManifest = {
   splash?: SplashConfig;
 };
 
+// ✅ drž native splash (tvoja fotka z app.json) kým nepovieš hide
+SplashScreen.preventAutoHideAsync();
+
 export default function RootLayout() {
   const [booted, setBooted] = useState(false);
-  const [splash, setSplash] = useState<SplashConfig | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -26,23 +27,20 @@ export default function RootLayout() {
       const started = Date.now();
 
       try {
-        // cache-bust nech necita starý ui.json
-        const res = await fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`, {
-          cache: 'no-store',
-        });
-        const data = (await res.json()) as UIManifest;
-
-        if (alive) setSplash(data?.splash ?? null);
+        // nech si stále načítaš ui manifest (cache-bust)
+        await fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`, { cache: 'no-store' });
       } catch {
-        if (alive) setSplash(null);
+        // silent
       } finally {
-        // ✅ nech to user naozaj VIDÍ (2s)
+        // ✅ ak chceš “min 2s”, necháme to, ale bez medziscreenu
         const minMs = 2000;
         const elapsed = Date.now() - started;
         const wait = Math.max(0, minMs - elapsed);
 
-        setTimeout(() => {
-          if (alive) setBooted(true);
+        setTimeout(async () => {
+          if (!alive) return;
+          setBooted(true);
+          await SplashScreen.hideAsync(); // ✅ až teraz pustíme appku
         }, wait);
       }
     };
@@ -53,10 +51,8 @@ export default function RootLayout() {
     };
   }, []);
 
-  // ✅ Splash fáza vždy (aj keď remote config padne -> LoadingScreen fallback)
-  if (!booted) {
-    return <LoadingScreen config={splash} />;
-  }
+  // ✅ kým bootuješ, nerenderuj nič -> native splash ostane -> žiadne prebliknutie
+  if (!booted) return null;
 
   return (
     <>
