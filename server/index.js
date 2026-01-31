@@ -65,6 +65,13 @@ app.post('/chat', async (req, res) => {
     const sceneKey = detectSceneKey({ message, episodic });
 
     const sceneFacts = await getSceneFacts(userId, sceneKey);
+    console.log(
+    '🧪 SCENE DEBUG →',
+    'userId =', userId,
+    '| sceneKey =', sceneKey,
+    '| facts =', sceneFacts.length
+ );
+
 
     // reinforcement
     for (const m of episodic) {
