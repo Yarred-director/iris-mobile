@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { Image } from 'expo-image';
+import { useEffect, useRef, useState } from 'react';
 import {
-  Image,
   ImageBackground,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -30,13 +31,14 @@ type BackgroundConfig = {
 };
 
 type UIManifest = {
-  splash?: any;
   chatBackground?: BackgroundConfig;
   avatar?: { image_url?: string };
+  splash?: any; // nepotrebujeme tu, len kvôli kompatibilite manifestu
 };
 
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
 
   const [messages, setMessages] = useState<Message[]>([
     { role: 'iris', text: 'Ahoj. Som Iris.' },
@@ -46,15 +48,18 @@ export default function ChatScreen() {
   const [avatarUrl, setAvatarUrl] = useState<string>(DEFAULT_AVATAR_URL);
   const [isTyping, setIsTyping] = useState(false);
 
-  // UI manifest zo Supabase (background + avatar)
+  /* ================= UI MANIFEST (Supabase) ================= */
   useEffect(() => {
     fetch(UI_MANIFEST_URL, { cache: 'no-store' })
       .then(res => res.json())
       .then((data: UIManifest) => {
         setBg(data?.chatBackground ?? null);
+
         const nextAvatar = data?.avatar?.image_url;
         if (typeof nextAvatar === 'string' && nextAvatar.length > 0) {
           setAvatarUrl(nextAvatar);
+        } else {
+          setAvatarUrl(DEFAULT_AVATAR_URL);
         }
       })
       .catch(() => {
@@ -63,21 +68,45 @@ export default function ChatScreen() {
       });
   }, []);
 
-  const sendMessage = async (text: string) => {
-    if (!text.trim()) return;
+  /* ================= SCROLL HELPERS ================= */
+  const scrollToBottom = (animated = true) => {
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToEnd({ animated });
+    });
+  };
 
-    setMessages(prev => [...prev, { role: 'user', text }]);
+  // Scroll when new messages arrive or when typing indicator toggles
+  useEffect(() => {
+    scrollToBottom(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, isTyping]);
+
+  /* ================= CHAT ================= */
+  const sendMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // ✅ schovaj klávesnicu po send
+    Keyboard.dismiss();
+
+    // pridaj user message
+    setMessages(prev => [...prev, { role: 'user', text: trimmed }]);
+
+    // okamžitý scroll po user správe
+    scrollToBottom(true);
+
     setIsTyping(true);
 
     try {
       const response = await fetch(API_CHAT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: trimmed }),
       });
 
       const data = await response.json();
       setMessages(prev => [...prev, { role: 'iris', text: data.reply }]);
+      // scroll sa spraví v useEffect
     } catch {
       setMessages(prev => [
         ...prev,
@@ -88,12 +117,19 @@ export default function ChatScreen() {
     }
   };
 
+  /* ================= CONTENT ================= */
   const Screen = (
     <View style={styles.container}>
       {/* HEADER */}
       <View style={styles.header}>
         <View style={styles.avatarWrap}>
-          <Image source={{ uri: avatarUrl }} style={styles.avatar} />
+          <Image
+            source={{ uri: avatarUrl }}
+            style={styles.avatar}
+            contentFit="cover"
+            transition={200}
+            cachePolicy="disk"
+          />
         </View>
 
         <View>
@@ -104,9 +140,11 @@ export default function ChatScreen() {
 
       {/* MESSAGES */}
       <ScrollView
+        ref={scrollRef}
         style={styles.messages}
         contentContainerStyle={{ paddingBottom: 12 }}
         keyboardShouldPersistTaps="handled"
+        onContentSizeChange={() => scrollToBottom(false)}
       >
         {messages.map((m, i) => (
           <View
@@ -120,11 +158,10 @@ export default function ChatScreen() {
           </View>
         ))}
 
-        {isTyping && (
-          <View style={{ marginLeft: 8, marginBottom: 8 }}>
-            <TypingIndicator />
-          </View>
-        )}
+        {/* ✅ fixná výška aby chat neskákal */}
+        <View style={{ height: 26, marginLeft: 8, marginBottom: 8 }}>
+          {isTyping && <TypingIndicator />}
+        </View>
       </ScrollView>
 
       {/* INPUT */}
@@ -134,6 +171,7 @@ export default function ChatScreen() {
     </View>
   );
 
+  /* ================= RENDER ================= */
   const Body = (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -155,7 +193,7 @@ export default function ChatScreen() {
         <View
           pointerEvents="none"
           style={[
-            StyleSheet.absoluteFill,
+            StyleSheet.absoluteFillObject,
             { backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})` },
           ]}
         />
@@ -167,6 +205,8 @@ export default function ChatScreen() {
   return <SafeAreaView style={styles.root}>{Body}</SafeAreaView>;
 }
 
+/* ================= STYLES ================= */
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -175,57 +215,67 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.15)',
+    borderBottomColor: 'rgba(255,255,255,0.12)',
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   avatarWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     overflow: 'hidden',
-    marginRight: 14,
+    marginRight: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.22)',
   },
   avatar: {
     width: '100%',
     height: '100%',
   },
   headerName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
   },
   headerStatus: {
     fontSize: 12,
-    color: '#cbd5f5',
+    color: 'rgba(203,213,245,0.85)',
     marginTop: 2,
   },
+
   messages: {
     flex: 1,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingTop: 10,
   },
+
+  // ✅ Minimalistické, užšie bubliny
   bubble: {
-    maxWidth: '80%',
-    padding: 12,
+    maxWidth: '72%',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
     borderRadius: 14,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   user: {
-    backgroundColor: '#5b6cff',
+    backgroundColor: 'rgba(91,108,255,0.92)',
     alignSelf: 'flex-end',
+    borderTopRightRadius: 8,
   },
   iris: {
-    backgroundColor: 'rgba(31,31,42,0.85)',
+    backgroundColor: 'rgba(31,31,42,0.72)',
     alignSelf: 'flex-start',
+    borderTopLeftRadius: 8,
   },
   text: {
     color: '#ffffff',
+    fontSize: 14,
+    lineHeight: 18,
   },
 });
