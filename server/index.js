@@ -73,10 +73,10 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    // 🧠 SYSTEM PROMPT
+    // 🧠 SYSTEM PROMPT – MUSÍ BYŤ PRVÝ
     let systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    // 🔒 HARD FACTS (scene_facts have priority)
+    // 🔒 HARD FACTS (scene_facts have absolute priority)
     if (sceneFacts.length > 0) {
       const factsText = sceneFacts
         .map(f => `- ${sceneKey}.${f.fact_key} = ${f.fact_value}`)
@@ -84,13 +84,14 @@ app.post('/chat', async (req, res) => {
 
       systemPrompt += `
 
-HARD FACTS (must be treated as true):
+HARD FACTS (source of truth):
 ${factsText}
 
-Rules:
-- Use HARD FACTS verbatim when the user asks about them.
-- If a needed fact is missing, say you don't know and ask the user.
-- Do NOT invent specific factual details.`;
+CRITICAL RULES:
+- Only state attributes that are explicitly present in HARD FACTS.
+- If the user asks about an attribute that is NOT listed above, you MUST say you don't know and ask the user to provide it.
+- Never infer, assume, guess, or creatively fill in missing attributes.
+- Never change topic when an attribute is missing.`;
     }
 
     // 🛟 AIRBAG – len ak NIE SÚ facts
