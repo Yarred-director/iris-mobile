@@ -1,9 +1,8 @@
-import './config/env.js';
-
 import cors from 'cors';
 import express from 'express';
+import './config/env.js';
 
-import { getSceneFacts } from './memory/sceneFacts.js';
+import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
 import { sessionMiddleware } from './middleware/session.js';
 import { detectSceneKey } from './routing/sceneDetector.js';
 
@@ -31,6 +30,10 @@ import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
 
 import { history, sanitizeForGrok } from './llm/history.js';
+
+import { inferRequestedFactKey } from './memory/factKeyJudge.js';
+import { extractFactValue } from './memory/factValueJudge.js';
+import { clearPendingFact, getPendingFact, setPendingFact } from './memory/pendingFacts.js';
 
 // 🔥 NEW
 import { hasPhysicalIntimacy } from './routing/physicalDetector.js';
@@ -64,14 +67,53 @@ app.post('/chat', async (req, res) => {
     const userId = req.userId;
     const sceneKey = detectSceneKey({ message, episodic });
 
-    const sceneFacts = await getSceneFacts(userId, sceneKey);
-    console.log(
-    '🧪 SCENE DEBUG →',
-    'userId =', userId,
-    '| sceneKey =', sceneKey,
-    '| facts =', sceneFacts.length
- );
+    // ✅ PENDING FLOW (1): consume pending
+    const pendingKey = await getPendingFact(userId, sceneKey);
+    console.log('🧷 pendingKey =', pendingKey);
 
+    if (pendingKey) {
+      const { value, confidence } = await extractFactValue({
+        factKey: pendingKey,
+        userMessage: message
+      });
+
+      console.log('🧷 extractedValue =', value, 'conf =', confidence);
+
+      if (value && confidence >= 0.6) {
+        await upsertSceneFact(userId, sceneKey, pendingKey, value, {
+          confidence,
+          source: 'user'
+        });
+        await clearPendingFact(userId, sceneKey);
+        console.log('✅ upserted + cleared pending:', pendingKey);
+      }
+    }
+
+    // načítaj facts (po možnom uložení)
+    const sceneFacts = await getSceneFacts(userId, sceneKey);
+
+    console.log(
+      '🧪 SCENE DEBUG →',
+      'userId =', userId,
+      '| sceneKey =', sceneKey,
+      '| facts =', sceneFacts.length
+    );
+
+    // ✅ PENDING FLOW (2): set pending ONLY if we are NOT currently consuming a pending fact
+    // (aby sa ti pending neprepísal, keď user práve odpovedá)
+    let requestedFactKey = null;
+    if (!pendingKey) {
+      requestedFactKey = await inferRequestedFactKey({ message, sceneKey });
+      console.log('🧷 requestedFactKey =', requestedFactKey);
+
+      if (requestedFactKey) {
+        const hasFactAlready = sceneFacts.some(f => f.fact_key === requestedFactKey);
+        if (!hasFactAlready) {
+          await setPendingFact(userId, sceneKey, requestedFactKey);
+          console.log('✅ set pending for:', requestedFactKey);
+        }
+      }
+    }
 
     // reinforcement
     for (const m of episodic) {
@@ -99,6 +141,14 @@ CRITICAL RULES:
 - If the user asks about an attribute that is NOT listed above, you MUST say you don't know and ask the user to provide it.
 - Never infer, assume, guess, or creatively fill in missing attributes.
 - Never change topic when an attribute is missing.`;
+    }
+
+    // ✅ Extra guidance: when we just set a pending fact, explicitly ask for it
+    if (requestedFactKey && sceneFacts.length === 0) {
+      systemPrompt += `
+
+NOTE:
+- You have identified a missing scene fact "${requestedFactKey}". Ask the user for that exact detail clearly and concisely.`;
     }
 
     // 🛟 AIRBAG – len ak NIE SÚ facts
