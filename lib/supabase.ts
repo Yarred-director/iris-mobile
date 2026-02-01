@@ -11,13 +11,9 @@ const AsyncStorageAdapter = {
   removeItem: (key: string) => AsyncStorage.removeItem(key),
 };
 
-// ✅ dôležité: pevný storageKey, nech je rovnaký všade
-const STORAGE_KEY = "iris.supabase.auth";
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     storage: AsyncStorageAdapter as any,
-    storageKey: STORAGE_KEY,
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: false,

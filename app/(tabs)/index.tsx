@@ -1,8 +1,8 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   ColorValue,
@@ -16,36 +16,25 @@ import {
   StyleSheet,
   Text,
   View,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
-import { supabase } from '../../lib/supabase';
-import { useAuth } from '../../providers/AuthProvider';
-import ChatInput from '../components/ChatInput';
-import GlassShimmer from '../components/GlassShimmer';
-import TypingIndicator from '../components/TypingIndicator';
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from "../../constants/ui";
+import { supabase } from "../../lib/supabase";
+import { useAuth } from "../../providers/AuthProvider";
+import ChatInput from "../components/ChatInput";
+import GlassShimmer from "../components/GlassShimmer";
+import TypingIndicator from "../components/TypingIndicator";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? "https://iris-mobile.onrender.com";
 const API_CHAT = `${API_BASE}/chat`;
 
-const CHAT_STORAGE_KEY = 'iris.chat.history.v1';
+const CHAT_STORAGE_KEY = "iris.chat.history.v1";
 const MAX_MESSAGES = 50;
 
-type Message = {
-  role: 'user' | 'iris';
-  text: string;
-};
+type Message = { role: "user" | "iris"; text: string };
 
-type BackgroundConfig = {
-  image_url: string;
-  overlay?: number;
-  blur?: number;
-};
-
-type UIManifest = {
-  chatBackground?: BackgroundConfig;
-  avatar?: { image_url?: string };
-};
+type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
+type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
 
 const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
 
@@ -54,12 +43,11 @@ function GlassBubble({
   text,
   pulseKey,
 }: {
-  role: 'user' | 'iris';
+  role: "user" | "iris";
   text: string;
   pulseKey?: number;
 }) {
-  const isUser = role === 'user';
-
+  const isUser = role === "user";
   const shimmer = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0)).current;
 
@@ -96,38 +84,25 @@ function GlassBubble({
     ]).start();
   }, [pulseKey, isUser, pulse]);
 
-  const translateX = shimmer.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-80, 180],
-  });
-
-  const translateY = shimmer.interpolate({
-    inputRange: [0, 1],
-    outputRange: [20, -12],
-  });
+  const translateX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-80, 180] });
+  const translateY = shimmer.interpolate({ inputRange: [0, 1], outputRange: [20, -12] });
 
   const sheenOpacity = Animated.add(
-    shimmer.interpolate({
-      inputRange: [0, 0.5, 1],
-      outputRange: [0.04, 0.08, 0.04],
-    }),
-    pulse.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, 0.08],
-    })
+    shimmer.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.04, 0.08, 0.04] }),
+    pulse.interpolate({ inputRange: [0, 1], outputRange: [0, 0.08] })
   );
 
   const baseColors = (isUser
-    ? ['rgba(91,108,255,0.32)', 'rgba(91,108,255,0.12)']
-    : ['rgba(255,255,255,0.10)', 'rgba(255,255,255,0.04)']) as readonly [
+    ? ["rgba(91,108,255,0.32)", "rgba(91,108,255,0.12)"]
+    : ["rgba(255,255,255,0.10)", "rgba(255,255,255,0.04)"]) as readonly [
     ColorValue,
     ColorValue
   ];
 
   const sheenColors = [
-    'rgba(255,255,255,0.0)',
-    'rgba(255,255,255,0.16)',
-    'rgba(255,255,255,0.0)',
+    "rgba(255,255,255,0.0)",
+    "rgba(255,255,255,0.16)",
+    "rgba(255,255,255,0.0)",
   ] as readonly [ColorValue, ColorValue, ColorValue];
 
   return (
@@ -137,7 +112,6 @@ function GlassBubble({
       end={{ x: 1, y: 1 }}
       style={[styles.bubble, isUser ? styles.userBubble : styles.irisBubble]}
     >
-      {/* nech nikdy nechytá dotyky */}
       <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
         <GlassShimmer borderRadius={14} />
       </View>
@@ -149,10 +123,7 @@ function GlassBubble({
         end={{ x: 1, y: 1 }}
         style={[
           styles.sheen,
-          {
-            opacity: sheenOpacity,
-            transform: [{ translateX }, { translateY }, { rotate: '-12deg' }],
-          },
+          { opacity: sheenOpacity, transform: [{ translateX }, { translateY }, { rotate: "-12deg" }] },
         ]}
       />
 
@@ -166,14 +137,20 @@ export default function ChatScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const router = useRouter();
 
-  // Auth debug
   const { loading, user, accessToken } = useAuth();
-  console.log('AUTH:', { loading, userId: user?.id, hasToken: !!accessToken });
 
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'iris', text: 'Ahoj. Som Iris.' },
-  ]);
+  // log len pri zmene (ne spam)
+  useEffect(() => {
+    console.log("AUTH:", { loading, userId: user?.id, hasToken: !!accessToken });
+  }, [loading, user?.id, accessToken]);
 
+  // auth guard
+  useEffect(() => {
+    if (loading) return;
+    if (!user) router.replace("/auth");
+  }, [loading, user, router]);
+
+  const [messages, setMessages] = useState<Message[]>([{ role: "iris", text: "Ahoj. Som Iris." }]);
   const [bg, setBg] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [isTyping, setIsTyping] = useState(false);
@@ -190,15 +167,12 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
-    AsyncStorage.setItem(
-      CHAT_STORAGE_KEY,
-      JSON.stringify(messages.slice(-MAX_MESSAGES))
-    );
+    AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-MAX_MESSAGES)));
   }, [messages]);
 
   useEffect(() => {
     fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`)
-      .then(res => res.json())
+      .then((res) => res.json())
       .then((data: UIManifest) => {
         setBg(data?.chatBackground ?? null);
         setAvatarUrl(data?.avatar?.image_url || DEFAULT_AVATAR_URL);
@@ -210,9 +184,7 @@ export default function ChatScreen() {
   }, []);
 
   const scrollToBottom = (animated = true) => {
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollToEnd({ animated });
-    });
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
   };
 
   useEffect(() => {
@@ -221,7 +193,7 @@ export default function ChatScreen() {
 
   useEffect(() => {
     const last = messages[messages.length - 1];
-    if (last?.role === 'iris') setIrisPulseKey(k => k + 1);
+    if (last?.role === "iris") setIrisPulseKey((k) => k + 1);
   }, [messages]);
 
   const sendMessage = async (text: string) => {
@@ -229,39 +201,30 @@ export default function ChatScreen() {
     if (!trimmed) return;
 
     Keyboard.dismiss();
-    setMessages(prev => [...prev, { role: 'user', text: trimmed }]);
+    setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setIsTyping(true);
 
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      // ✅ token do backendu (krok 6-ready)
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
       const res = await fetch(API_CHAT, {
-        method: 'POST',
+        method: "POST",
         headers,
         body: JSON.stringify({ message: trimmed }),
       });
 
       const data = await res.json();
-      setMessages(prev => [...prev, { role: 'iris', text: data.reply }]);
+      setMessages((prev) => [...prev, { role: "iris", text: data.reply }]);
     } catch {
-      setMessages(prev => [
-        ...prev,
-        { role: 'iris', text: 'Nastala chyba pri spojení s Iris.' },
-      ]);
+      setMessages((prev) => [...prev, { role: "iris", text: "Nastala chyba pri spojení s Iris." }]);
     } finally {
       setIsTyping(false);
     }
   };
 
   const lastIrisIndex = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'iris') return i;
-    }
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "iris") return i;
     return -1;
   }, [messages]);
 
@@ -277,14 +240,18 @@ export default function ChatScreen() {
           <Text style={styles.headerStatus}>with you</Text>
         </View>
 
-        {/* ✅ LOGIN/LOGOUT controls */}
-        <View style={{ marginLeft: 'auto', flexDirection: 'row', gap: 12 }}>
-          <Pressable onPress={() => router.push('/auth/index' as any)}>
-            <Text style={{ color: '#8da2ff', fontWeight: '700' }}>LOGIN</Text>
+        <View style={{ marginLeft: "auto", flexDirection: "row", gap: 12 }}>
+          <Pressable onPress={() => router.push("/auth")}>
+            <Text style={{ color: "#8da2ff", fontWeight: "700" }}>LOGIN</Text>
           </Pressable>
 
-          <Pressable onPress={() => supabase.auth.signOut()}>
-            <Text style={{ color: '#ff8d8d', fontWeight: '700' }}>LOGOUT</Text>
+          <Pressable
+            onPress={async () => {
+              await supabase.auth.signOut();
+              router.replace("/auth");
+            }}
+          >
+            <Text style={{ color: "#ff8d8d", fontWeight: "700" }}>LOGOUT</Text>
           </Pressable>
         </View>
       </View>
@@ -300,11 +267,7 @@ export default function ChatScreen() {
             key={`${i}-${m.role}`}
             role={m.role}
             text={m.text}
-            pulseKey={
-              i === lastIrisIndex && m.role === 'iris'
-                ? irisPulseKey
-                : undefined
-            }
+            pulseKey={i === lastIrisIndex && m.role === "iris" ? irisPulseKey : undefined}
           />
         ))}
 
@@ -321,26 +284,21 @@ export default function ChatScreen() {
     </View>
   );
 
-  // ✅ Android: vypnúť padding (vie robiť mŕtvy layout). iOS necháme.
+  // ✅ FIX: Android keyboard – používaj "height"
   const Body = (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={0}
     >
       {Screen}
     </KeyboardAvoidingView>
   );
 
-  // ✅ POZN: pointerEvents na ImageBackground TS nemá -> riešime wrapperom + overlay "none"
   if (bg?.image_url) {
     return (
       <View style={styles.root} pointerEvents="box-none">
-        <ImageBackground
-          source={{ uri: bg.image_url }}
-          style={styles.root}
-          blurRadius={bg.blur ?? 0}
-        >
+        <ImageBackground source={{ uri: bg.image_url }} style={styles.root} blurRadius={bg.blur ?? 0}>
           <View
             pointerEvents="none"
             style={[
@@ -364,53 +322,46 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b0b0f' },
+  root: { flex: 1, backgroundColor: "#0b0b0f" },
   container: { flex: 1 },
 
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.12)',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderBottomColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(0,0,0,0.5)",
   },
 
   avatarWrap: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginRight: 12,
   },
-  avatar: { width: '100%', height: '100%' },
+  avatar: { width: "100%", height: "100%" },
 
-  headerName: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  headerStatus: { color: 'rgba(203,213,245,0.85)', fontSize: 12 },
+  headerName: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  headerStatus: { color: "rgba(203,213,245,0.85)", fontSize: 12 },
 
   messages: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
 
   bubble: {
-    maxWidth: '64%',
+    maxWidth: "64%",
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderRadius: 14,
     marginBottom: 8,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
+    borderColor: "rgba(255,255,255,0.14)",
   },
 
-  userBubble: { alignSelf: 'flex-end' },
-  irisBubble: { alignSelf: 'flex-start' },
+  userBubble: { alignSelf: "flex-end" },
+  irisBubble: { alignSelf: "flex-start" },
 
-  sheen: {
-    position: 'absolute',
-    top: -12,
-    left: -80,
-    width: 200,
-    height: 140,
-  },
-
-  text: { color: '#fff', fontSize: 14, lineHeight: 18 },
+  sheen: { position: "absolute", top: -12, left: -80, width: 200, height: 140 },
+  text: { color: "#fff", fontSize: 14, lineHeight: 18 },
 });

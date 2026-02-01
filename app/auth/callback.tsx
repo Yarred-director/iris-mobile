@@ -21,7 +21,6 @@ export default function AuthCallback() {
       return;
     }
 
-    // dev strict-mode: nedovoľ dvojité spustenie pre rovnaký code
     if (lastExchangedCode === code) {
       console.log("AUTH CALLBACK: already attempted, skipping");
       return;
@@ -33,10 +32,7 @@ export default function AuthCallback() {
         console.log("AUTH CALLBACK: exchanging code =", code);
 
         const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-        console.log("AUTH CALLBACK: exchange result =", {
-          hasData: !!data,
-          error: error?.message,
-        });
+        console.log("AUTH CALLBACK: exchange result =", { hasData: !!data, error: error?.message });
 
         if (error) throw error;
 

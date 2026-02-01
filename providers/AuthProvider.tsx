@@ -51,9 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       accessToken: session?.access_token ?? null,
       signOut: async () => {
-        setLoading(true);
         await supabase.auth.signOut();
-        setLoading(false);
       },
       refresh,
     };

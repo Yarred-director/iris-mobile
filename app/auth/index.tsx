@@ -1,29 +1,15 @@
 import { supabase } from "@/lib/supabase";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 const REDIRECT_TO = "iris://auth/callback";
-const STORAGE_KEY = "iris.supabase.auth";
 
 export default function AuthScreen() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [err, setErr] = useState<string | null>(null);
+
   const sendingRef = useRef(false);
-  const wipedRef = useRef(false);
-
-  useEffect(() => {
-    (async () => {
-      if (wipedRef.current) return;
-      wipedRef.current = true;
-
-      await AsyncStorage.removeItem(STORAGE_KEY);
-      await supabase.auth.signOut();
-
-      console.log("AUTH: wiped storageKey + signed out", STORAGE_KEY);
-    })();
-  }, []);
 
   const send = async () => {
     if (sendingRef.current) return;
@@ -41,9 +27,6 @@ export default function AuthScreen() {
 
     console.log("AUTH SEND: start", clean);
 
-    const before = await AsyncStorage.getItem(STORAGE_KEY);
-    console.log("AUTH SEND: storage BEFORE =", before ? "HAS_VALUE" : "null");
-
     const { data, error } = await supabase.auth.signInWithOtp({
       email: clean,
       options: { emailRedirectTo: REDIRECT_TO },
@@ -51,22 +34,8 @@ export default function AuthScreen() {
 
     console.log("AUTH SEND: result", { error: error?.message, data });
 
-    // nech sa stihne zapísať
-    await new Promise((r) => setTimeout(r, 800));
-
-    const after = await AsyncStorage.getItem(STORAGE_KEY);
-    console.log("AUTH SEND: storage AFTER =", after ? "HAS_VALUE" : "null");
-
     if (error) {
       setErr(error.message);
-      setStatus("error");
-      sendingRef.current = false;
-      return;
-    }
-
-    // 🔥 ak AFTER je null, PKCE flow state sa vôbec neukladá → exchange nikdy nemôže fungovať
-    if (!after) {
-      setErr("PKCE flow state sa neuložil (storage AFTER = null). Prepneme na password login (DEV).");
       setStatus("error");
       sendingRef.current = false;
       return;
