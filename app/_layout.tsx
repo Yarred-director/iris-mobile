@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import { UI_MANIFEST_URL } from '../constants/ui';
+import { AuthProvider } from '../providers/AuthProvider';
 
 type SplashConfig = {
   image_url: string;
@@ -55,7 +56,7 @@ export default function RootLayout() {
   if (!booted) return null;
 
   return (
-    <>
+    <AuthProvider>
       <Stack
         screenOptions={{
           headerShown: false,
@@ -63,6 +64,6 @@ export default function RootLayout() {
         }}
       />
       <StatusBar style="light" />
-    </>
+    </AuthProvider>
   );
 }

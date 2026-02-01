@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -8,20 +9,23 @@ import {
   Easing,
   ImageBackground,
   Keyboard,
-  KeyboardAvoidingView, // ✅ ADD
-  Platform, // ✅ ADD
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  View
+  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
+import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../providers/AuthProvider';
 import ChatInput from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
 import TypingIndicator from '../components/TypingIndicator';
 
-const API_BASE = 'https://iris-mobile.onrender.com';
+const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com';
 const API_CHAT = `${API_BASE}/chat`;
 
 const CHAT_STORAGE_KEY = 'iris.chat.history.v1';
@@ -133,10 +137,11 @@ function GlassBubble({
       end={{ x: 1, y: 1 }}
       style={[styles.bubble, isUser ? styles.userBubble : styles.irisBubble]}
     >
-      {/* Ultra-jemný glass shimmer – všade */}
-      <GlassShimmer borderRadius={14} />
+      {/* nech nikdy nechytá dotyky */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <GlassShimmer borderRadius={14} />
+      </View>
 
-      {/* Jemný interný sheen */}
       <AnimatedLinearGradient
         pointerEvents="none"
         colors={sheenColors}
@@ -159,6 +164,11 @@ function GlassBubble({
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const router = useRouter();
+
+  // Auth debug
+  const { loading, user, accessToken } = useAuth();
+  console.log('AUTH:', { loading, userId: user?.id, hasToken: !!accessToken });
 
   const [messages, setMessages] = useState<Message[]>([
     { role: 'iris', text: 'Ahoj. Som Iris.' },
@@ -223,11 +233,19 @@ export default function ChatScreen() {
     setIsTyping(true);
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      // ✅ token do backendu (krok 6-ready)
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
       const res = await fetch(API_CHAT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ message: trimmed }),
       });
+
       const data = await res.json();
       setMessages(prev => [...prev, { role: 'iris', text: data.reply }]);
     } catch {
@@ -253,9 +271,21 @@ export default function ChatScreen() {
         <View style={styles.avatarWrap}>
           <Image source={{ uri: avatarUrl }} style={styles.avatar} />
         </View>
+
         <View>
           <Text style={styles.headerName}>Iris</Text>
           <Text style={styles.headerStatus}>with you</Text>
+        </View>
+
+        {/* ✅ LOGIN/LOGOUT controls */}
+        <View style={{ marginLeft: 'auto', flexDirection: 'row', gap: 12 }}>
+          <Pressable onPress={() => router.push('/auth/index' as any)}>
+            <Text style={{ color: '#8da2ff', fontWeight: '700' }}>LOGIN</Text>
+          </Pressable>
+
+          <Pressable onPress={() => supabase.auth.signOut()}>
+            <Text style={{ color: '#ff8d8d', fontWeight: '700' }}>LOGOUT</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -263,6 +293,7 @@ export default function ChatScreen() {
         ref={scrollRef}
         style={styles.messages}
         contentContainerStyle={{ paddingBottom: 12 }}
+        keyboardShouldPersistTaps="handled"
       >
         {messages.map((m, i) => (
           <GlassBubble
@@ -278,7 +309,7 @@ export default function ChatScreen() {
         ))}
 
         {isTyping && (
-          <View style={{ height: 26, marginLeft: 8 }}>
+          <View style={{ height: 26, marginLeft: 8 }} pointerEvents="none">
             <TypingIndicator />
           </View>
         )}
@@ -290,36 +321,46 @@ export default function ChatScreen() {
     </View>
   );
 
-  // ✅ ONLY ADD: KeyboardAvoiding wrapper
+  // ✅ Android: vypnúť padding (vie robiť mŕtvy layout). iOS necháme.
   const Body = (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       {Screen}
     </KeyboardAvoidingView>
   );
 
+  // ✅ POZN: pointerEvents na ImageBackground TS nemá -> riešime wrapperom + overlay "none"
   if (bg?.image_url) {
     return (
-      <ImageBackground
-        source={{ uri: bg.image_url }}
-        style={styles.root}
-        blurRadius={bg.blur ?? 0}
-      >
-        <View
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})` },
-          ]}
-        />
-        <SafeAreaView style={{ flex: 1 }}>{Body}</SafeAreaView>
-      </ImageBackground>
+      <View style={styles.root} pointerEvents="box-none">
+        <ImageBackground
+          source={{ uri: bg.image_url }}
+          style={styles.root}
+          blurRadius={bg.blur ?? 0}
+        >
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFillObject,
+              { backgroundColor: `rgba(0,0,0,${bg.overlay ?? 0.35})` },
+            ]}
+          />
+          <SafeAreaView style={{ flex: 1 }} pointerEvents="box-none">
+            {Body}
+          </SafeAreaView>
+        </ImageBackground>
+      </View>
     );
   }
 
-  return <SafeAreaView style={styles.root}>{Body}</SafeAreaView>;
+  return (
+    <SafeAreaView style={styles.root} pointerEvents="box-none">
+      {Body}
+    </SafeAreaView>
+  );
 }
 
 const styles = StyleSheet.create({

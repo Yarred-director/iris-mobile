@@ -5,7 +5,7 @@
     "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/iris/icons/icon.png",
-    "scheme": "irismobile",
+    "scheme": "iris",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
 
@@ -20,6 +20,19 @@
     "android": {
       "package": "com.yarreddirector.iris",
       "softwareKeyboardLayoutMode": "resize",
+
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "iris"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+
       "splash": {
         "image": "./assets/images/iris/icons/splash.png",
         "resizeMode": "cover",
@@ -47,7 +60,8 @@
           "resizeMode": "cover",
           "backgroundColor": "#000000"
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
 
     "experiments": {
