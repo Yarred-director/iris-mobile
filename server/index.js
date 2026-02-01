@@ -35,10 +35,19 @@ import { inferRequestedFactKey } from './memory/factKeyJudge.js';
 import { extractFactValue } from './memory/factValueJudge.js';
 import { clearPendingFact, getPendingFact, setPendingFact } from './memory/pendingFacts.js';
 
-// 🔥 NEW
 import { hasPhysicalIntimacy } from './routing/physicalDetector.js';
 
-console.log('🔥 IRIS BOOTSTRAP OK — DUAL LLM ACTIVE');
+// 🔥 NEW – Scene Context Core
+import {
+  formatSceneContextBlock,
+  getSceneContext,
+  patchSceneContext
+} from './memory/sceneContext.js';
+
+import { formatBridgeBlock } from './memory/bridge.js';
+import { applySubjectLock } from './memory/subjectLock.js';
+
+console.log('🔥 IRIS BOOTSTRAP OK — DUAL LLM + SCC ACTIVE');
 
 const app = express();
 app.use(cors());
@@ -54,30 +63,50 @@ app.post('/chat', async (req, res) => {
     const { message } = req.body;
     console.log('\n➡️ USER:', message);
 
-    // FSM len pre tón
     const state = detectState(message);
-
     await decayMemories();
 
     const core = await loadCoreOrigin();
     const { memories: episodic, meta: recallMeta } = await recallEpisodicMemory(message);
     const summaries = await loadSummaries();
 
-    // 🔐 user & scene (NO HARDCODE)
     const userId = req.userId;
     const sceneKey = detectSceneKey({ message, episodic });
 
-    // ✅ PENDING FLOW (1): consume pending
+    // 🧠 LOAD SCENE CONTEXT CORE
+    const sceneContext = await getSceneContext(req.supabase, sceneKey);
+
+    console.log(
+      '🧠 SCC →',
+      sceneContext?.interaction_mode,
+      '| last_subject =',
+      sceneContext?.last_subject
+    );
+
+    /* ============================
+       SUBJECT LOCK
+    ============================ */
+
+    const { subject, augmentedText } =
+      applySubjectLock(message, sceneContext);
+
+    if (subject && subject !== sceneContext?.last_subject) {
+      await patchSceneContext(req.supabase, sceneKey, {
+        last_subject: subject
+      });
+    }
+
+    /* ============================
+       PENDING FACT FLOW
+    ============================ */
+
     const pendingKey = await getPendingFact(userId, sceneKey);
-    console.log('🧷 pendingKey =', pendingKey);
 
     if (pendingKey) {
       const { value, confidence } = await extractFactValue({
         factKey: pendingKey,
-        userMessage: message
+        userMessage: augmentedText
       });
-
-      console.log('🧷 extractedValue =', value, 'conf =', confidence);
 
       if (value && confidence >= 0.6) {
         await upsertSceneFact(userId, sceneKey, pendingKey, value, {
@@ -85,47 +114,42 @@ app.post('/chat', async (req, res) => {
           source: 'user'
         });
         await clearPendingFact(userId, sceneKey);
-        console.log('✅ upserted + cleared pending:', pendingKey);
       }
     }
 
-    // načítaj facts (po možnom uložení)
     const sceneFacts = await getSceneFacts(userId, sceneKey);
 
-    console.log(
-      '🧪 SCENE DEBUG →',
-      'userId =', userId,
-      '| sceneKey =', sceneKey,
-      '| facts =', sceneFacts.length
-    );
-
-    // ✅ PENDING FLOW (2): set pending ONLY if we are NOT currently consuming a pending fact
-    // (aby sa ti pending neprepísal, keď user práve odpovedá)
     let requestedFactKey = null;
     if (!pendingKey) {
-      requestedFactKey = await inferRequestedFactKey({ message, sceneKey });
-      console.log('🧷 requestedFactKey =', requestedFactKey);
+      requestedFactKey = await inferRequestedFactKey({
+        message: augmentedText,
+        sceneKey
+      });
 
       if (requestedFactKey) {
-        const hasFactAlready = sceneFacts.some(f => f.fact_key === requestedFactKey);
-        if (!hasFactAlready) {
+        const exists = sceneFacts.some(f => f.fact_key === requestedFactKey);
+        if (!exists) {
           await setPendingFact(userId, sceneKey, requestedFactKey);
-          console.log('✅ set pending for:', requestedFactKey);
         }
       }
     }
 
-    // reinforcement
     for (const m of episodic) {
       if (typeof m.importance === 'number' && m.importance < 1) {
         await reinforceMemory(m.id);
       }
     }
 
-    // 🧠 SYSTEM PROMPT – MUSÍ BYŤ PRVÝ
+    /* ============================
+       SYSTEM PROMPT
+    ============================ */
+
     let systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    // 🔒 HARD FACTS (scene_facts have absolute priority)
+    // 🔥 SCENE CONTEXT CORE
+    systemPrompt += formatSceneContextBlock(sceneContext);
+
+    // 🔒 HARD FACTS
     if (sceneFacts.length > 0) {
       const factsText = sceneFacts
         .map(f => `- ${sceneKey}.${f.fact_key} = ${f.fact_value}`)
@@ -133,57 +157,49 @@ app.post('/chat', async (req, res) => {
 
       systemPrompt += `
 
-HARD FACTS (source of truth):
+HARD FACTS:
 ${factsText}
 
-CRITICAL RULES:
-- Only state attributes that are explicitly present in HARD FACTS.
-- If the user asks about an attribute that is NOT listed above, you MUST say you don't know and ask the user to provide it.
-- Never infer, assume, guess, or creatively fill in missing attributes.
-- Never change topic when an attribute is missing.`;
+RULES:
+- Never invent missing attributes.
+- Ask explicitly if a fact is missing.`;
     }
 
-    // ✅ Extra guidance: when we just set a pending fact, explicitly ask for it
-    if (requestedFactKey && sceneFacts.length === 0) {
-      systemPrompt += `
-
-NOTE:
-- You have identified a missing scene fact "${requestedFactKey}". Ask the user for that exact detail clearly and concisely.`;
-    }
-
-    // 🛟 AIRBAG – len ak NIE SÚ facts
     if (!recallMeta?.confident && sceneFacts.length === 0) {
       systemPrompt += `
 
-IMPORTANT:
-- If you are not sure about factual details, do NOT invent specifics.
-- Say you don't have that detail stored and ask the user.`;
+AIRBAG:
+- Do not guess facts. Ask the user.`;
     }
 
     /* ============================
-       🔥 PROVIDER ROUTING
+       PROVIDER ROUTING
     ============================ */
 
     let provider = 'openai';
-
-    // MEMORY → vždy OpenAI
-    const isMemory = message.toLowerCase().includes('spomien');
-
-    if (!isMemory && hasPhysicalIntimacy(message)) {
+    if (!message.toLowerCase().includes('spomien') && hasPhysicalIntimacy(message)) {
       provider = 'grok';
     }
 
     console.log(`🤖 STATE=${state} → ${provider}`);
 
     /* ============================
-       🔁 HISTORY BRIDGE
+       BRIDGE (Grok → OpenAI)
+    ============================ */
+
+    if (provider === 'openai') {
+      systemPrompt += formatBridgeBlock(sceneContext);
+    }
+
+    /* ============================
+       HISTORY
     ============================ */
 
     if (provider === 'grok') {
       history.grok = [
         { role: 'system', content: systemPrompt },
         ...sanitizeForGrok(history.openai),
-        { role: 'user', content: message }
+        { role: 'user', content: augmentedText }
       ];
       history.openai = [];
     }
@@ -191,13 +207,11 @@ IMPORTANT:
     if (provider === 'openai') {
       history.openai = [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: message }
+        { role: 'user', content: augmentedText }
       ];
     }
 
     const h = history[provider];
-
-    console.log(`🚀 CALL ${provider}`);
 
     const r = await getLLMClient(provider).responses.create({
       model: MODELS[provider],
@@ -208,6 +222,16 @@ IMPORTANT:
     h.push({ role: 'assistant', content: reply });
 
     console.log(`💬 REPLY (${provider}):`, reply.slice(0, 80));
+
+    /* ============================
+       UPDATE SCENE CONTEXT
+    ============================ */
+
+    await patchSceneContext(req.supabase, sceneKey, {
+      last_engine: provider,
+      last_engine_reply: reply,
+      interaction_mode: state
+    });
 
     const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
     if (decision?.store) await writeMemory(decision);

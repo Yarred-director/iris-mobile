@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// načítanie IRIS CORE YAML (kanonická identita)
 const CORE_YAML = fs.readFileSync(
   path.resolve(__dirname, '../', process.env.IRIS_CORE_YAML),
   'utf8'
@@ -21,9 +22,17 @@ ${CORE_YAML}
 ${core || 'None'}
 
 === SUMMARY ===
-${summaries.length ? summaries.map(s=>`- ${s.narrative}`).join('\n') : 'None'}
+${
+  summaries.length
+    ? summaries.map(s => `- ${s.narrative}`).join('\n')
+    : 'None'
+}
 
 === EPISODIC ===
-${episodic.length ? episodic.map(m=>`- ${m.narrative}`).join('\n') : 'None'}
+${
+  episodic.length
+    ? episodic.map(m => `- ${m.narrative}`).join('\n')
+    : 'None'
+}
 `.trim();
 }

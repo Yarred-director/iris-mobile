@@ -1,18 +1,22 @@
+import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
 function hashString(s) {
   return crypto.createHash('sha256').update(s).digest('hex').slice(0, 32);
 }
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { persistSession: false } }
+);
+
 export function sessionMiddleware(req, res, next) {
-  // Prefer explicit user id from client (mobile app)
   const headerId = req.header('x-iris-user-id');
   const bodyId = req.body?.userId;
 
   let userId = headerId || bodyId;
 
-  // Fallback (last resort): derive a stable-ish id
-  // (not perfect, but better than hardcoding)
   if (!userId) {
     const ua = req.header('user-agent') || '';
     const ip = req.ip || '';
@@ -20,5 +24,7 @@ export function sessionMiddleware(req, res, next) {
   }
 
   req.userId = String(userId);
+  req.supabase = supabase;
+
   next();
 }
