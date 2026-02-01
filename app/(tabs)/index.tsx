@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/providers/AuthProvider";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,8 +21,6 @@ import {
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from "../../constants/ui";
-import { supabase } from "../../lib/supabase";
-import { useAuth } from "../../providers/AuthProvider";
 import ChatInput from "../components/ChatInput";
 import GlassShimmer from "../components/GlassShimmer";
 import TypingIndicator from "../components/TypingIndicator";
@@ -139,7 +139,10 @@ export default function ChatScreen() {
 
   const { loading, user, accessToken } = useAuth();
 
-  // log len pri zmene (ne spam)
+  // ✅ menu state
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // log len pri zmene
   useEffect(() => {
     console.log("AUTH:", { loading, userId: user?.id, hasToken: !!accessToken });
   }, [loading, user?.id, accessToken]);
@@ -200,7 +203,9 @@ export default function ChatScreen() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    setMenuOpen(false);
     Keyboard.dismiss();
+
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setIsTyping(true);
 
@@ -240,27 +245,47 @@ export default function ChatScreen() {
           <Text style={styles.headerStatus}>with you</Text>
         </View>
 
-        <View style={{ marginLeft: "auto", flexDirection: "row", gap: 12 }}>
-          <Pressable onPress={() => router.push("/auth")}>
-            <Text style={{ color: "#8da2ff", fontWeight: "700" }}>LOGIN</Text>
+        {/* ⋯ MENU */}
+        <View style={{ marginLeft: "auto" }}>
+          <Pressable
+            onPress={() => setMenuOpen((v) => !v)}
+            style={styles.menuBtn}
+            hitSlop={10}
+          >
+            <Text style={styles.menuDots}>⋯</Text>
           </Pressable>
 
-          <Pressable
-            onPress={async () => {
-              await supabase.auth.signOut();
-              router.replace("/auth");
-            }}
-          >
-            <Text style={{ color: "#ff8d8d", fontWeight: "700" }}>LOGOUT</Text>
-          </Pressable>
+          {menuOpen && (
+            <View style={styles.menuPopover}>
+              <Pressable
+                onPress={async () => {
+                  setMenuOpen(false);
+                  await supabase.auth.signOut();
+                  router.replace("/auth");
+                }}
+                style={styles.menuItem}
+              >
+                <Text style={styles.menuItemText}>Odhlásiť sa</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
       </View>
+
+      {/* tap-away overlay, aby sa menu zavrelo klikom mimo */}
+      {menuOpen && (
+        <Pressable
+          onPress={() => setMenuOpen(false)}
+          style={styles.menuOverlay}
+        />
+      )}
 
       <ScrollView
         ref={scrollRef}
         style={styles.messages}
         contentContainerStyle={{ paddingBottom: 12 }}
         keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => setMenuOpen(false)}
       >
         {messages.map((m, i) => (
           <GlassBubble
@@ -284,7 +309,7 @@ export default function ChatScreen() {
     </View>
   );
 
-  // ✅ FIX: Android keyboard – používaj "height"
+  // ✅ Android keyboard: "height"
   const Body = (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -332,6 +357,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255,255,255,0.12)",
     backgroundColor: "rgba(0,0,0,0.5)",
+    zIndex: 5,
   },
 
   avatarWrap: {
@@ -364,4 +390,45 @@ const styles = StyleSheet.create({
 
   sheen: { position: "absolute", top: -12, left: -80, width: 200, height: 140 },
   text: { color: "#fff", fontSize: 14, lineHeight: 18 },
+
+  // MENU
+  menuBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+  },
+  menuDots: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 22,
+    lineHeight: 22,
+    marginTop: -2,
+  },
+  menuPopover: {
+    position: "absolute",
+    top: 40,
+    right: 0,
+    minWidth: 160,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(12,12,16,0.96)",
+    overflow: "hidden",
+    zIndex: 10,
+  },
+  menuItem: { paddingVertical: 12, paddingHorizontal: 14 },
+  menuItemText: { color: "rgba(255,255,255,0.92)", fontWeight: "700" },
+
+  menuOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 4, // pod header (zIndex 5), nad chat
+  },
 });

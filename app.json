@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "iris-mobile",
+    "name": "Iris",
     "slug": "iris-mobile",
     "version": "1.0.3",
     "orientation": "portrait",
@@ -19,27 +19,27 @@
 
     "android": {
       "package": "com.yarreddirector.iris",
+
+      // ✅ aby klávesnica nezakrývala input
       "softwareKeyboardLayoutMode": "resize",
 
+      // ✅ deep link pre Supabase magic link
       "intentFilters": [
         {
           "action": "VIEW",
           "data": [
             {
-              "scheme": "iris"
+              "scheme": "iris",
+              "host": "auth",
+              "pathPrefix": "/callback"
             }
           ],
           "category": ["BROWSABLE", "DEFAULT"]
         }
-      ],
-
-      "splash": {
-        "image": "./assets/images/iris/icons/splash.png",
-        "resizeMode": "cover",
-        "backgroundColor": "#000000"
-      }
+      ]
     },
 
+    // ✅ JEDEN splash – žiadne preblikávanie
     "splash": {
       "image": "./assets/images/iris/icons/splash.png",
       "resizeMode": "cover",
@@ -53,6 +53,8 @@
 
     "plugins": [
       "expo-router",
+
+      // ✅ nech splash riadiš TY (a nie Expo auto-hide)
       [
         "expo-splash-screen",
         {
@@ -61,6 +63,8 @@
           "backgroundColor": "#000000"
         }
       ],
+
+      // ✅ nutné pre Supabase session persistence
       "expo-secure-store"
     ],
 
