@@ -1,6 +1,5 @@
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -25,9 +24,17 @@ import ChatInput from "../components/ChatInput";
 import GlassShimmer from "../components/GlassShimmer";
 import TypingIndicator from "../components/TypingIndicator";
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? "https://iris-mobile.onrender.com";
-const API_CHAT = `${API_BASE}/chat`;
+/**
+ * ✅ API BASE:
+ * - never silently fall back to a wrong URL
+ * - normalize trailing slashes
+ * - log once so debugging is trivial
+ */
+const API_BASE_RAW = process.env.EXPO_PUBLIC_API_URL ?? "";
+const API_BASE = API_BASE_RAW.replace(/\/+$/, "");
+const API_CHAT = API_BASE ? `${API_BASE}/chat` : "";
 
+// Chat history storage
 const CHAT_STORAGE_KEY = "iris.chat.history.v1";
 const MAX_MESSAGES = 50;
 
@@ -37,6 +44,36 @@ type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
 type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
 
 const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
+
+/**
+ * ✅ Web-safe storage:
+ * - Web: localStorage
+ * - Native: AsyncStorage (lazy import)
+ */
+async function storageGetItem(key: string) {
+  if (Platform.OS === "web") {
+    try {
+      if (typeof window === "undefined") return null;
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+  const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+  return AsyncStorage.getItem(key);
+}
+
+async function storageSetItem(key: string, value: string) {
+  if (Platform.OS === "web") {
+    try {
+      if (typeof window === "undefined") return;
+      window.localStorage.setItem(key, value);
+    } catch {}
+    return;
+  }
+  const AsyncStorage = (await import("@react-native-async-storage/async-storage")).default;
+  await AsyncStorage.setItem(key, value);
+}
 
 function GlassBubble({
   role,
@@ -147,6 +184,16 @@ export default function ChatScreen() {
     console.log("AUTH:", { loading, userId: user?.id, hasToken: !!accessToken });
   }, [loading, user?.id, accessToken]);
 
+  // log API base once
+  useEffect(() => {
+    console.log("API:", { API_BASE_RAW, API_BASE, API_CHAT });
+    if (!API_BASE) {
+      console.warn(
+        "Missing EXPO_PUBLIC_API_URL. Web will call localhost and fail. Set it in root .env and restart with `-c`."
+      );
+    }
+  }, []);
+
   // auth guard
   useEffect(() => {
     if (loading) return;
@@ -161,16 +208,18 @@ export default function ChatScreen() {
 
   useEffect(() => {
     (async () => {
-      const raw = await AsyncStorage.getItem(CHAT_STORAGE_KEY);
+      const raw = await storageGetItem(CHAT_STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setMessages(parsed);
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) setMessages(parsed);
+        } catch {}
       }
     })();
   }, []);
 
   useEffect(() => {
-    AsyncStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-MAX_MESSAGES)));
+    storageSetItem(CHAT_STORAGE_KEY, JSON.stringify(messages.slice(-MAX_MESSAGES)));
   }, [messages]);
 
   useEffect(() => {
@@ -210,8 +259,14 @@ export default function ChatScreen() {
     setIsTyping(true);
 
     try {
+      if (!API_CHAT) {
+        throw new Error("API_CHAT is empty (missing EXPO_PUBLIC_API_URL).");
+      }
+
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+
+      console.log("CHAT: POST", API_CHAT);
 
       const res = await fetch(API_CHAT, {
         method: "POST",
@@ -219,9 +274,17 @@ export default function ChatScreen() {
         body: JSON.stringify({ message: trimmed }),
       });
 
+      // handle non-200 with readable output
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.log("CHAT: non-OK", { status: res.status, body });
+        throw new Error(`HTTP ${res.status}`);
+      }
+
       const data = await res.json();
-      setMessages((prev) => [...prev, { role: "iris", text: data.reply }]);
-    } catch {
+      setMessages((prev) => [...prev, { role: "iris", text: data.reply ?? "…" }]);
+    } catch (e: any) {
+      console.log("CHAT ERROR:", e?.message ?? e);
       setMessages((prev) => [...prev, { role: "iris", text: "Nastala chyba pri spojení s Iris." }]);
     } finally {
       setIsTyping(false);
@@ -247,11 +310,7 @@ export default function ChatScreen() {
 
         {/* ⋯ MENU */}
         <View style={{ marginLeft: "auto" }}>
-          <Pressable
-            onPress={() => setMenuOpen((v) => !v)}
-            style={styles.menuBtn}
-            hitSlop={10}
-          >
+          <Pressable onPress={() => setMenuOpen((v) => !v)} style={styles.menuBtn} hitSlop={10}>
             <Text style={styles.menuDots}>⋯</Text>
           </Pressable>
 
@@ -273,12 +332,7 @@ export default function ChatScreen() {
       </View>
 
       {/* tap-away overlay, aby sa menu zavrelo klikom mimo */}
-      {menuOpen && (
-        <Pressable
-          onPress={() => setMenuOpen(false)}
-          style={styles.menuOverlay}
-        />
-      )}
+      {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
 
       <ScrollView
         ref={scrollRef}
