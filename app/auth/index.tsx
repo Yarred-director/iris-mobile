@@ -2,9 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
 import { useRouter } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-
-const REDIRECT_TO = "iris://auth/callback";
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 export default function AuthScreen() {
   const router = useRouter();
@@ -22,6 +20,19 @@ export default function AuthScreen() {
     if (user) router.replace("/(tabs)");
   }, [loading, user, router]);
 
+  const getRedirectTo = () => {
+    // Native deep link (scheme)
+    if (Platform.OS !== "web") return "iris://auth/callback";
+
+    // Web callback URL (must be whitelisted in Supabase Redirect URLs)
+    if (typeof window !== "undefined") {
+      return `${window.location.origin}/auth/callback`;
+    }
+
+    // SSR fallback (shouldn't happen for the actual click-flow)
+    return undefined;
+  };
+
   const send = async () => {
     if (sendingRef.current) return;
 
@@ -36,11 +47,12 @@ export default function AuthScreen() {
     setErr(null);
     setStatus("sending");
 
-    console.log("AUTH SEND: start", clean);
+    const redirectTo = getRedirectTo();
+    console.log("AUTH SEND: start", { email: clean, redirectTo, platform: Platform.OS });
 
     const { data, error } = await supabase.auth.signInWithOtp({
       email: clean,
-      options: { emailRedirectTo: REDIRECT_TO },
+      options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
     });
 
     console.log("AUTH SEND: result", { error: error?.message, data });
@@ -63,9 +75,7 @@ export default function AuthScreen() {
         Pošlem ti magic link na email. Nezavieraj appku. Klikni link hneď.
       </Text>
 
-      {loading && (
-        <Text style={styles.hint}>Kontrolujem session…</Text>
-      )}
+      {loading && <Text style={styles.hint}>Kontrolujem session…</Text>}
 
       <TextInput
         value={email}
