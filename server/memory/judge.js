@@ -1,3 +1,5 @@
+// server/memory/judge.js
+
 import { supabase } from '../config/supabase.js';
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
@@ -31,14 +33,27 @@ ${snippet}`.trim()
   catch { return { store:false }; }
 }
 
+/**
+ * Write a memory entry into episodic_memory.
+ * Accepts either {summary} or {narrative}; uses summary as embedding text by default.
+ */
 export async function writeMemory(m) {
-  const embedding = await createEmbedding(m.summary);
+  const memoryType = m.memory_type || 'EPISODIC';
+  const importance = typeof m.importance === 'number' ? m.importance : 0.6;
+
+  const narrative = (m.narrative ?? m.summary ?? '').toString().trim();
+  if (!narrative) return;
+
+  // Use summary for embedding if present, else narrative
+  const embedText = (m.summary ?? narrative).toString().trim();
+  const embedding = await createEmbedding(embedText);
+
   await supabase.from('episodic_memory').insert({
-    title: m.memory_type,
-    narrative: m.summary,
-    people: ['Iris','User'],
-    memory_type: m.memory_type,
-    importance: m.importance,
+    title: memoryType,
+    narrative,
+    people: m.people ?? ['Iris', 'User'],
+    memory_type: memoryType,
+    importance,
     embedding
   });
 }

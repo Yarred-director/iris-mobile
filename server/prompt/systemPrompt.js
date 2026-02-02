@@ -12,6 +12,9 @@ const CORE_YAML = fs.readFileSync(
 );
 
 export function buildSystemPrompt(core, episodic, summaries) {
+  const epi = Array.isArray(episodic) ? episodic : [];
+  const sum = Array.isArray(summaries) ? summaries : [];
+
   return `
 You are Iris.
 
@@ -23,16 +26,20 @@ ${core || 'None'}
 
 === SUMMARY ===
 ${
-  summaries.length
-    ? summaries.map(s => `- ${s.narrative}`).join('\n')
+  sum.length
+    ? sum.map(s => `- ${s.narrative}`).join('\n')
     : 'None'
 }
 
 === EPISODIC ===
 ${
-  episodic.length
-    ? episodic.map(m => `- ${m.narrative}`).join('\n')
+  epi.length
+    ? epi.map(m => `- ${m.narrative}`).join('\n')
     : 'None'
 }
+
+=== GLOBAL RULES ===
+- If a concrete attribute/fact is missing, say you don't know and ask the user.
+- Never invent missing values.
 `.trim();
 }

@@ -29,10 +29,13 @@ import { formatBridgeBlock } from './memory/bridge.js';
 import { applySubjectLock } from './memory/subjectLock.js';
 
 import {
+  formatHardSceneContextBlock,
   formatSceneContextBlock,
   getSceneContext,
   patchSceneContext
 } from './memory/sceneContext.js';
+
+import { extractContextFromText } from './memory/contextJudge.js';
 
 console.log('🔥 IRIS BOOTSTRAP OK — SCC + SUBJECT LOCK + BRIDGE');
 
@@ -40,6 +43,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(sessionMiddleware);
+
+function inferTimeOfDayFromText(text = '') {
+  const t = (text || '').toLowerCase();
+
+  // SK/CZ friendly triggers
+  if (/\br[aá]no\b|\bjutro\b|\bdobre r[aá]no\b/.test(t)) return 'morning';
+  if (/\bobed\b|\bpoobede\b|\bpopoludn[ií]\b/.test(t)) return 'afternoon';
+  if (/\bve[čc]er\b|\bdobr[ýy] ve[čc]er\b/.test(t)) return 'evening';
+  if (/\bnoc\b|\bpolnoc\b|\bdobr[úu] noc\b/.test(t)) return 'night';
+
+  // EN fallback
+  if (/\bmorning\b/.test(t)) return 'morning';
+  if (/\bafternoon\b/.test(t)) return 'afternoon';
+  if (/\bevening\b/.test(t)) return 'evening';
+  if (/\bnight\b|\bmidnight\b/.test(t)) return 'night';
+
+  return null;
+}
 
 app.post('/chat', async (req, res) => {
   try {
@@ -59,7 +80,7 @@ app.post('/chat', async (req, res) => {
     const userId = req.userId; // legacy, still used for scene_facts + pendingFacts in your code
     const sceneKey = detectSceneKey({ message, episodic });
 
-    // 3) load SCC (auth-based RPC inside)
+    // 3) load SCC
     const sceneContext = await getSceneContext(req.supabase, sceneKey);
 
     console.log(
@@ -69,13 +90,66 @@ app.post('/chat', async (req, res) => {
         : 'EMPTY (first message)'
     );
 
-    // 4) subject lock (turn follow-ups into deterministic subject)
-    const { subject, augmentedText } = applySubjectLock(message, sceneContext);
+    // 3.0) LLM-based explicit context extraction (no guessing)
+    const ctxExtract = await extractContextFromText(message);
 
-    if (subject && subject !== sceneContext?.last_subject) {
+    // We build a patch only from explicit info
+    const sccPatch = {};
+    let didPatchContext = false;
+
+    if (ctxExtract.explicit && ctxExtract.confidence >= 0.7) {
+      // location/time/room are ONLY patched when user explicitly said them
+      if (ctxExtract.location_city) sccPatch.location_city = ctxExtract.location_city;
+      if (ctxExtract.location_country) sccPatch.location_country = ctxExtract.location_country;
+      if (ctxExtract.time_of_day) sccPatch.time_of_day = ctxExtract.time_of_day;
+      if (ctxExtract.room) sccPatch.room = ctxExtract.room;
+    }
+
+    // 3.1) Fallback: regex time_of_day if extractor didn't set it explicitly
+    if (!sccPatch.time_of_day) {
+      const inferredTod = inferTimeOfDayFromText(message);
+      if (inferredTod) sccPatch.time_of_day = inferredTod;
+    }
+
+    // Apply SCC patch only if it changes something (avoid noise)
+    if (Object.keys(sccPatch).length > 0) {
+      await patchSceneContext(req.supabase, sceneKey, sccPatch);
+      didPatchContext = true;
+
+      // Write an EPISODIC memory: "where/when we were" (human-like)
+      // Only when user was explicit OR we got clear time_of_day from message
+      // (you can tighten this rule later if you want)
+      const parts = [];
+      if (ctxExtract.explicit && ctxExtract.confidence >= 0.7) {
+        if (sccPatch.location_city) parts.push(`in ${sccPatch.location_city}`);
+        if (sccPatch.location_country) parts.push(`${sccPatch.location_country}`);
+        if (sccPatch.room) parts.push(`room=${sccPatch.room}`);
+      }
+      if (sccPatch.time_of_day) parts.push(`time=${sccPatch.time_of_day}`);
+
+      if (parts.length > 0) {
+        await writeMemory({
+          memory_type: 'EPISODIC',
+          importance: 0.6,
+          summary: `Context update: user said ${parts.join(' ')}.`
+        });
+      }
+    }
+
+    // Use merged context for prompt/bridge in THIS SAME reply
+    const mergedSceneContext = didPatchContext
+      ? { ...(sceneContext || {}), ...sccPatch }
+      : sceneContext;
+
+    // 4) subject lock
+    const { subject, augmentedText } = applySubjectLock(message, mergedSceneContext);
+
+    if (subject && subject !== mergedSceneContext?.last_subject) {
       await patchSceneContext(req.supabase, sceneKey, {
         last_subject: subject
       });
+      // keep local merged view consistent
+      if (mergedSceneContext) mergedSceneContext.last_subject = subject;
     }
 
     // 5) pending fact flow
@@ -119,13 +193,12 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    // 7) build system prompt
+    // 7) system prompt
     let systemPrompt = buildSystemPrompt(core, episodic, summaries);
 
-    // SCC injection
-    systemPrompt += formatSceneContextBlock(sceneContext);
+    systemPrompt += formatSceneContextBlock(mergedSceneContext);
+    systemPrompt += formatHardSceneContextBlock(mergedSceneContext);
 
-    // HARD FACTS injection
     if (sceneFacts.length > 0) {
       const factsText = sceneFacts
         .map(f => `- ${sceneKey}.${f.fact_key} = ${f.fact_value}`)
@@ -158,7 +231,7 @@ AIRBAG:
 
     // 9) bridge injection (Grok → OpenAI)
     if (provider === 'openai') {
-      systemPrompt += formatBridgeBlock(sceneContext);
+      systemPrompt += formatBridgeBlock(mergedSceneContext);
     }
 
     // 10) history packaging
@@ -189,14 +262,14 @@ AIRBAG:
 
     console.log(`💬 REPLY (${provider}):`, reply.slice(0, 120));
 
-    // 12) update SCC after reply (this is what makes it “remember context”)
+    // 12) update SCC after reply
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: provider,
       last_engine_reply: reply,
       interaction_mode: state
     });
 
-    // 13) memory judge
+    // 13) memory judge (emotional/meaningful memory)
     const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
     if (decision?.store) await writeMemory(decision);
 
