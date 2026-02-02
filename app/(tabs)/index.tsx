@@ -31,8 +31,15 @@ import TypingIndicator from "../components/TypingIndicator";
  * - log once so debugging is trivial
  */
 const API_BASE_RAW = process.env.EXPO_PUBLIC_API_URL ?? "";
-const API_BASE = API_BASE_RAW.replace(/\/+$/, "");
+
+// normalize: remove trailing slashes, and remove a trailing "/chat" if user put it into env by mistake
+const API_BASE = API_BASE_RAW
+  .trim()
+  .replace(/\/+$/, "")
+  .replace(/\/chat$/, "");
+
 const API_CHAT = API_BASE ? `${API_BASE}/chat` : "";
+
 
 // Chat history storage
 const CHAT_STORAGE_KEY = "iris.chat.history.v1";
