@@ -35,6 +35,7 @@ import {
   patchSceneContext
 } from './memory/sceneContext.js';
 
+// ✅ deterministic context judge (you said you created this file)
 import { extractContextFromText } from './memory/contextJudge.js';
 
 console.log('🔥 IRIS BOOTSTRAP OK — SCC + SUBJECT LOCK + BRIDGE');
@@ -86,69 +87,49 @@ app.post('/chat', async (req, res) => {
     console.log(
       '🧠 SCC →',
       sceneContext
-        ? `mode=${sceneContext.interaction_mode}, subject=${sceneContext.last_subject}`
+        ? `mode=${sceneContext.interaction_mode}, subject=${sceneContext.last_subject}, last_engine=${sceneContext.last_engine}`
         : 'EMPTY (first message)'
     );
 
-    // 3.0) LLM-based explicit context extraction (no guessing)
-    const ctxExtract = await extractContextFromText(message);
+    // 3.0) Deterministic explicit context capture (NO guessing)
+    // Expect extractContextFromText({ text, sceneContext }) -> { city?, country?, place?, room?, time_of_day? }
+    const sccPatch = extractContextFromText({ text: message, sceneContext: sceneContext || {} }) || {};
 
-    // We build a patch only from explicit info
-    const sccPatch = {};
-    let didPatchContext = false;
-
-    if (ctxExtract.explicit && ctxExtract.confidence >= 0.7) {
-      // location/time/room are ONLY patched when user explicitly said them
-      if (ctxExtract.location_city) sccPatch.location_city = ctxExtract.location_city;
-      if (ctxExtract.location_country) sccPatch.location_country = ctxExtract.location_country;
-      if (ctxExtract.time_of_day) sccPatch.time_of_day = ctxExtract.time_of_day;
-      if (ctxExtract.room) sccPatch.room = ctxExtract.room;
-    }
-
-    // 3.1) Fallback: regex time_of_day if extractor didn't set it explicitly
+    // 3.1) Fallback: regex time_of_day if judge didn't set it
     if (!sccPatch.time_of_day) {
       const inferredTod = inferTimeOfDayFromText(message);
-      if (inferredTod) sccPatch.time_of_day = inferredTod;
+      if (inferredTod && !(sceneContext && sceneContext.time_of_day)) sccPatch.time_of_day = inferredTod;
     }
 
-    // Apply SCC patch only if it changes something (avoid noise)
-    if (Object.keys(sccPatch).length > 0) {
-      await patchSceneContext(req.supabase, sceneKey, sccPatch);
-      didPatchContext = true;
+    let mergedSceneContext = sceneContext;
 
-      // Write an EPISODIC memory: "where/when we were" (human-like)
-      // Only when user was explicit OR we got clear time_of_day from message
-      // (you can tighten this rule later if you want)
+    if (Object.keys(sccPatch).length > 0) {
+      console.log('🧭 SCC PATCH →', sccPatch);
+      await patchSceneContext(req.supabase, sceneKey, sccPatch);
+      mergedSceneContext = { ...(sceneContext || {}), ...sccPatch };
+
+      // Optional: write episodic memory "where/when" (safe: only from explicit patch)
       const parts = [];
-      if (ctxExtract.explicit && ctxExtract.confidence >= 0.7) {
-        if (sccPatch.location_city) parts.push(`in ${sccPatch.location_city}`);
-        if (sccPatch.location_country) parts.push(`${sccPatch.location_country}`);
-        if (sccPatch.room) parts.push(`room=${sccPatch.room}`);
-      }
+      if (sccPatch.city) parts.push(`city=${sccPatch.city}`);
+      if (sccPatch.country) parts.push(`country=${sccPatch.country}`);
+      if (sccPatch.place) parts.push(`place=${sccPatch.place}`);
+      if (sccPatch.room) parts.push(`room=${sccPatch.room}`);
       if (sccPatch.time_of_day) parts.push(`time=${sccPatch.time_of_day}`);
 
-      if (parts.length > 0) {
+      if (parts.length) {
         await writeMemory({
           memory_type: 'EPISODIC',
           importance: 0.6,
-          summary: `Context update: user said ${parts.join(' ')}.`
+          summary: `Context update (explicit): ${parts.join(', ')}.`
         });
       }
     }
-
-    // Use merged context for prompt/bridge in THIS SAME reply
-    const mergedSceneContext = didPatchContext
-      ? { ...(sceneContext || {}), ...sccPatch }
-      : sceneContext;
 
     // 4) subject lock
     const { subject, augmentedText } = applySubjectLock(message, mergedSceneContext);
 
     if (subject && subject !== mergedSceneContext?.last_subject) {
-      await patchSceneContext(req.supabase, sceneKey, {
-        last_subject: subject
-      });
-      // keep local merged view consistent
+      await patchSceneContext(req.supabase, sceneKey, { last_subject: subject });
       if (mergedSceneContext) mergedSceneContext.last_subject = subject;
     }
 
@@ -268,6 +249,16 @@ AIRBAG:
       last_engine_reply: reply,
       interaction_mode: state
     });
+
+    // 12.5) ✅ Save bridge_buffer when Grok answered (so OpenAI can continue coherently)
+    if (provider === 'grok') {
+      await patchSceneContext(req.supabase, sceneKey, {
+        bridge_buffer: [
+          { role: 'user', content: augmentedText },
+          { role: 'assistant', content: reply }
+        ]
+      });
+    }
 
     // 13) memory judge (emotional/meaningful memory)
     const decision = await irisMemoryJudge(`User:${message}\nIris:${reply}`);
