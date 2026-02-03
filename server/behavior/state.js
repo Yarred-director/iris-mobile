@@ -1,11 +1,30 @@
-export function detectState(text) {
+export function detectState(input) {
+  // 🛡️ HARD GUARD – vždy pracujeme len so stringom
+  const text =
+    typeof input === 'string'
+      ? input
+      : typeof input?.content === 'string'
+        ? input.content
+        : '';
+
   const t = text.toLowerCase();
 
-  if (/nahá|vlhk|panva|tvrd|vojsť|sex|intím|zadok|prsia|chyti|pritla|stisn|telo|bok|bozk/.test(t))
+  if (
+    t.includes('chytím') ||
+    t.includes('bozk') ||
+    t.includes('pritlač') ||
+    t.includes('tvrdo')
+  ) {
     return 'heated';
+  }
 
-  if (/bozk|dotyk|pritiah|pohlad/.test(t)) return 'close';
-  if (/rande|večer|spolu/.test(t)) return 'warm';
+  if (
+    t.includes('ahoj') ||
+    t.includes('dobré ránko') ||
+    t.includes('dobre ranko')
+  ) {
+    return 'warm';
+  }
 
   return 'idle';
 }
