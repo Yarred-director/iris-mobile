@@ -1,68 +1,43 @@
+// server/middleware/session.js
 import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
 
-function hashString(s) {
-  return crypto.createHash('sha256').update(s).digest('hex').slice(0, 32);
-}
-
-// 🔐 Service client (fallback / non-auth flows)
+// 🔐 Service client (server-only; NEVER use for user-scoped writes where auth.uid() matters)
 const serviceClient = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
   { auth: { persistSession: false } }
 );
 
-export function sessionMiddleware(req, res, next) {
-  // 1️⃣ Zober Authorization header (magic link session)
-  const authHeader = req.header('authorization');
-  const bearer = authHeader?.startsWith('Bearer ')
-    ? authHeader.replace('Bearer ', '')
-    : null;
+export function sessionMiddleware(req, _res, next) {
+  const authHeader = req.header('authorization') || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-  let supabase;
-  let userId;
+  // Default: service client (for non-auth flows / internal checks)
+  req.supabase = serviceClient;
 
-  if (bearer) {
-    // ✅ USER-BOUND client (auth.uid() WILL work)
-    supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY,
-      {
-        global: {
-          headers: {
-            Authorization: `Bearer ${bearer}`
-          }
-        },
-        auth: { persistSession: false }
+  // Attach a request id for logs (optional)
+  req.reqId = req.reqId || Math.random().toString(16).slice(2, 10);
+
+  if (!bearer) {
+    // IMPORTANT: do NOT emit fake userId logs (it confuses debugging)
+    console.log(`SESSION [${req.reqId}] -> NO AUTH HEADER (service client)`);
+    return next();
+  }
+
+  // ✅ User-bound client (auth.uid() WILL work in RPC / RLS)
+  req.supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY,
+    {
+      auth: { persistSession: false },
+      global: {
+        headers: {
+          Authorization: `Bearer ${bearer}`
+        }
       }
-    );
-  } else {
-    // ⚠️ fallback – no user session
-    supabase = serviceClient;
-  }
-
-  // 2️⃣ userId (len pre logiku / legacy)
-  const headerId = req.header('x-iris-user-id');
-  const bodyId = req.body?.userId;
-
-  userId = headerId || bodyId;
-
-  if (!userId) {
-    const ua = req.header('user-agent') || '';
-    const ip = req.ip || '';
-    userId = `anon_${hashString(`${ip}|${ua}`)}`;
-  }
-
-  req.userId = String(userId);
-  req.supabase = supabase;
-
-  // 🔍 debug (môžeš neskôr zmazať)
-  console.log(
-    '🔐 SESSION →',
-    bearer ? 'USER JWT' : 'SERVICE ROLE',
-    '| userId =',
-    req.userId
+    }
   );
 
-  next();
+  console.log(`SESSION [${req.reqId}] -> AUTH HEADER PRESENT (user client)`);
+  return next();
 }

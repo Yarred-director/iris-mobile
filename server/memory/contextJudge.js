@@ -1,35 +1,73 @@
 // server/memory/contextJudge.js
 // Deterministic extractor for explicit context (NO hallucination).
 
+const STOP_CITY_WORDS = new Set([
+  'našom', 'naša', 'našej', 'naše', 'naši', 'našom',
+  'mojom', 'moja', 'mojej', 'moje', 'moji', 'mojom',
+  'tvojom', 'tvoja', 'tvojej', 'tvoje', 'tvoji', 'tvojom',
+  'prenajatom', 'prenajatej', 'prenajatom',
+  'apartmáne', 'apartmáne,', 'apartmáne.', 'apartmáte', 'apartmáni',
+  'hoteli', 'reštaurácii', 'bare', 'klube'
+]);
+
 const TIME_WORDS = [
-  { re: /\br[aá]no\b|\bdobre r[aá]no\b/i, v: 'morning' },
+  { re: /\br[aá]no\b|\br[aá]nko\b|\bdobre r[aá]no\b|\bdobr[ée] r[aá]nko\b/i, v: 'morning' },
   { re: /\bpopoludn[ií]\b|\bpoobede\b/i, v: 'afternoon' },
   { re: /\bve(č|c)er\b|\bdobr[ýy] ve(č|c)er\b/i, v: 'evening' },
-  { re: /\bnoc\b|\bdobr[úu] noc\b/i, v: 'night' },
+  { re: /\bnoc\b|\bdobr[úu] noc\b|\bpolnoc\b/i, v: 'night' },
 ];
 
 const ROOM_WORDS = [
-  { re: /\bapartm[aá]n\b/i, v: 'apartment' },
+  // apartment declensions/typos tolerant
+  { re: /\bapartm[aá]n(e|i|u|om|om?)\b|\bapartm[aá]t(e|e)?\b/i, v: 'apartment' },
   { re: /\bsp[aá]l(n|ň)a\b/i, v: 'bedroom' },
   { re: /\bkuchy(n|ň)a\b/i, v: 'kitchen' },
+  { re: /\bob[ýy]va(č|c)ka\b/i, v: 'living_room' },
+  { re: /\bk[úu]pe(ľ|l)(n|ň)a\b/i, v: 'bathroom' },
 ];
 
 function titleCase(s) {
-  return s.split(' ').map(w => w[0]?.toUpperCase() + w.slice(1)).join(' ');
+  return s
+    .split(' ')
+    .filter(Boolean)
+    .map(w => (w.length ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
 }
 
-// "sme v Dubaji"
-function captureCity(text) {
-  const m = text.match(/\b(?:sme|som)\s+v\s+([A-Za-zÀ-ž]+)/i);
-  if (!m) return null;
-  return titleCase(m[1]);
+// ✅ Strong city capture for Dubai variants anywhere
+function captureKnownCity(text) {
+  const t = text.toLowerCase();
+  if (/\bdubaj\b|\bdubaji\b|\bdubai\b/.test(t)) return 'Dubaj';
+  return null;
 }
 
-// "na Jumeirah Beach"
-function capturePlace(text) {
-  const m = text.match(/\bna\s+([A-ZÁČĎÉÍĽŇÓÔŔŠŤÚÝŽ][A-Za-zÀ-ž\s]{2,40})/u);
+// ✅ Conservative "sme v X" but ignores stopwords
+function captureCityFromV(text) {
+  const m = text.match(/\b(?:sme|som|nach[aá]dzame\s+sa|nach[aá]dzam\s+sa)\s+v\s+([A-Za-zÀ-ž'-]{2,})/i);
   if (!m) return null;
-  return m[1].trim();
+
+  const raw = (m[1] || '').trim();
+  if (!raw) return null;
+
+  const lw = raw.toLowerCase();
+  if (STOP_CITY_WORDS.has(lw)) return null;
+
+  // Avoid capturing generic nouns
+  if (['apartmáne','apartmáni','apartmáte','hoteli','meste','centre','reštaurácii'].includes(lw)) return null;
+
+  return titleCase(raw);
+}
+
+// ✅ Proper place after "na", stops at punctuation/end
+function capturePlaceAfterNa(text) {
+  const m = text.match(
+    /\bna\s+([A-ZÁČĎÉÍĽŇÓÔŔŠŤÚÝŽ][A-Za-zÀ-ž'.-]{1,}(?:\s+[A-Za-zÀ-ž'.-]{1,}){0,5})(?=[,.;!?]|$)/u
+  );
+  if (!m) return null;
+
+  const place = m[1].trim();
+  if (place.length < 4) return null;
+  return place;
 }
 
 export function extractContextFromText({ text, sceneContext }) {
@@ -39,15 +77,19 @@ export function extractContextFromText({ text, sceneContext }) {
   const ctx = sceneContext || {};
   const patch = {};
 
-  // CITY
+  // CITY (prefer known city)
   if (!ctx.location_city && !ctx.city) {
-    const city = captureCity(t);
-    if (city) patch.location_city = city;
+    const known = captureKnownCity(t);
+    if (known) patch.location_city = known;
+    else {
+      const city = captureCityFromV(t);
+      if (city) patch.location_city = city;
+    }
   }
 
   // PLACE
   if (!ctx.place) {
-    const place = capturePlace(t);
+    const place = capturePlaceAfterNa(t);
     if (place) patch.place = place;
   }
 
