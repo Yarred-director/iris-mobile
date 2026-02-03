@@ -13,10 +13,27 @@ const ALLOWED_PATCH_KEYS = new Set([
   'bridge_buffer'
 ]);
 
+// ✅ For now: we run a single stable scene context.
+// Later you can add more keys here (e.g. 'dubai_trip') and allow them intentionally.
+const ALLOWED_SCENE_KEYS = new Set(['global']);
+
+function normalizeSceneKey(sceneKey) {
+  const key = (sceneKey || 'global').toString().trim().toLowerCase();
+
+  // Hard clamp to prevent scene_key pollution from user text.
+  if (ALLOWED_SCENE_KEYS.has(key)) return key;
+
+  return 'global';
+}
+
 function sanitizePatch(patch = {}) {
   const out = {};
   for (const [k, v] of Object.entries(patch)) {
-    if (ALLOWED_PATCH_KEYS.has(k)) out[k] = v;
+    if (!ALLOWED_PATCH_KEYS.has(k)) continue;
+
+    // basic sanitize for strings (avoid huge blobs)
+    if (typeof v === 'string') out[k] = v.trim().slice(0, 200);
+    else out[k] = v;
   }
   return out;
 }
@@ -32,17 +49,19 @@ function resolve(ctx = {}) {
 }
 
 export async function getSceneContext(supabase, sceneKey = 'global') {
-  const { data } = await supabase.rpc('get_scene_context', { p_scene_key: sceneKey });
+  const key = normalizeSceneKey(sceneKey);
+  const { data } = await supabase.rpc('get_scene_context', { p_scene_key: key });
   if (!data?.[0]) return null;
   return resolve(data[0]);
 }
 
 export async function patchSceneContext(supabase, sceneKey = 'global', patch = {}) {
+  const key = normalizeSceneKey(sceneKey);
   const safe = sanitizePatch(patch);
   if (!Object.keys(safe).length) return;
 
   await supabase.rpc('patch_scene_context', {
-    p_scene_key: sceneKey,
+    p_scene_key: key,
     p_patch: safe
   });
 }
