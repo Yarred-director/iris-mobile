@@ -2,27 +2,23 @@
 // AUTH-BASED (magic link) — uses auth.uid() inside RPC
 
 const ALLOWED_PATCH_KEYS = new Set([
-  // existing SCC fields your backend already uses
   'interaction_mode',
   'last_subject',
   'last_engine',
   'last_engine_reply',
   'place',
-  'country',
-  'city',
   'room',
+  'time_of_day',
 
-  // NEW canonical fields (after your SQL alter)
+  // canonical location fields
   'location_country',
-  'location_city',
-  'time_of_day'
+  'location_city'
 ]);
 
 function sanitizePatch(patch = {}) {
   const out = {};
   for (const [k, v] of Object.entries(patch || {})) {
     if (!ALLOWED_PATCH_KEYS.has(k)) continue;
-    // allow null to explicitly clear a value if your RPC supports it
     out[k] = v;
   }
   return out;
@@ -30,7 +26,8 @@ function sanitizePatch(patch = {}) {
 
 function getCtx(ctx) {
   const c = ctx || {};
-  // prefer new canonical fields, fallback to old ones
+
+  // prefer new canonical fields, fallback to old ones (migration-safe)
   const locationCountry = c.location_country ?? c.country ?? null;
   const locationCity = c.location_city ?? c.city ?? null;
 
@@ -60,7 +57,6 @@ export async function getSceneContext(supabase, sceneKey = 'global') {
 export async function patchSceneContext(supabase, sceneKey = 'global', patch = {}) {
   const safe = sanitizePatch(patch);
 
-  // Avoid noisy RPC calls when patch is empty
   if (!safe || Object.keys(safe).length === 0) return;
 
   const { error } = await supabase.rpc('patch_scene_context', {
@@ -73,7 +69,6 @@ export async function patchSceneContext(supabase, sceneKey = 'global', patch = {
   }
 }
 
-// This is the “working state” debug block (fine to keep)
 export function formatSceneContextBlock(sceneContext) {
   const ctx = getCtx(sceneContext || {});
   const r = ctx._resolved || {};
@@ -96,13 +91,11 @@ SCENE CONTEXT (working state):
 `.trimEnd();
 }
 
-// This is the HARD FACTS block that the model must not invent
 export function formatHardSceneContextBlock(sceneContext) {
   const ctx = getCtx(sceneContext || {});
   const r = ctx._resolved || {};
 
   const lines = [];
-
   if (r.location_country) lines.push(`- location_country: ${r.location_country}`);
   if (r.location_city) lines.push(`- location_city: ${r.location_city}`);
   if (ctx.room) lines.push(`- room: ${ctx.room}`);

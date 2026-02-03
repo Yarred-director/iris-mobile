@@ -12,7 +12,6 @@ import { buildSystemPrompt } from './prompt/systemPrompt.js';
 
 import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
-
 import { history, sanitizeForGrok } from './llm/history.js';
 
 import { formatBridgeBlock } from './memory/bridge.js';
@@ -27,26 +26,21 @@ import {
 
 import { extractContextFromText } from './memory/contextJudge.js';
 
-// ------------------------------------------------------------
+import { inferRequestedFactKey } from './memory/factKeyJudge.js';
+import { extractFactValue } from './memory/factValueJudge.js';
+import { clearPendingFact, getPendingFact, setPendingFact } from './memory/pendingFacts.js';
+import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
+
+import { irisMemoryJudge, writeMemory } from './memory/judge.js';
+import { loadCoreOrigin, loadSummaries, recallEpisodicMemory } from './memory/recall.js';
+import { decayMemories, reinforceMemory } from './memory/reinforce.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(sessionMiddleware);
 
-function inferTimeOfDayFromText(text = '') {
-  const t = (text || '').toLowerCase();
-  if (/\br[aá]no\b|\bjutro\b|\bdobre r[aá]no\b/.test(t)) return 'morning';
-  if (/\bobed\b|\bpoobede\b|\bpopoludn[ií]\b/.test(t)) return 'afternoon';
-  if (/\bve[čc]er\b|\bdobr[ýy] ve[čc]er\b/.test(t)) return 'evening';
-  if (/\bnoc\b|\bpolnoc\b|\bdobr[úu] noc\b/.test(t)) return 'night';
-
-  if (/\bmorning\b/.test(t)) return 'morning';
-  if (/\bafternoon\b/.test(t)) return 'afternoon';
-  if (/\bevening\b/.test(t)) return 'evening';
-  if (/\bnight\b|\bmidnight\b/.test(t)) return 'night';
-  return null;
-}
+app.get('/', (_req, res) => res.send('IRIS backend running'));
 
 async function requireStableUserId(req, res) {
   const authHeader = req.headers.authorization || '';
@@ -66,10 +60,6 @@ async function requireStableUserId(req, res) {
   return user.id; // ✅ stable UUID
 }
 
-// ------------------------------------------------------------
-
-app.get('/', (_req, res) => res.send('IRIS backend running'));
-
 app.post('/chat', async (req, res) => {
   try {
     const { message } = req.body;
@@ -77,63 +67,144 @@ app.post('/chat', async (req, res) => {
 
     console.log('\n➡️ USER:', message);
 
-    // ✅ STABLE USER (NO anon fallback)
+    // ✅ stable auth identity (NO anon fallback)
     const userId = await requireStableUserId(req, res);
     if (!userId) return;
-
-    // (optional debug)
     console.log('🔐 AUTH USER:', userId);
 
-    // scene key + SCC load
-    const sceneKey = detectSceneKey({ message, episodic: [] });
-    const sceneContext = await getSceneContext(req.supabase, sceneKey);
+    // (optional) decay — you can later move this to cron
+    // If you want it OFF for now, comment it out.
+    await decayMemories();
 
-    // deterministic explicit context capture (NO guessing)
-    const sccPatch = extractContextFromText({ text: message, sceneContext: sceneContext || {} }) || {};
+    // 1) recall stack
+    const core = await loadCoreOrigin();
+    const { memories: episodic, meta: recallMeta } = await recallEpisodicMemory(message);
+    const summaries = await loadSummaries();
 
-    // allow time_of_day only if SCC empty (avoid overwrites)
-    if (!sccPatch.time_of_day && !(sceneContext && sceneContext.time_of_day)) {
-      const tod = inferTimeOfDayFromText(message);
-      if (tod) sccPatch.time_of_day = tod;
-    }
+    // 2) sceneKey
+    const sceneKey = detectSceneKey({ message, episodic });
 
-    let merged = sceneContext;
-    if (Object.keys(sccPatch).length > 0) {
-      console.log('🧭 SCC PATCH →', sccPatch);
-      await patchSceneContext(req.supabase, sceneKey, sccPatch);
-      merged = { ...(sceneContext || {}), ...sccPatch };
-    }
+    // 3) load SCC
+    let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
-    // subject lock
-    const { augmentedText, subject } = applySubjectLock(message, merged || {});
-    if (subject && subject !== merged?.last_subject) {
-      await patchSceneContext(req.supabase, sceneKey, { last_subject: subject });
-      if (merged) merged.last_subject = subject;
-    }
-
-    // build system prompt
-    let systemPrompt = buildSystemPrompt(
-      /* core */ null,
-      /* episodic */ [],
-      /* summaries */ []
+    console.log(
+      '🧠 SCC →',
+      sceneContext
+        ? `mode=${sceneContext.interaction_mode}, subject=${sceneContext.last_subject}, last_engine=${sceneContext.last_engine}`
+        : 'EMPTY (first message)'
     );
 
-    systemPrompt += formatSceneContextBlock(merged);
-    systemPrompt += formatHardSceneContextBlock(merged);
+    // 4) deterministic explicit context capture (NO guessing)
+    const sccPatch = extractContextFromText({
+      text: message,
+      sceneContext: sceneContext || {}
+    }) || null;
 
-    // provider routing
+    if (sccPatch && Object.keys(sccPatch).length > 0) {
+      console.log('🧭 SCC PATCH →', sccPatch);
+      await patchSceneContext(req.supabase, sceneKey, sccPatch);
+
+      // refresh merged in-memory copy for prompt building
+      sceneContext = {
+        ...(sceneContext || {}),
+        ...sccPatch
+      };
+    }
+
+    // 5) subject lock (working memory)
+    const { subject, augmentedText } = applySubjectLock(message, sceneContext || {});
+
+    if (subject && subject !== sceneContext?.last_subject) {
+      await patchSceneContext(req.supabase, sceneKey, { last_subject: subject });
+      if (sceneContext) sceneContext.last_subject = subject;
+    }
+
+    // 6) pending facts flow
+    const pendingKey = await getPendingFact(userId, sceneKey);
+
+    if (pendingKey) {
+      const { value, confidence } = await extractFactValue({
+        factKey: pendingKey,
+        userMessage: augmentedText
+      });
+
+      if (value && confidence >= 0.6) {
+        await upsertSceneFact(userId, sceneKey, pendingKey, value, {
+          confidence,
+          source: 'user'
+        });
+        await clearPendingFact(userId, sceneKey);
+      }
+    }
+
+    const sceneFacts = await getSceneFacts(userId, sceneKey);
+
+    if (!pendingKey) {
+      const requestedFactKey = await inferRequestedFactKey({
+        message: augmentedText,
+        sceneKey
+      });
+
+      if (requestedFactKey) {
+        const exists = sceneFacts.some(f => f.fact_key === requestedFactKey);
+        if (!exists) {
+          await setPendingFact(userId, sceneKey, requestedFactKey);
+        }
+      }
+    }
+
+    // 7) reinforce recalled memories (safe but can be async later)
+    for (const m of episodic || []) {
+      if (m?.id) {
+        // keep it non-fatal
+        reinforceMemory(m.id).catch(() => {});
+      }
+    }
+
+    // 8) build system prompt
+    let systemPrompt = buildSystemPrompt(core, episodic, summaries);
+
+    systemPrompt += formatSceneContextBlock(sceneContext);
+    systemPrompt += formatHardSceneContextBlock(sceneContext);
+
+    // facts injection + strict guard
+    if (sceneFacts && sceneFacts.length > 0) {
+      const factsText = sceneFacts
+        .map(f => `- ${sceneKey}.${f.fact_key} = ${f.fact_value}`)
+        .join('\n');
+
+      systemPrompt += `
+
+HARD FACTS:
+${factsText}
+
+RULES:
+- Never invent missing attributes.
+- Ask explicitly if a fact is missing.`;
+    }
+
+    // airbag when no confident recall and no facts
+    if (!recallMeta?.confident && (!sceneFacts || sceneFacts.length === 0)) {
+      systemPrompt += `
+
+AIRBAG:
+- Do not guess facts. Ask the user.`;
+    }
+
+    // 9) provider routing
     const state = detectState(message);
     let provider = 'openai';
+
     if (hasPhysicalIntimacy(message)) provider = 'grok';
 
     console.log(`🤖 STATE=${state} → ${provider}`);
 
-    // inject bridge into OpenAI prompt (so it can continue after Grok)
+    // 10) bridge injection (Grok → OpenAI continuity)
     if (provider === 'openai') {
-      systemPrompt += formatBridgeBlock(merged);
+      systemPrompt += formatBridgeBlock(sceneContext);
     }
 
-    // history packaging
+    // 11) history packaging
     if (provider === 'grok') {
       history.grok = [
         { role: 'system', content: systemPrompt },
@@ -150,7 +221,7 @@ app.post('/chat', async (req, res) => {
 
     const h = history[provider];
 
-    // LLM call
+    // 12) LLM call
     const r = await getLLMClient(provider).responses.create({
       model: MODELS[provider],
       input: h
@@ -159,16 +230,16 @@ app.post('/chat', async (req, res) => {
     const reply = r.output_text || '…';
     h.push({ role: 'assistant', content: reply });
 
-    console.log(`💬 REPLY (${provider}):`, reply.slice(0, 140));
+    console.log(`💬 REPLY (${provider}):`, reply.slice(0, 160));
 
-    // update SCC after reply
+    // 13) update SCC after reply
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: provider,
       last_engine_reply: reply,
       interaction_mode: state
     });
 
-    // ✅ bridge_buffer from Grok → OpenAI continuity
+    // ✅ store bridge_buffer on grok replies
     if (provider === 'grok') {
       await patchSceneContext(req.supabase, sceneKey, {
         bridge_buffer: [
@@ -177,6 +248,16 @@ app.post('/chat', async (req, res) => {
         ]
       });
     }
+
+    // 14) memory judge (store meaningful moments)
+    // Make non-fatal. If judge fails, chat still works.
+    irisMemoryJudge(`User:${message}\nIris:${reply}`)
+      .then(async (decision) => {
+        if (decision?.store) {
+          await writeMemory(decision);
+        }
+      })
+      .catch(() => {});
 
     return res.json({ reply, engine: provider });
 
