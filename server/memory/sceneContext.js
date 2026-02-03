@@ -1,5 +1,4 @@
 // server/memory/sceneContext.js
-// AUTH-BASED (magic link) — uses auth.uid() inside RPC
 
 const ALLOWED_PATCH_KEYS = new Set([
   'interaction_mode',
@@ -9,108 +8,81 @@ const ALLOWED_PATCH_KEYS = new Set([
   'place',
   'room',
   'time_of_day',
-
-  // canonical location fields
+  'location_city',
   'location_country',
-  'location_city'
+  'bridge_buffer'
 ]);
 
 function sanitizePatch(patch = {}) {
   const out = {};
-  for (const [k, v] of Object.entries(patch || {})) {
-    if (!ALLOWED_PATCH_KEYS.has(k)) continue;
-    out[k] = v;
+  for (const [k, v] of Object.entries(patch)) {
+    if (ALLOWED_PATCH_KEYS.has(k)) out[k] = v;
   }
   return out;
 }
 
-function getCtx(ctx) {
-  const c = ctx || {};
-
-  // prefer new canonical fields, fallback to old ones (migration-safe)
-  const locationCountry = c.location_country ?? c.country ?? null;
-  const locationCity = c.location_city ?? c.city ?? null;
-
+function resolve(ctx = {}) {
   return {
-    ...c,
+    ...ctx,
     _resolved: {
-      location_country: locationCountry,
-      location_city: locationCity
+      city: ctx.location_city ?? ctx.city ?? null,
+      country: ctx.location_country ?? ctx.country ?? null
     }
   };
 }
 
 export async function getSceneContext(supabase, sceneKey = 'global') {
-  const { data, error } = await supabase.rpc('get_scene_context', {
-    p_scene_key: sceneKey
-  });
-
-  if (error) {
-    console.error('[sceneContext] get_scene_context error', error);
-    return null;
-  }
-
-  const row = data?.[0] ?? null;
-  return row ? getCtx(row) : null;
+  const { data } = await supabase.rpc('get_scene_context', { p_scene_key: sceneKey });
+  if (!data?.[0]) return null;
+  return resolve(data[0]);
 }
 
 export async function patchSceneContext(supabase, sceneKey = 'global', patch = {}) {
   const safe = sanitizePatch(patch);
+  if (!Object.keys(safe).length) return;
 
-  if (!safe || Object.keys(safe).length === 0) return;
-
-  const { error } = await supabase.rpc('patch_scene_context', {
+  await supabase.rpc('patch_scene_context', {
     p_scene_key: sceneKey,
     p_patch: safe
   });
-
-  if (error) {
-    console.error('[sceneContext] patch_scene_context error', error);
-  }
 }
 
 export function formatSceneContextBlock(sceneContext) {
-  const ctx = getCtx(sceneContext || {});
-  const r = ctx._resolved || {};
+  if (!sceneContext) return '';
 
-  const loc = [
-    r.location_country ? `country=${r.location_country}` : 'country=?',
-    r.location_city ? `city=${r.location_city}` : 'city=?',
-    ctx.place ? `place=${ctx.place}` : 'place=?',
-    ctx.room ? `room=${ctx.room}` : 'room=?'
-  ].join(', ');
+  const r = sceneContext._resolved || {};
 
   return `
 
-SCENE CONTEXT (working state):
-- location: ${loc}
-- time_of_day: ${ctx.time_of_day || '?'}
-- interaction_mode: ${ctx.interaction_mode || 'idle'}
-- last_subject: ${ctx.last_subject || '?'}
-- last_engine: ${ctx.last_engine || '?'}
+SCENE CONTEXT:
+city=${r.city || '?'}
+place=${sceneContext.place || '?'}
+room=${sceneContext.room || '?'}
+time_of_day=${sceneContext.time_of_day || '?'}
+last_subject=${sceneContext.last_subject || '?'}
 `.trimEnd();
 }
 
 export function formatHardSceneContextBlock(sceneContext) {
-  const ctx = getCtx(sceneContext || {});
-  const r = ctx._resolved || {};
+  if (!sceneContext) return '';
 
+  const r = sceneContext._resolved || {};
   const lines = [];
-  if (r.location_country) lines.push(`- location_country: ${r.location_country}`);
-  if (r.location_city) lines.push(`- location_city: ${r.location_city}`);
-  if (ctx.room) lines.push(`- room: ${ctx.room}`);
-  if (ctx.time_of_day) lines.push(`- time_of_day: ${ctx.time_of_day}`);
 
-  if (lines.length === 0) return '';
+  if (r.city) lines.push(`- city: ${r.city}`);
+  if (sceneContext.place) lines.push(`- place: ${sceneContext.place}`);
+  if (sceneContext.room) lines.push(`- room: ${sceneContext.room}`);
+  if (sceneContext.time_of_day) lines.push(`- time_of_day: ${sceneContext.time_of_day}`);
+
+  if (!lines.length) return '';
 
   return `
 
-HARD SCENE CONTEXT (do not invent; do not override):
+HARD CONTEXT:
 ${lines.join('\n')}
 
-STRICT FACT GUARD:
-- You may only state location_country/location_city/room/time_of_day if explicitly present above.
-- If missing, say you don't know and ask the user to provide it.
-- Do not guess.
+RULE:
+Never contradict HARD CONTEXT.
+If missing, ask user.
 `.trimEnd();
 }
