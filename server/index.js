@@ -4,6 +4,7 @@ import './config/env.js';
 
 import { sessionMiddleware } from './middleware/session.js';
 
+import { detectState } from './behavior/state.js';
 import { buildSystemPrompt } from './prompt/systemPrompt.js';
 
 import { getLLMClient } from './lib/llmClient.js';
@@ -14,13 +15,17 @@ import {
   formatHardSceneContextBlock,
   formatSceneContextBlock,
   getSceneContext,
-  patchSceneContext
+  patchSceneContext,
 } from './memory/sceneContext.js';
 
 import { extractContextFromText } from './memory/contextJudge.js';
+import { applySubjectLock } from './memory/subjectLock.js';
 
-// 🔥 ABSOLUTE PROOF THIS FILE IS RUNNING
-console.log('🔥🔥🔥 INDEX VERSION: 2026-02-03 :: CONTEXT DEBUG HARD MODE 🔥🔥🔥');
+import {
+  loadCoreOrigin,
+  loadSummaries,
+  recallEpisodicMemory,
+} from './memory/recall.js';
 
 const app = express();
 app.use(cors());
@@ -29,7 +34,7 @@ app.use(sessionMiddleware);
 
 app.get('/', (_req, res) => res.send('IRIS backend running'));
 
-async function requireUser(req, res) {
+async function requireUserId(req, res) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
@@ -38,79 +43,136 @@ async function requireUser(req, res) {
     return null;
   }
 
-  const { data: { user } } = await req.supabase.auth.getUser(token);
-  if (!user) {
+  const { data: { user }, error } = await req.supabase.auth.getUser(token);
+  if (error || !user) {
     res.status(401).json({ error: 'INVALID USER' });
     return null;
   }
 
-  console.log('🔐 AUTH USER:', user.id);
   return user.id;
+}
+
+function formatEpisodicBlock(recallResult) {
+  const memories = recallResult?.memories || [];
+  if (!memories.length) return '';
+
+  // Keep it short & punchy; model should not drown.
+  const lines = memories.slice(0, 4).map((m) => {
+    const text = (m.narrative || m.title || '').toString().trim();
+    return text ? `- ${text}` : null;
+  }).filter(Boolean);
+
+  if (!lines.length) return '';
+
+  return `
+
+=== EPISODIC MEMORY (recall) ===
+${lines.join('\n')}
+`.trimEnd();
 }
 
 app.post('/chat', async (req, res) => {
   try {
-    const { message } = req.body;
-    console.log('\n➡️ USER MESSAGE:', message);
+    const message = (req.body?.message || '').toString();
+    if (!message) return res.json({ reply: '…' });
 
-    const userId = await requireUser(req, res);
+    const userId = await requireUserId(req, res);
     if (!userId) return;
 
-    // === LOAD SCC ===
+    // === 1) Load stable SCC (global) ===
     let sceneContext = await getSceneContext(req.supabase, 'global');
-    console.log('🧠 SCC BEFORE:', sceneContext);
 
-    // === CONTEXT JUDGE (THIS MUST FIRE) ===
-    console.log('🔥 CALLING extractContextFromText()');
+    // === 2) Deterministic contextJudge patch (time/place/room/city) ===
     const sccPatch = extractContextFromText({
       text: message,
-      sceneContext: sceneContext || {}
+      sceneContext: sceneContext || {},
     });
-    console.log('🔥 extractContextFromText RESULT:', sccPatch);
 
-    if (sccPatch && Object.keys(sccPatch).length > 0) {
-      console.log('🧭 SCC PATCH APPLY:', sccPatch);
+    if (sccPatch) {
       await patchSceneContext(req.supabase, 'global', sccPatch);
       sceneContext = await getSceneContext(req.supabase, 'global');
-      console.log('🧠 SCC AFTER PATCH:', sceneContext);
     }
 
-    // === FORCE SAFETY NET (TEMPORARY) ===
-    // If user clearly said "rano" and SCC still doesn't have it, force it
-    if (
-      /rano|ránko|dobre r[aá]no/i.test(message) &&
-      !sceneContext?.time_of_day
-    ) {
-      console.log('⚠️ FORCE PATCH time_of_day=morning');
-      await patchSceneContext(req.supabase, 'global', { time_of_day: 'morning' });
+    // === 3) Subject lock (cars etc.) ===
+    const subjectResult = applySubjectLock(message, sceneContext);
+    if (subjectResult?.subject && subjectResult.subject !== sceneContext?.last_subject) {
+      await patchSceneContext(req.supabase, 'global', { last_subject: subjectResult.subject });
       sceneContext = await getSceneContext(req.supabase, 'global');
     }
 
-    // === BUILD PROMPT ===
-    let systemPrompt = buildSystemPrompt([], [], []);
-    systemPrompt += formatSceneContextBlock(sceneContext);
-    systemPrompt += formatHardSceneContextBlock(sceneContext);
+    // === 4) Behavior state (engine selection etc.) ===
+    const state = detectState({ userText: message, sceneContext });
+    const engine = state?.engine || 'openai';
 
-    console.log('🧠 SYSTEM PROMPT:\n', systemPrompt);
+    // === 5) Memory recall (episodic) ===
+    // We rely on your recall.js confidence gate. If not confident => inject nothing.
+    let recallResult = null;
+    try {
+      recallResult = await recallEpisodicMemory(message);
+    } catch (e) {
+      recallResult = { memories: [], meta: { confident: false, reason: 'recall_exception' } };
+    }
+
+    const episodicBlock =
+      recallResult?.meta?.confident ? formatEpisodicBlock(recallResult) : '';
+
+    // Optional: core origin + summaries (if you want them; safe and short)
+    let coreOrigin = null;
+    let summaries = [];
+    try {
+      coreOrigin = await loadCoreOrigin();
+      summaries = await loadSummaries();
+    } catch {}
+
+    // === 6) Build system prompt ===
+    let systemPrompt = buildSystemPrompt(
+      coreOrigin ? [{ narrative: coreOrigin }] : [],
+      summaries || [],
+      [] // (optional) profile facts, if you have them
+    );
+
+    systemPrompt += '\n\n' + formatSceneContextBlock(sceneContext);
+    systemPrompt += '\n\n' + formatHardSceneContextBlock(sceneContext);
+
+    if (episodicBlock) {
+      systemPrompt += '\n\n' + episodicBlock;
+    }
+
+    // === 7) Compose chat history ===
+    const userText = subjectResult?.augmentedText || message;
 
     history.openai = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: message }
+      { role: 'user', content: userText },
     ];
 
-    const r = await getLLMClient('openai').responses.create({
-      model: MODELS.openai,
-      input: history.openai
+    // === 8) Call model ===
+    const client = getLLMClient(engine);
+    const model = MODELS[engine];
+
+    const r = await client.responses.create({
+      model,
+      input: history.openai,
     });
 
     const reply = r.output_text || '…';
-    console.log('💬 REPLY:', reply);
 
-    return res.json({ reply });
+    // === 9) Store last engine + reply (helps continuity / debugging) ===
+    await patchSceneContext(req.supabase, 'global', {
+      last_engine: engine,
+      last_engine_reply: reply,
+      interaction_mode: state?.mode || sceneContext?.interaction_mode || 'idle',
+    });
 
+    return res.json({
+      reply,
+      // Optional debug: keep if your app ignores unknown fields.
+      // engine,
+      // recall: recallResult?.meta,
+    });
   } catch (e) {
-    console.error('🔥 CHAT ERROR:', e);
-    return res.status(500).json({ error: e.message });
+    console.error('CHAT ERROR:', e);
+    return res.status(500).json({ error: e.message || 'unknown_error' });
   }
 });
 
