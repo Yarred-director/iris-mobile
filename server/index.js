@@ -27,6 +27,9 @@ import {
   recallEpisodicMemory,
 } from './memory/recall.js';
 
+import { extractFactsFromText } from './memory/factExtractor.js';
+import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -78,6 +81,28 @@ ${lines.join('\n')}
 `.trim();
 }
 
+function formatSceneFactsBlock(sceneFactsRows) {
+  const rows = Array.isArray(sceneFactsRows) ? sceneFactsRows : [];
+  if (!rows.length) return '';
+
+  // rows expected shape: [{ fact_key, fact_value }, ...]
+  const lines = rows
+    .map((r) => {
+      const k = (r.fact_key || '').toString().trim();
+      const v = (r.fact_value || '').toString().trim();
+      if (!k || !v) return null;
+      return `- ${k}: ${v}`;
+    })
+    .filter(Boolean);
+
+  if (!lines.length) return '';
+
+  return `
+=== SCENE FACTS (HARD) ===
+${lines.join('\n')}
+`.trim();
+}
+
 app.post('/chat', async (req, res) => {
   try {
     const message = (req.body?.message || '').toString();
@@ -86,18 +111,20 @@ app.post('/chat', async (req, res) => {
     const userId = await requireUserId(req, res);
     if (!userId) return;
 
-    // 1️⃣ Load stable GLOBAL SCC
-    let sceneContext = await getSceneContext(req.supabase, 'global');
+    const sceneKey = 'global'; // stable single SCC key (clamped in sceneContext.js)
 
-    // 2️⃣ Deterministic context judge
+    // 1️⃣ Load stable GLOBAL SCC
+    let sceneContext = await getSceneContext(req.supabase, sceneKey);
+
+    // 2️⃣ Deterministic context judge (SCC patch)
     const sccPatch = extractContextFromText({
       text: message,
       sceneContext: sceneContext || {},
     });
 
     if (sccPatch && Object.keys(sccPatch).length > 0) {
-      await patchSceneContext(req.supabase, 'global', sccPatch);
-      sceneContext = await getSceneContext(req.supabase, 'global');
+      await patchSceneContext(req.supabase, sceneKey, sccPatch);
+      sceneContext = await getSceneContext(req.supabase, sceneKey);
     }
 
     // 3️⃣ Subject lock
@@ -106,20 +133,37 @@ app.post('/chat', async (req, res) => {
       subjectResult?.subject &&
       subjectResult.subject !== sceneContext?.last_subject
     ) {
-      await patchSceneContext(req.supabase, 'global', {
+      await patchSceneContext(req.supabase, sceneKey, {
         last_subject: subjectResult.subject,
       });
-      sceneContext = await getSceneContext(req.supabase, 'global');
+      sceneContext = await getSceneContext(req.supabase, sceneKey);
     }
 
-    // 4️⃣ Behavior state (SAFE INPUT)
+    // 4️⃣ AUTO-UPSERT FACTS (deterministic)
+    //    This prevents "Challenger overwrites Skyline" by using scoped fact keys like car.dubai.* vs car.tokyo.*
+    const extractedFacts = extractFactsFromText({
+      text: message,
+      sceneContext: sceneContext || {},
+    });
+
+    if (Array.isArray(extractedFacts) && extractedFacts.length) {
+      for (const f of extractedFacts) {
+        const factKey = f?.fact_key;
+        const factValue = f?.fact_value;
+        if (!factKey || !factValue) continue;
+
+        await upsertSceneFact(req.supabase, userId, sceneKey, factKey, factValue);
+      }
+    }
+
+    // 5️⃣ Behavior state (SAFE INPUT)
     const state = detectState(message);
     const engine = state === 'heated' ? 'grok' : 'openai';
 
-    // 5️⃣ Episodic recall
+    // 6️⃣ Episodic recall (user-scoped)
     let recallResult = null;
     try {
-      recallResult = await recallEpisodicMemory(message);
+      recallResult = await recallEpisodicMemory(req.supabase, message);
     } catch {
       recallResult = { memories: [], meta: { confident: false } };
     }
@@ -129,29 +173,38 @@ app.post('/chat', async (req, res) => {
         ? formatEpisodicBlock(recallResult)
         : '';
 
-    // 6️⃣ Core + summaries (safe)
+    // 7️⃣ Core + summaries (user-scoped)
     let coreOrigin = null;
     let summaries = [];
     try {
-      coreOrigin = await loadCoreOrigin();
-      summaries = await loadSummaries();
+      coreOrigin = await loadCoreOrigin(req.supabase);
+      summaries = await loadSummaries(req.supabase);
     } catch {}
 
-    // 7️⃣ Build system prompt
+    // 8️⃣ Build system prompt
     let systemPrompt = buildSystemPrompt(
       coreOrigin ? [{ narrative: coreOrigin }] : [],
       summaries || [],
       []
     );
 
+    // 9️⃣ Inject SCC blocks
     systemPrompt += '\n\n' + formatSceneContextBlock(sceneContext);
     systemPrompt += '\n\n' + formatHardSceneContextBlock(sceneContext);
 
+    // 🔟 Inject SCENE FACTS (HARD)
+    const sceneFacts = await getSceneFacts(req.supabase, userId, sceneKey);
+    const sceneFactsBlock = formatSceneFactsBlock(sceneFacts);
+    if (sceneFactsBlock) {
+      systemPrompt += '\n\n' + sceneFactsBlock;
+    }
+
+    // 1️⃣1️⃣ Inject EPISODIC (only if confident)
     if (episodicBlock) {
       systemPrompt += '\n\n' + episodicBlock;
     }
 
-    // 8️⃣ History
+    // 1️⃣2️⃣ History
     const userText = subjectResult?.augmentedText || message;
 
     history.openai = [
@@ -159,7 +212,7 @@ app.post('/chat', async (req, res) => {
       { role: 'user', content: userText },
     ];
 
-    // 9️⃣ LLM call
+    // 1️⃣3️⃣ LLM call
     const client = getLLMClient(engine);
     const model = MODELS[engine];
 
@@ -170,8 +223,8 @@ app.post('/chat', async (req, res) => {
 
     const reply = r.output_text || '…';
 
-    // 🔟 Persist interaction
-    await patchSceneContext(req.supabase, 'global', {
+    // 1️⃣4️⃣ Persist interaction to SCC
+    await patchSceneContext(req.supabase, sceneKey, {
       last_engine: engine,
       last_engine_reply: reply,
       interaction_mode: state,
