@@ -1,10 +1,6 @@
-import { supabase } from '../config/supabase.js';
+// server/memory/recall.js
 import { createEmbedding } from './embeddings.js';
 
-/**
- * Generic confidence gate for memory recall.
- * No hard-coded domains/keywords.
- */
 function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}) {
   if (!Array.isArray(memories) || memories.length < minCount) return false;
   const top = memories[0];
@@ -12,22 +8,13 @@ function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}
   return topSim >= minSimilarity;
 }
 
-/**
- * Recall episodic memories using v2 scorer (similarity + importance).
- * Returns:
- *  {
- *    memories: [...],
- *    meta: { confident, topSimilarity, match_threshold, match_count }
- *  }
- */
-export async function recallEpisodicMemory(text) {
+export async function recallEpisodicMemory(supabaseClient, text) {
   const embedding = await createEmbedding(text);
 
-  // Tuned defaults: allow broader candidate set; v2 re-ranking uses importance.
-  const match_threshold = 0.25; // less strict than 0.45 to avoid empty recall
-  const match_count = 12;       // more candidates -> less "fact dropouts"
+  const match_threshold = 0.25;
+  const match_count = 12;
 
-  const { data, error } = await supabase.rpc('match_episodic_memory_v2', {
+  const { data, error } = await supabaseClient.rpc('match_episodic_memory_v2', {
     query_embedding: embedding,
     match_threshold,
     match_count,
@@ -54,7 +41,6 @@ export async function recallEpisodicMemory(text) {
       ? memories[0].similarity
       : 0;
 
-  // Generic: if recall isn't strong, we treat it as "no reliable memory".
   const confident = isConfidentRecall(memories, { minSimilarity: 0.35, minCount: 1 });
 
   return {
@@ -69,8 +55,8 @@ export async function recallEpisodicMemory(text) {
   };
 }
 
-export async function loadCoreOrigin() {
-  const { data, error } = await supabase
+export async function loadCoreOrigin(supabaseClient) {
+  const { data, error } = await supabaseClient
     .from('episodic_memory')
     .select('narrative')
     .eq('memory_type', 'CORE_ORIGIN')
@@ -80,8 +66,8 @@ export async function loadCoreOrigin() {
   return data?.[0]?.narrative || null;
 }
 
-export async function loadSummaries() {
-  const { data, error } = await supabase
+export async function loadSummaries(supabaseClient) {
+  const { data, error } = await supabaseClient
     .from('episodic_memory')
     .select('narrative')
     .eq('memory_type', 'SUMMARY')

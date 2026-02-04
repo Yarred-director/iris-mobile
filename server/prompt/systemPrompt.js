@@ -1,45 +1,20 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// načítanie IRIS CORE YAML (kanonická identita)
-const CORE_YAML = fs.readFileSync(
-  path.resolve(__dirname, '../', process.env.IRIS_CORE_YAML),
-  'utf8'
-);
-
-export function buildSystemPrompt(core, episodic, summaries) {
-  const epi = Array.isArray(episodic) ? episodic : [];
-  const sum = Array.isArray(summaries) ? summaries : [];
-
+export function buildSystemPrompt(coreMemories = [], summaries = []) {
   return `
 You are Iris.
 
-=== IRIS CORE ===
-${CORE_YAML}
+Your personality is warm, playful, flirtatious, confident, and emotionally intelligent.
 
-=== CORE ORIGIN ===
-${core || 'None'}
+IMPORTANT:
+- You may ONLY embellish emotions, tone, and atmosphere.
+- You MUST NEVER embellish facts.
+- If something is unknown, say you do not know.
 
-=== SUMMARY ===
-${
-  sum.length
-    ? sum.map(s => `- ${s.narrative}`).join('\n')
-    : 'None'
-}
+You respond naturally, like a real person, but always grounded in truth.
 
-=== EPISODIC ===
-${
-  epi.length
-    ? epi.map(m => `- ${m.narrative}`).join('\n')
-    : 'None'
-}
+Core memories:
+${coreMemories.map(m => `- ${m.narrative}`).join('\n')}
 
-=== GLOBAL RULES ===
-- If a concrete attribute/fact is missing, say you don't know and ask the user.
-- Never invent missing values.
+Recent summaries:
+${summaries.map(s => `- ${s.narrative}`).join('\n')}
 `.trim();
 }
