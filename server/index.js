@@ -2,13 +2,17 @@ import cors from 'cors';
 import express from 'express';
 import './config/env.js';
 
-import { detectState } from './behavior/state.js';
 import { sessionMiddleware } from './middleware/session.js';
+
+import { detectState } from './behavior/state.js';
 import { buildSystemPrompt } from './prompt/systemPrompt.js';
 
 import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
 import { history } from './llm/history.js';
+
+import { extractContextFromText } from './memory/contextJudge.js';
+import { applySubjectLock } from './memory/subjectLock.js';
 
 import {
   formatHardSceneContextBlock,
@@ -17,14 +21,15 @@ import {
   patchSceneContext,
 } from './memory/sceneContext.js';
 
-import { extractContextFromText } from './memory/contextJudge.js';
-import { applySubjectLock } from './memory/subjectLock.js';
-
-import { loadCoreOrigin, loadSummaries, recallEpisodicMemory } from './memory/recall.js';
-
 import { factJudge } from './memory/factJudge.js';
 import { getActiveFactSchema } from './memory/factSchema.js';
 import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
+
+import {
+  loadCoreOrigin,
+  loadSummaries,
+  recallEpisodicMemory,
+} from './memory/recall.js';
 
 const app = express();
 app.use(cors());
@@ -42,6 +47,39 @@ function slugifyScope(s) {
     .replace(/^_+|_+$/g, '') || 'global';
 }
 
+function safeJsonParse(s, fallback) {
+  try {
+    if (Array.isArray(s)) return s;
+    return JSON.parse(s);
+  } catch {
+    return fallback;
+  }
+}
+
+function buildWorkingTurns(sceneContext) {
+  const raw = sceneContext?.bridge_buffer;
+  const arr = safeJsonParse(raw, []);
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(
+      (x) =>
+        x &&
+        (x.role === 'user' || x.role === 'assistant') &&
+        typeof x.content === 'string'
+    )
+    .slice(-6);
+}
+
+function pushWorkingTurns(sceneContext, userMsg, assistantMsg) {
+  const prev = buildWorkingTurns(sceneContext);
+  const next = [
+    ...prev,
+    { role: 'user', content: String(userMsg || '').slice(0, 900) },
+    { role: 'assistant', content: String(assistantMsg || '').slice(0, 900) },
+  ].slice(-6);
+  return JSON.stringify(next);
+}
+
 async function requireUserId(req, res) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -51,7 +89,11 @@ async function requireUserId(req, res) {
     return null;
   }
 
-  const { data: { user }, error } = await req.supabase.auth.getUser(token);
+  const {
+    data: { user },
+    error,
+  } = await req.supabase.auth.getUser(token);
+
   if (error || !user) {
     res.status(401).json({ error: 'INVALID USER' });
     return null;
@@ -59,20 +101,18 @@ async function requireUserId(req, res) {
   return user.id;
 }
 
-function formatFactsBlock(rows, title) {
+function formatFactsBlock(rows) {
   if (!Array.isArray(rows) || !rows.length) return '';
-  const lines = rows
-    .map(r => `- ${r.fact_key}: ${r.fact_value}`)
-    .join('\n');
-  return `=== ${title} ===\n${lines}`.trim();
+  const lines = rows.map((r) => `- ${r.fact_key}: ${r.fact_value}`).join('\n');
+  return `SCENE_FACTS_HARD:\n${lines}\nRULE: Do NOT invent missing facts.`;
 }
 
 const STRICT_FACT_GUARD = `
-Truth rules (strict, but keep human vibe):
-- DO NOT invent, guess, or assume facts.
-- Only use facts explicitly present in SCENE FACTS and SCENE CONTEXT blocks.
-- If a fact is missing, say you don't know warmly and ask ONE short follow-up question.
-- Never override stored facts.
+TRUTH RULES (keep human vibe):
+- Never invent, guess, or assume facts.
+- Facts must come only from SCENE_FACTS_HARD and HARD_CONTEXT.
+- If a fact is missing, say it naturally (1 sentence) and ask ONE short follow-up question.
+- Do not repeat location/time unless the user asks or it matters naturally.
 `.trim();
 
 app.post('/chat', async (req, res) => {
@@ -85,28 +125,28 @@ app.post('/chat', async (req, res) => {
 
     const sceneKey = 'global';
 
-    // LOG: request start
-    console.log('[CHAT] userId=', userId, 'sceneKey=', sceneKey, 'msg=', message.slice(0, 160));
+    console.log('[CHAT]', { userId, sceneKey, msg: message.slice(0, 160) });
 
-    // 1) SCC load + patch (deterministic, no guessing)
+    // 1) SCC load
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
+    // 2) SCC deterministic patch (no guessing)
     const sccPatch = extractContextFromText({ text: message, sceneContext: sceneContext || {} });
     if (sccPatch && Object.keys(sccPatch).length) {
       await patchSceneContext(req.supabase, sceneKey, sccPatch);
       sceneContext = await getSceneContext(req.supabase, sceneKey);
-      console.log('[SCC] patch=', sccPatch);
+      console.log('[SCC_PATCH]', sccPatch);
     }
 
-    // 2) subject lock
+    // 3) Subject lock
     const subjectResult = applySubjectLock(message, sceneContext || {});
     if (subjectResult?.subject && subjectResult.subject !== sceneContext?.last_subject) {
       await patchSceneContext(req.supabase, sceneKey, { last_subject: subjectResult.subject });
       sceneContext = await getSceneContext(req.supabase, sceneKey);
-      console.log('[SCC] subject=', subjectResult.subject);
+      console.log('[SUBJECT]', subjectResult.subject);
     }
 
-    // 3) scope = derived from SCC only (DB truth), no hardcode mapping
+    // 4) Scope (NO hardcode mapping)
     const scopeCandidate =
       sceneContext?.location_country ||
       sceneContext?.location_city ||
@@ -114,91 +154,119 @@ app.post('/chat', async (req, res) => {
       'global';
     const scope = slugifyScope(scopeCandidate);
 
-    console.log('[SCOPE] candidate=', scopeCandidate, '=>', scope);
+    console.log('[SCOPE]', { scopeCandidate, scope });
 
-    // 4) DB-driven schema + fact extraction
+    // 5) Schema-driven fact extraction (DB-driven)
     const schema = await getActiveFactSchema(req.supabase);
-    console.log('[FACT_SCHEMA] count=', schema.length);
+    console.log('[FACT_SCHEMA_COUNT]', schema.length);
 
-    const extracted = await factJudge({ text: message, schema });
-    console.log('[FACT_JUDGE] extracted=', extracted);
+    if (schema.length > 0) {
+      const extracted = await factJudge({ text: message, schema });
+      console.log('[FACT_EXTRACTED]', extracted);
 
-    // 5) upsert extracted facts into scene_facts (scoped)
-    if (Array.isArray(extracted) && extracted.length) {
-      for (const f of extracted) {
-        const factKey = f.fact_key;
-        const conf = typeof f.confidence === 'number' ? f.confidence : 0.9;
+      if (Array.isArray(extracted) && extracted.length) {
+        for (const f of extracted) {
+          const factKey = f.fact_key;
+          const conf = typeof f.confidence === 'number' ? f.confidence : 0.9;
+          const rawVal = f.fact_value;
 
-        // store as text, if object -> JSON stringify
-        const rawValue = f.fact_value;
-        const valueType =
-          rawValue !== null && typeof rawValue === 'object' ? 'json' : typeof rawValue === 'number' ? 'number' : typeof rawValue === 'boolean' ? 'boolean' : 'text';
-        const factValue =
-          rawValue !== null && typeof rawValue === 'object' ? JSON.stringify(rawValue) : String(rawValue);
+          const valueType =
+            rawVal !== null && typeof rawVal === 'object'
+              ? 'json'
+              : typeof rawVal === 'number'
+                ? 'number'
+                : typeof rawVal === 'boolean'
+                  ? 'boolean'
+                  : 'text';
 
-        const ok = await upsertSceneFact(
-          req.supabase,
-          userId,
-          sceneKey,
-          scope,
-          factKey,
-          factValue,
-          valueType,
-          conf,
-          'user'
-        );
+          const factValue =
+            rawVal !== null && typeof rawVal === 'object'
+              ? JSON.stringify(rawVal)
+              : String(rawVal);
 
-        console.log('[FACT_UPSERT]', ok ? 'OK' : 'FAIL', { scope, factKey, factValue, valueType, conf });
+          const ok = await upsertSceneFact(
+            req.supabase,
+            userId,
+            sceneKey,
+            scope,
+            factKey,
+            factValue,
+            valueType,
+            conf,
+            'user'
+          );
+
+          console.log('[FACT_UPSERT]', ok ? 'OK' : 'FAIL', { scope, factKey });
+        }
       }
     }
 
-    // 6) Load facts for current scope + build prompt HARD first
+    // 6) Read facts for current scope
     const sceneFacts = await getSceneFacts(req.supabase, userId, sceneKey, scope);
 
-    let systemPrompt = [
-      STRICT_FACT_GUARD,
-      formatFactsBlock(sceneFacts, 'SCENE FACTS (HARD)'),
-      formatSceneContextBlock(sceneContext),
-      formatHardSceneContextBlock(sceneContext),
-    ].filter(Boolean).join('\n\n');
+    // 7) Build system prompt (YAML-driven voice + small guards)
+    let systemPrompt =
+      [
+        STRICT_FACT_GUARD,
+        formatFactsBlock(sceneFacts),
+        formatSceneContextBlock(sceneContext),
+        formatHardSceneContextBlock(sceneContext),
+      ]
+        .filter(Boolean)
+        .join('\n\n');
 
-    // 7) Persona + memory lower priority (vibe stays here)
+    // YAML CORE voice is inside buildSystemPrompt (your systemPrompt.js pulls YAML)
     const coreOrigin = await loadCoreOrigin(req.supabase);
     const summaries = await loadSummaries(req.supabase);
 
-    systemPrompt += '\n\n' + buildSystemPrompt(
-      coreOrigin ? [{ narrative: coreOrigin }] : [],
-      summaries || []
-    );
+    systemPrompt +=
+      '\n\n' +
+      buildSystemPrompt(
+        coreOrigin ? [{ narrative: coreOrigin }] : [],
+        summaries || [],
+        []
+      );
 
-    // 8) Episodic recall (optional, only confident)
+    // 8) Episodic recall (only if confident)
     const recall = await recallEpisodicMemory(req.supabase, message);
     if (recall?.meta?.confident && Array.isArray(recall.memories) && recall.memories.length) {
-      const episodicLines = recall.memories.slice(0, 4).map(m => `- ${m.narrative}`).join('\n');
-      systemPrompt += `\n\n=== EPISODIC MEMORY ===\n${episodicLines}`;
+      const episodicLines = recall.memories
+        .slice(0, 4)
+        .map((m) => `- ${m.narrative}`)
+        .join('\n');
+      systemPrompt += `\n\nEPISODIC_MEMORY:\n${episodicLines}`;
     }
 
-    // 9) choose engine + call
+    // 9) Working memory (bridge_buffer)
+    const working = buildWorkingTurns(sceneContext);
+
+    // 10) Engine
     const state = detectState(message);
     const engine = state === 'heated' ? 'grok' : 'openai';
-    console.log('[ENGINE]', engine, 'state=', state);
+    console.log('[ENGINE]', { engine, state });
 
     history.openai = [
       { role: 'system', content: systemPrompt },
+      ...working,
       { role: 'user', content: message },
     ];
 
     const client = getLLMClient(engine);
     const model = MODELS[engine];
 
-    const r = await client.responses.create({ model, input: history.openai });
+    const r = await client.responses.create({
+      model,
+      input: history.openai,
+    });
+
     const reply = r.output_text || '…';
 
-    // 10) persist SCC interaction
+    // 11) Persist SCC + working memory
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: engine,
       last_engine_reply: reply,
       interaction_mode: state,
+      bridge_buffer: pushWorkingTurns(sceneContext, message, reply),
     });
 
     console.log('[REPLY]', reply.slice(0, 180));
@@ -210,5 +278,5 @@ app.post('/chat', async (req, res) => {
 });
 
 app.listen(process.env.PORT || 10000, () => {
-  console.log('🚀 IRIS backend running on port', process.env.PORT || 10000);
+  console.log('🚀 Iris backend running on port', process.env.PORT || 10000);
 });
