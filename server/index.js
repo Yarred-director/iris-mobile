@@ -23,7 +23,7 @@ import {
 
 import { factJudge } from './memory/factJudge.js';
 import { getActiveFactSchema } from './memory/factSchema.js';
-import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
+import { getSceneFacts, upsertSceneFact, upsertSceneFactMergeJson } from './memory/sceneFacts.js';
 
 import {
   loadCoreOrigin,
@@ -179,10 +179,24 @@ app.post('/chat', async (req, res) => {
                   ? 'boolean'
                   : 'text';
 
-          const factValue =
-            rawVal !== null && typeof rawVal === 'object'
-              ? JSON.stringify(rawVal)
-              : String(rawVal);
+          // ✅ JSON: use merge RPC (automerge)
+          if (valueType === 'json' && rawVal && typeof rawVal === 'object') {
+            const ok = await upsertSceneFactMergeJson(
+              req.supabase,
+              userId,
+              sceneKey,
+              scope,
+              factKey,
+              rawVal,
+              conf,
+              'user'
+            );
+            console.log('[FACT_UPSERT_MERGE]', ok ? 'OK' : 'FAIL', { scope, factKey });
+            continue;
+          }
+
+          // fallback for non-json
+          const factValue = String(rawVal);
 
           const ok = await upsertSceneFact(
             req.supabase,
@@ -215,7 +229,6 @@ app.post('/chat', async (req, res) => {
         .filter(Boolean)
         .join('\n\n');
 
-    // YAML CORE voice is inside buildSystemPrompt (your systemPrompt.js pulls YAML)
     const coreOrigin = await loadCoreOrigin(req.supabase);
     const summaries = await loadSummaries(req.supabase);
 

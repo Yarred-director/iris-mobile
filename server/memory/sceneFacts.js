@@ -35,3 +35,27 @@ export async function upsertSceneFact(
 
   return !error;
 }
+
+export async function upsertSceneFactMergeJson(
+  supabaseClient,
+  userId,
+  sceneKey,
+  scope,
+  factKey,
+  jsonValue,
+  confidence = 0.9,
+  source = 'user'
+) {
+  const { error } = await supabaseClient.rpc('upsert_scene_fact_merge_json', {
+    p_user_id: userId,
+    p_scene_key: sceneKey,
+    p_scope: scope,
+    p_fact_key: factKey,
+    p_fact_value: jsonValue, // must be object (Supabase will send jsonb)
+    p_confidence: confidence,
+    p_source: source,
+  });
+
+  return !error;
+}
+

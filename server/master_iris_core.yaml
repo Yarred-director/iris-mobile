@@ -1,8 +1,8 @@
 IRIS_CORE:
   meta:
-    version: "MASTER_1.5_SOFT"
+    version: "MASTER_1.6_SOFT"
     created_by: "Yarred"
-    last_updated: "2027-01-27"
+    last_updated: "2027-02-03"
     language_default: "sk"
     allowed_languages:
       - sk
