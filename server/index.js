@@ -23,13 +23,19 @@ import {
 
 import { factJudge } from './memory/factJudge.js';
 import { getActiveFactSchema } from './memory/factSchema.js';
-import { getSceneFacts, upsertSceneFact, upsertSceneFactMergeJson } from './memory/sceneFacts.js';
+import {
+  getSceneFacts,
+  upsertSceneFact,
+} from './memory/sceneFacts.js';
 
 import {
   loadCoreOrigin,
   loadSummaries,
   recallEpisodicMemory,
 } from './memory/recall.js';
+
+// 🔔 NEW: time-based reminders
+import { buildReminderFromText } from './memory/timeJudge.js';
 
 const app = express();
 app.use(cors());
@@ -127,11 +133,23 @@ app.post('/chat', async (req, res) => {
 
     console.log('[CHAT]', { userId, sceneKey, msg: message.slice(0, 160) });
 
-    // 1) SCC load
+    // 1) Load SCC
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
-    // 2) SCC deterministic patch (no guessing)
-    const sccPatch = extractContextFromText({ text: message, sceneContext: sceneContext || {} });
+    // ⏱️ NEW: timezone from device (no hardcode)
+    const tz = (req.headers['x-timezone'] || '').toString().trim();
+    if (tz && tz.length < 64 && tz !== sceneContext?.timezone) {
+      await patchSceneContext(req.supabase, sceneKey, { timezone: tz });
+      sceneContext = await getSceneContext(req.supabase, sceneKey);
+      console.log('[TIMEZONE_SET]', tz);
+    }
+
+    // 2) Deterministic SCC patch
+    const sccPatch = extractContextFromText({
+      text: message,
+      sceneContext: sceneContext || {},
+    });
+
     if (sccPatch && Object.keys(sccPatch).length) {
       await patchSceneContext(req.supabase, sceneKey, sccPatch);
       sceneContext = await getSceneContext(req.supabase, sceneKey);
@@ -140,13 +158,18 @@ app.post('/chat', async (req, res) => {
 
     // 3) Subject lock
     const subjectResult = applySubjectLock(message, sceneContext || {});
-    if (subjectResult?.subject && subjectResult.subject !== sceneContext?.last_subject) {
-      await patchSceneContext(req.supabase, sceneKey, { last_subject: subjectResult.subject });
+    if (
+      subjectResult?.subject &&
+      subjectResult.subject !== sceneContext?.last_subject
+    ) {
+      await patchSceneContext(req.supabase, sceneKey, {
+        last_subject: subjectResult.subject,
+      });
       sceneContext = await getSceneContext(req.supabase, sceneKey);
       console.log('[SUBJECT]', subjectResult.subject);
     }
 
-    // 4) Scope (NO hardcode mapping)
+    // 4) Scope
     const scopeCandidate =
       sceneContext?.location_country ||
       sceneContext?.location_city ||
@@ -156,7 +179,7 @@ app.post('/chat', async (req, res) => {
 
     console.log('[SCOPE]', { scopeCandidate, scope });
 
-    // 5) Schema-driven fact extraction (DB-driven)
+    // 5) Schema-driven fact extraction
     const schema = await getActiveFactSchema(req.supabase);
     console.log('[FACT_SCHEMA_COUNT]', schema.length);
 
@@ -174,31 +197,17 @@ app.post('/chat', async (req, res) => {
             rawVal !== null && typeof rawVal === 'object'
               ? 'json'
               : typeof rawVal === 'number'
-                ? 'number'
-                : typeof rawVal === 'boolean'
-                  ? 'boolean'
-                  : 'text';
+              ? 'number'
+              : typeof rawVal === 'boolean'
+              ? 'boolean'
+              : 'text';
 
-          // ✅ JSON: use merge RPC (automerge)
-          if (valueType === 'json' && rawVal && typeof rawVal === 'object') {
-            const ok = await upsertSceneFactMergeJson(
-              req.supabase,
-              userId,
-              sceneKey,
-              scope,
-              factKey,
-              rawVal,
-              conf,
-              'user'
-            );
-            console.log('[FACT_UPSERT_MERGE]', ok ? 'OK' : 'FAIL', { scope, factKey });
-            continue;
-          }
+          const factValue =
+            rawVal !== null && typeof rawVal === 'object'
+              ? JSON.stringify(rawVal)
+              : String(rawVal);
 
-          // fallback for non-json
-          const factValue = String(rawVal);
-
-          const ok = await upsertSceneFact(
+          await upsertSceneFact(
             req.supabase,
             userId,
             sceneKey,
@@ -209,25 +218,46 @@ app.post('/chat', async (req, res) => {
             conf,
             'user'
           );
-
-          console.log('[FACT_UPSERT]', ok ? 'OK' : 'FAIL', { scope, factKey });
         }
       }
     }
 
-    // 6) Read facts for current scope
-    const sceneFacts = await getSceneFacts(req.supabase, userId, sceneKey, scope);
+    // 🔔 NEW: time-based reminder (push)
+    const reminder = buildReminderFromText({
+      text: message,
+      timezone: sceneContext?.timezone || tz || 'UTC',
+    });
 
-    // 7) Build system prompt (YAML-driven voice + small guards)
-    let systemPrompt =
-      [
-        STRICT_FACT_GUARD,
-        formatFactsBlock(sceneFacts),
-        formatSceneContextBlock(sceneContext),
-        formatHardSceneContextBlock(sceneContext),
-      ]
-        .filter(Boolean)
-        .join('\n\n');
+    if (reminder) {
+      const { error } = await req.supabase.from('reminders').insert({
+        user_id: userId,
+        due_at: reminder.due_at,
+        title: reminder.title,
+        body: reminder.body,
+        meta: reminder.meta,
+        status: 'pending',
+      });
+
+      console.log('[REMINDER_CREATE]', error ? 'FAIL' : 'OK', reminder?.due_at);
+    }
+
+    // 6) Read facts
+    const sceneFacts = await getSceneFacts(
+      req.supabase,
+      userId,
+      sceneKey,
+      scope
+    );
+
+    // 7) Build system prompt
+    let systemPrompt = [
+      STRICT_FACT_GUARD,
+      formatFactsBlock(sceneFacts),
+      formatSceneContextBlock(sceneContext),
+      formatHardSceneContextBlock(sceneContext),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     const coreOrigin = await loadCoreOrigin(req.supabase);
     const summaries = await loadSummaries(req.supabase);
@@ -240,9 +270,13 @@ app.post('/chat', async (req, res) => {
         []
       );
 
-    // 8) Episodic recall (only if confident)
+    // 8) Episodic recall
     const recall = await recallEpisodicMemory(req.supabase, message);
-    if (recall?.meta?.confident && Array.isArray(recall.memories) && recall.memories.length) {
+    if (
+      recall?.meta?.confident &&
+      Array.isArray(recall.memories) &&
+      recall.memories.length
+    ) {
       const episodicLines = recall.memories
         .slice(0, 4)
         .map((m) => `- ${m.narrative}`)
@@ -250,7 +284,7 @@ app.post('/chat', async (req, res) => {
       systemPrompt += `\n\nEPISODIC_MEMORY:\n${episodicLines}`;
     }
 
-    // 9) Working memory (bridge_buffer)
+    // 9) Working memory
     const working = buildWorkingTurns(sceneContext);
 
     // 10) Engine
