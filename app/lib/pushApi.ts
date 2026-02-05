@@ -1,6 +1,6 @@
 // app/lib/pushApi.ts
 import { API_URL } from "../../constants/api";
-import { supabase } from "../lib/supabase"; // ak máš supabase client inde, uprav cestu
+import { supabase } from "../../lib/supabase";
 
 export async function upsertPushToken(expoPushToken: string) {
   const { data } = await supabase.auth.getSession();

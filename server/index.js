@@ -34,7 +34,7 @@ import {
   recallEpisodicMemory,
 } from './memory/recall.js';
 
-// 🔔 NEW: time-based reminders
+// 🔔 time-based reminders
 import { buildReminderFromText } from './memory/timeJudge.js';
 
 const app = express();
@@ -88,7 +88,9 @@ function pushWorkingTurns(sceneContext, userMsg, assistantMsg) {
 
 async function requireUserId(req, res) {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7)
+    : null;
 
   if (!token) {
     res.status(401).json({ error: 'NO TOKEN' });
@@ -104,6 +106,7 @@ async function requireUserId(req, res) {
     res.status(401).json({ error: 'INVALID USER' });
     return null;
   }
+
   return user.id;
 }
 
@@ -121,6 +124,68 @@ TRUTH RULES (keep human vibe):
 - Do not repeat location/time unless the user asks or it matters naturally.
 `.trim();
 
+
+// =======================================================
+// 🔔 PUSH TOKEN REGISTER
+// =======================================================
+app.post('/push/register', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+
+    const expoPushToken = (req.body?.expo_push_token || '').toString().trim();
+    if (!expoPushToken) {
+      return res.status(400).json({ error: 'MISSING_TOKEN' });
+    }
+
+    const isExpoToken =
+      expoPushToken.startsWith('ExponentPushToken[') ||
+      expoPushToken.startsWith('ExpoPushToken[');
+
+    if (!isExpoToken) {
+      return res.status(400).json({ error: 'INVALID_TOKEN_FORMAT' });
+    }
+
+    const { error } = await req.supabase
+      .from('push_tokens')
+      .upsert(
+        {
+          user_id: userId,
+          expo_push_token: expoPushToken,
+          updated_at: new Date().toISOString(),
+        },
+        {
+          // SAFE DEFAULT: one token per user
+          onConflict: 'user_id',
+          // ak máš composite PK, zmeň na:
+          // onConflict: 'user_id,expo_push_token',
+        }
+      );
+
+    if (error) {
+      console.error('[PUSH_REGISTER_FAIL]', error);
+      return res.status(500).json({
+        error: 'DB_ERROR',
+        detail: error.message,
+      });
+    }
+
+    console.log('[PUSH_REGISTER_OK]', {
+      userId,
+      token: expoPushToken.slice(0, 18) + '…',
+    });
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[PUSH_REGISTER_ERROR]', e);
+    return res.status(500).json({ error: e.message || 'unknown_error' });
+  }
+});
+
+
+// =======================================================
+// 💬 CHAT ENDPOINT
+// =======================================================
 app.post('/chat', async (req, res) => {
   try {
     const message = (req.body?.message || '').toString();
@@ -131,12 +196,14 @@ app.post('/chat', async (req, res) => {
 
     const sceneKey = 'global';
 
-    console.log('[CHAT]', { userId, sceneKey, msg: message.slice(0, 160) });
+    console.log('[CHAT]', {
+      userId,
+      sceneKey,
+      msg: message.slice(0, 160),
+    });
 
-    // 1) Load SCC
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
-    // ⏱️ NEW: timezone from device (no hardcode)
     const tz = (req.headers['x-timezone'] || '').toString().trim();
     if (tz && tz.length < 64 && tz !== sceneContext?.timezone) {
       await patchSceneContext(req.supabase, sceneKey, { timezone: tz });
@@ -144,7 +211,6 @@ app.post('/chat', async (req, res) => {
       console.log('[TIMEZONE_SET]', tz);
     }
 
-    // 2) Deterministic SCC patch
     const sccPatch = extractContextFromText({
       text: message,
       sceneContext: sceneContext || {},
@@ -156,7 +222,6 @@ app.post('/chat', async (req, res) => {
       console.log('[SCC_PATCH]', sccPatch);
     }
 
-    // 3) Subject lock
     const subjectResult = applySubjectLock(message, sceneContext || {});
     if (
       subjectResult?.subject &&
@@ -169,30 +234,20 @@ app.post('/chat', async (req, res) => {
       console.log('[SUBJECT]', subjectResult.subject);
     }
 
-    // 4) Scope
     const scopeCandidate =
       sceneContext?.location_country ||
       sceneContext?.location_city ||
       sceneContext?.place ||
       'global';
+
     const scope = slugifyScope(scopeCandidate);
 
-    console.log('[SCOPE]', { scopeCandidate, scope });
-
-    // 5) Schema-driven fact extraction
     const schema = await getActiveFactSchema(req.supabase);
-    console.log('[FACT_SCHEMA_COUNT]', schema.length);
-
     if (schema.length > 0) {
       const extracted = await factJudge({ text: message, schema });
-      console.log('[FACT_EXTRACTED]', extracted);
-
-      if (Array.isArray(extracted) && extracted.length) {
+      if (Array.isArray(extracted)) {
         for (const f of extracted) {
-          const factKey = f.fact_key;
-          const conf = typeof f.confidence === 'number' ? f.confidence : 0.9;
           const rawVal = f.fact_value;
-
           const valueType =
             rawVal !== null && typeof rawVal === 'object'
               ? 'json'
@@ -212,24 +267,23 @@ app.post('/chat', async (req, res) => {
             userId,
             sceneKey,
             scope,
-            factKey,
+            f.fact_key,
             factValue,
             valueType,
-            conf,
+            f.confidence ?? 0.9,
             'user'
           );
         }
       }
     }
 
-    // 🔔 NEW: time-based reminder (push)
     const reminder = buildReminderFromText({
       text: message,
       timezone: sceneContext?.timezone || tz || 'UTC',
     });
 
     if (reminder) {
-      const { error } = await req.supabase.from('reminders').insert({
+      await req.supabase.from('reminders').insert({
         user_id: userId,
         due_at: reminder.due_at,
         title: reminder.title,
@@ -237,11 +291,8 @@ app.post('/chat', async (req, res) => {
         meta: reminder.meta,
         status: 'pending',
       });
-
-      console.log('[REMINDER_CREATE]', error ? 'FAIL' : 'OK', reminder?.due_at);
     }
 
-    // 6) Read facts
     const sceneFacts = await getSceneFacts(
       req.supabase,
       userId,
@@ -249,7 +300,6 @@ app.post('/chat', async (req, res) => {
       scope
     );
 
-    // 7) Build system prompt
     let systemPrompt = [
       STRICT_FACT_GUARD,
       formatFactsBlock(sceneFacts),
@@ -270,13 +320,8 @@ app.post('/chat', async (req, res) => {
         []
       );
 
-    // 8) Episodic recall
     const recall = await recallEpisodicMemory(req.supabase, message);
-    if (
-      recall?.meta?.confident &&
-      Array.isArray(recall.memories) &&
-      recall.memories.length
-    ) {
+    if (recall?.meta?.confident && recall.memories?.length) {
       const episodicLines = recall.memories
         .slice(0, 4)
         .map((m) => `- ${m.narrative}`)
@@ -284,13 +329,9 @@ app.post('/chat', async (req, res) => {
       systemPrompt += `\n\nEPISODIC_MEMORY:\n${episodicLines}`;
     }
 
-    // 9) Working memory
     const working = buildWorkingTurns(sceneContext);
-
-    // 10) Engine
     const state = detectState(message);
     const engine = state === 'heated' ? 'grok' : 'openai';
-    console.log('[ENGINE]', { engine, state });
 
     history.openai = [
       { role: 'system', content: systemPrompt },
@@ -308,7 +349,6 @@ app.post('/chat', async (req, res) => {
 
     const reply = r.output_text || '…';
 
-    // 11) Persist SCC + working memory
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: engine,
       last_engine_reply: reply,
@@ -316,7 +356,6 @@ app.post('/chat', async (req, res) => {
       bridge_buffer: pushWorkingTurns(sceneContext, message, reply),
     });
 
-    console.log('[REPLY]', reply.slice(0, 180));
     return res.json({ reply });
   } catch (e) {
     console.error('CHAT ERROR:', e);
