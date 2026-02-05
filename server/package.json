@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "reminders:run": "node server/jobs/reminderWorker.js"
+    "reminders:run": "node jobs/reminderWorker.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.91.1",
