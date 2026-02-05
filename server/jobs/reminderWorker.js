@@ -1,7 +1,7 @@
 // server/jobs/reminderWorker.js
 import { createClient } from '@supabase/supabase-js';
+import '../config/env.js';
 import { sendExpoPush } from '../push/expoPush.js';
-import './config/env.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
