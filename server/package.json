@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "reminders:run": "node server/jobs/reminderWorker.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.91.1",
