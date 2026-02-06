@@ -23,10 +23,7 @@ import {
 
 import { factJudge } from './memory/factJudge.js';
 import { getActiveFactSchema } from './memory/factSchema.js';
-import {
-  getSceneFacts,
-  upsertSceneFact,
-} from './memory/sceneFacts.js';
+import { getSceneFacts, upsertSceneFact } from './memory/sceneFacts.js';
 
 import {
   loadCoreOrigin,
@@ -124,7 +121,6 @@ TRUTH RULES (keep human vibe):
 - Do not repeat location/time unless the user asks or it matters naturally.
 `.trim();
 
-
 // =======================================================
 // 🔔 PUSH TOKEN REGISTER
 // =======================================================
@@ -155,10 +151,7 @@ app.post('/push/register', async (req, res) => {
           updated_at: new Date().toISOString(),
         },
         {
-          // SAFE DEFAULT: one token per user
           onConflict: 'user_id',
-          // ak máš composite PK, zmeň na:
-          // onConflict: 'user_id,expo_push_token',
         }
       );
 
@@ -181,7 +174,6 @@ app.post('/push/register', async (req, res) => {
     return res.status(500).json({ error: e.message || 'unknown_error' });
   }
 });
-
 
 // =======================================================
 // 💬 CHAT ENDPOINT
@@ -242,6 +234,9 @@ app.post('/chat', async (req, res) => {
 
     const scope = slugifyScope(scopeCandidate);
 
+    // ------------------------------
+    // FACTS
+    // ------------------------------
     const schema = await getActiveFactSchema(req.supabase);
     if (schema.length > 0) {
       const extracted = await factJudge({ text: message, schema });
@@ -277,22 +272,52 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    const reminder = buildReminderFromText({
+    // ------------------------------
+    // 🔔 REMINDERS (FIXED: log + error handling + user-scoped client)
+    // ------------------------------
+    const effectiveTz = sceneContext?.timezone || tz || 'UTC';
+
+    const reminderDraft = buildReminderFromText({
       text: message,
-      timezone: sceneContext?.timezone || tz || 'UTC',
+      timezone: effectiveTz,
     });
 
-    if (reminder) {
-      await req.supabase.from('reminders').insert({
+    let reminderCreated = null;
+
+    if (reminderDraft) {
+      // Prefer user-scoped client if your middleware provides it.
+      const sb =
+        req.supabaseUser || req.supabase;
+
+      const payload = {
         user_id: userId,
-        due_at: reminder.due_at,
-        title: reminder.title,
-        body: reminder.body,
-        meta: reminder.meta,
+        due_at: reminderDraft.due_at,
+        title: reminderDraft.title,
+        body: reminderDraft.body,
+        meta: reminderDraft.meta,
         status: 'pending',
-      });
+      };
+
+      const { data, error } = await sb
+        .from('reminders')
+        .insert(payload)
+        .select('id, due_at, title, status')
+        .single();
+
+      if (error) {
+        console.error('[REMINDER_CREATE_FAIL]', {
+          msg: error.message,
+          code: error.code,
+        });
+      } else {
+        reminderCreated = data;
+        console.log('[REMINDER_CREATE_OK]', reminderCreated);
+      }
     }
 
+    // ------------------------------
+    // SCENE FACTS
+    // ------------------------------
     const sceneFacts = await getSceneFacts(
       req.supabase,
       userId,
@@ -308,6 +333,13 @@ app.post('/chat', async (req, res) => {
     ]
       .filter(Boolean)
       .join('\n\n');
+
+    // ✅ Only let Iris promise reminders if we actually created one.
+    if (reminderDraft && reminderCreated) {
+      systemPrompt += `\n\nREMINDER_CREATED:\n- id: ${reminderCreated.id}\n- due_at: ${reminderCreated.due_at}\nRULE: Confirm naturally that the reminder is set.`;
+    } else if (reminderDraft && !reminderCreated) {
+      systemPrompt += `\n\nREMINDER_FAILED:\nRULE: Do NOT promise a reminder. Say you couldn't save it and ask the user to try again.`;
+    }
 
     const coreOrigin = await loadCoreOrigin(req.supabase);
     const summaries = await loadSummaries(req.supabase);
