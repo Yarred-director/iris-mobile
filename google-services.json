@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "498527500498",
+    "project_id": "iris-mobile-76135",
+    "storage_bucket": "iris-mobile-76135.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:498527500498:android:89dfececdeede7f4e5950b",
+        "android_client_info": {
+          "package_name": "com.yarreddirector.iris"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA3Hl6G-V10gkr8bgPpPfaegcss9FRIDD8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

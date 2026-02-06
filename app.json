@@ -20,10 +20,10 @@
     "android": {
       "package": "com.yarreddirector.iris",
 
-      // ✅ aby klávesnica nezakrývala input
+      "googleServicesFile": "./google-services.json",
+
       "softwareKeyboardLayoutMode": "resize",
 
-      // ✅ deep link pre Supabase magic link
       "intentFilters": [
         {
           "action": "VIEW",
@@ -39,7 +39,6 @@
       ]
     },
 
-    // ✅ JEDEN splash – žiadne preblikávanie
     "splash": {
       "image": "./assets/images/iris/icons/splash.png",
       "resizeMode": "cover",
@@ -54,7 +53,6 @@
     "plugins": [
       "expo-router",
 
-      // ✅ nech splash riadiš TY (a nie Expo auto-hide)
       [
         "expo-splash-screen",
         {
@@ -64,8 +62,8 @@
         }
       ],
 
-      // ✅ nutné pre Supabase session persistence
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-notifications"
     ],
 
     "experiments": {
