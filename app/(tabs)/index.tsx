@@ -26,11 +26,10 @@ import TypingIndicator from "../components/TypingIndicator";
 
 /**
  * ✅ API BASE:
- * - never silently fall back to a wrong URL
+ * - safe default for standalone APK (EAS env can be missing)
  * - normalize trailing slashes
- * - log once so debugging is trivial
  */
-const API_BASE_RAW = process.env.EXPO_PUBLIC_API_URL ?? "";
+const API_BASE_RAW = process.env.EXPO_PUBLIC_API_URL ?? "https://iris-mobile.onrender.com";
 
 // normalize: remove trailing slashes, and remove a trailing "/chat" if user put it into env by mistake
 const API_BASE = API_BASE_RAW
@@ -39,7 +38,6 @@ const API_BASE = API_BASE_RAW
   .replace(/\/chat$/, "");
 
 const API_CHAT = API_BASE ? `${API_BASE}/chat` : "";
-
 
 // Chat history storage
 const CHAT_STORAGE_KEY = "iris.chat.history.v1";
@@ -121,8 +119,8 @@ function GlassBubble({
       }),
       Animated.timing(pulse, {
         toValue: 0,
-        duration: 900,
-        easing: Easing.out(Easing.quad),
+        duration: 520,
+        easing: Easing.in(Easing.quad),
         useNativeDriver: true,
       }),
     ]).start();
@@ -138,10 +136,7 @@ function GlassBubble({
 
   const baseColors = (isUser
     ? ["rgba(91,108,255,0.32)", "rgba(91,108,255,0.12)"]
-    : ["rgba(255,255,255,0.10)", "rgba(255,255,255,0.04)"]) as readonly [
-    ColorValue,
-    ColorValue
-  ];
+    : ["rgba(255,255,255,0.10)", "rgba(255,255,255,0.04)"]) as readonly [ColorValue, ColorValue];
 
   const sheenColors = [
     "rgba(255,255,255,0.0)",
@@ -186,7 +181,6 @@ export default function ChatScreen() {
   // ✅ menu state
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // log len pri zmene
   useEffect(() => {
     console.log("AUTH:", { loading, userId: user?.id, hasToken: !!accessToken });
   }, [loading, user?.id, accessToken]);
@@ -194,11 +188,6 @@ export default function ChatScreen() {
   // log API base once
   useEffect(() => {
     console.log("API:", { API_BASE_RAW, API_BASE, API_CHAT });
-    if (!API_BASE) {
-      console.warn(
-        "Missing EXPO_PUBLIC_API_URL. Web will call localhost and fail. Set it in root .env and restart with `-c`."
-      );
-    }
   }, []);
 
   // auth guard
@@ -262,18 +251,38 @@ export default function ChatScreen() {
     setMenuOpen(false);
     Keyboard.dismiss();
 
+    // optimistic user bubble
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setIsTyping(true);
 
     try {
       if (!API_CHAT) {
-        throw new Error("API_CHAT is empty (missing EXPO_PUBLIC_API_URL).");
+        throw new Error("API_CHAT is empty.");
       }
 
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+      // always fetch a fresh session right before calling backend (prevents stale state in standalone)
+      const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+      if (sessionErr) console.warn("getSession error:", sessionErr.message);
 
-      console.log("CHAT: POST", API_CHAT);
+      const token = sessionData.session?.access_token || accessToken;
+      if (!token) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "iris", text: "Vyzerá to, že nie si prihlásený. Skús sa prihlásiť znova." },
+        ]);
+        router.replace("/auth");
+        return;
+      }
+
+      const tz = Intl?.DateTimeFormat?.().resolvedOptions?.().timeZone || "UTC";
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "x-timezone": tz,
+      };
+
+      console.log("CHAT: POST", API_CHAT, { hasToken: true, tz });
 
       const res = await fetch(API_CHAT, {
         method: "POST",
@@ -281,18 +290,27 @@ export default function ChatScreen() {
         body: JSON.stringify({ message: trimmed }),
       });
 
-      // handle non-200 with readable output
+      const raw = await res.text().catch(() => "");
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        console.log("CHAT: non-OK", { status: res.status, body });
-        throw new Error(`HTTP ${res.status}`);
+        console.log("CHAT: non-OK", { status: res.status, body: raw });
+        const short = raw ? raw.slice(0, 180) : "";
+        throw new Error(`HTTP ${res.status}${short ? `: ${short}` : ""}`);
       }
 
-      const data = await res.json();
+      const data = raw ? JSON.parse(raw) : {};
       setMessages((prev) => [...prev, { role: "iris", text: data.reply ?? "…" }]);
     } catch (e: any) {
-      console.log("CHAT ERROR:", e?.message ?? e);
-      setMessages((prev) => [...prev, { role: "iris", text: "Nastala chyba pri spojení s Iris." }]);
+      const msg = (e?.message || "").toString();
+      console.log("CHAT ERROR:", msg || e);
+
+      const userText =
+        msg.includes("HTTP 401")
+          ? "Prihlásenie neprešlo (401). Toto býva zlé Supabase env v APK alebo neplatný token."
+          : msg.includes("HTTP 5")
+          ? "Backend spadol (5xx). Pozri Render logs."
+          : "Nastala chyba pri spojení s Iris.";
+
+      setMessages((prev) => [...prev, { role: "iris", text: userText }]);
     } finally {
       setIsTyping(false);
     }
@@ -428,68 +446,79 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     marginRight: 12,
   },
-  avatar: { width: "100%", height: "100%" },
 
-  headerName: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  headerStatus: { color: "rgba(203,213,245,0.85)", fontSize: 12 },
+  avatar: { width: 56, height: 56 },
+
+  headerName: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  headerStatus: { color: "rgba(255,255,255,0.7)", fontSize: 12, marginTop: 2 },
 
   messages: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
 
   bubble: {
-    maxWidth: "64%",
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    maxWidth: "85%",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 14,
     marginBottom: 8,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: "rgba(255,255,255,0.10)",
   },
 
   userBubble: { alignSelf: "flex-end" },
   irisBubble: { alignSelf: "flex-start" },
 
-  sheen: { position: "absolute", top: -12, left: -80, width: 200, height: 140 },
-  text: { color: "#fff", fontSize: 14, lineHeight: 18 },
+  text: { color: "#fff", fontSize: 15, lineHeight: 20 },
 
-  // MENU
+  sheen: {
+    position: "absolute",
+    top: -40,
+    left: -60,
+    width: 220,
+    height: 140,
+    borderRadius: 18,
+  },
+
   menuBtn: {
-    width: 34,
-    height: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
     backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
   },
+
   menuDots: {
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 22,
-    lineHeight: 22,
-    marginTop: -2,
+    color: "rgba(255,255,255,0.9)",
+    fontSize: 18,
+    lineHeight: 18,
   },
+
   menuPopover: {
     position: "absolute",
-    top: 40,
     right: 0,
+    top: 42,
     minWidth: 160,
-    borderRadius: 14,
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(20,20,26,0.96)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    backgroundColor: "rgba(12,12,16,0.96)",
-    overflow: "hidden",
-    zIndex: 10,
+    borderColor: "rgba(255,255,255,0.10)",
   },
-  menuItem: { paddingVertical: 12, paddingHorizontal: 14 },
-  menuItemText: { color: "rgba(255,255,255,0.92)", fontWeight: "700" },
+
+  menuItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+
+  menuItemText: {
+    color: "#fff",
+    fontSize: 14,
+  },
 
   menuOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 4, // pod header (zIndex 5), nad chat
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 4,
   },
 });
