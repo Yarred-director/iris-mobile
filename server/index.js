@@ -31,8 +31,13 @@ import {
   recallEpisodicMemory,
 } from './memory/recall.js';
 
-// 🔔 time-based reminders
-import { buildReminderFromText } from './memory/timeJudge.js';
+// 🔔 REMINDERS
+import {
+  buildReminderFromIntent,
+  buildReminderFromText,
+  looksLikeReminder,
+  timeIntentJudgeLLM,
+} from './memory/timeJudge.js';
 
 const app = express();
 app.use(cors());
@@ -41,48 +46,9 @@ app.use(sessionMiddleware);
 
 app.get('/', (_req, res) => res.send('IRIS backend running'));
 
-function slugifyScope(s) {
-  return (s || 'global')
-    .toString()
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '_')
-    .replace(/^_+|_+$/g, '') || 'global';
-}
-
-function safeJsonParse(s, fallback) {
-  try {
-    if (Array.isArray(s)) return s;
-    return JSON.parse(s);
-  } catch {
-    return fallback;
-  }
-}
-
-function buildWorkingTurns(sceneContext) {
-  const raw = sceneContext?.bridge_buffer;
-  const arr = safeJsonParse(raw, []);
-  if (!Array.isArray(arr)) return [];
-  return arr
-    .filter(
-      (x) =>
-        x &&
-        (x.role === 'user' || x.role === 'assistant') &&
-        typeof x.content === 'string'
-    )
-    .slice(-6);
-}
-
-function pushWorkingTurns(sceneContext, userMsg, assistantMsg) {
-  const prev = buildWorkingTurns(sceneContext);
-  const next = [
-    ...prev,
-    { role: 'user', content: String(userMsg || '').slice(0, 900) },
-    { role: 'assistant', content: String(assistantMsg || '').slice(0, 900) },
-  ].slice(-6);
-  return JSON.stringify(next);
-}
-
+// =======================================================
+// AUTH
+// =======================================================
 async function requireUserId(req, res) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ')
@@ -107,76 +73,8 @@ async function requireUserId(req, res) {
   return user.id;
 }
 
-function formatFactsBlock(rows) {
-  if (!Array.isArray(rows) || !rows.length) return '';
-  const lines = rows.map((r) => `- ${r.fact_key}: ${r.fact_value}`).join('\n');
-  return `SCENE_FACTS_HARD:\n${lines}\nRULE: Do NOT invent missing facts.`;
-}
-
-const STRICT_FACT_GUARD = `
-TRUTH RULES (keep human vibe):
-- Never invent, guess, or assume facts.
-- Facts must come only from SCENE_FACTS_HARD and HARD_CONTEXT.
-- If a fact is missing, say it naturally (1 sentence) and ask ONE short follow-up question.
-- Do not repeat location/time unless the user asks or it matters naturally.
-`.trim();
-
 // =======================================================
-// 🔔 PUSH TOKEN REGISTER
-// =======================================================
-app.post('/push/register', async (req, res) => {
-  try {
-    const userId = await requireUserId(req, res);
-    if (!userId) return;
-
-    const expoPushToken = (req.body?.expo_push_token || '').toString().trim();
-    if (!expoPushToken) {
-      return res.status(400).json({ error: 'MISSING_TOKEN' });
-    }
-
-    const isExpoToken =
-      expoPushToken.startsWith('ExponentPushToken[') ||
-      expoPushToken.startsWith('ExpoPushToken[');
-
-    if (!isExpoToken) {
-      return res.status(400).json({ error: 'INVALID_TOKEN_FORMAT' });
-    }
-
-    const { error } = await req.supabase
-      .from('push_tokens')
-      .upsert(
-        {
-          user_id: userId,
-          expo_push_token: expoPushToken,
-          updated_at: new Date().toISOString(),
-        },
-        {
-          onConflict: 'user_id',
-        }
-      );
-
-    if (error) {
-      console.error('[PUSH_REGISTER_FAIL]', error);
-      return res.status(500).json({
-        error: 'DB_ERROR',
-        detail: error.message,
-      });
-    }
-
-    console.log('[PUSH_REGISTER_OK]', {
-      userId,
-      token: expoPushToken.slice(0, 18) + '…',
-    });
-
-    return res.json({ ok: true });
-  } catch (e) {
-    console.error('[PUSH_REGISTER_ERROR]', e);
-    return res.status(500).json({ error: e.message || 'unknown_error' });
-  }
-});
-
-// =======================================================
-// 💬 CHAT ENDPOINT
+// CHAT
 // =======================================================
 app.post('/chat', async (req, res) => {
   try {
@@ -196,6 +94,9 @@ app.post('/chat', async (req, res) => {
 
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
+    // ------------------------------
+    // TIMEZONE
+    // ------------------------------
     const tz = (req.headers['x-timezone'] || '').toString().trim();
     if (tz && tz.length < 64 && tz !== sceneContext?.timezone) {
       await patchSceneContext(req.supabase, sceneKey, { timezone: tz });
@@ -203,6 +104,11 @@ app.post('/chat', async (req, res) => {
       console.log('[TIMEZONE_SET]', tz);
     }
 
+    const effectiveTz = sceneContext?.timezone || tz || 'UTC';
+
+    // ------------------------------
+    // CONTEXT JUDGES
+    // ------------------------------
     const sccPatch = extractContextFromText({
       text: message,
       sceneContext: sceneContext || {},
@@ -225,14 +131,6 @@ app.post('/chat', async (req, res) => {
       sceneContext = await getSceneContext(req.supabase, sceneKey);
       console.log('[SUBJECT]', subjectResult.subject);
     }
-
-    const scopeCandidate =
-      sceneContext?.location_country ||
-      sceneContext?.location_city ||
-      sceneContext?.place ||
-      'global';
-
-    const scope = slugifyScope(scopeCandidate);
 
     // ------------------------------
     // FACTS
@@ -261,7 +159,7 @@ app.post('/chat', async (req, res) => {
             req.supabase,
             userId,
             sceneKey,
-            scope,
+            'global',
             f.fact_key,
             factValue,
             valueType,
@@ -272,80 +170,90 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    // ------------------------------
-    // 🔔 REMINDERS (SLEDGEHAMMER DEBUG)
-    // ------------------------------
-    const effectiveTz = sceneContext?.timezone || tz || 'UTC';
+    // =======================================================
+    // 🔔 REMINDER PIPELINE (GLOBAL & SAFE)
+    // =======================================================
+    let reminderDraft = null;
 
-    const reminderDraft = buildReminderFromText({
-      text: message,
-      timezone: effectiveTz,
-    });
+    // 1️⃣ LLM time intent (language-agnostic)
+    if (looksLikeReminder(message)) {
+      try {
+        const client = getLLMClient('openai');
+        const model = MODELS.openai;
 
-    // 🔥 always log, even if null (this proves what timeJudge returns)
+        const intent = await timeIntentJudgeLLM({
+          client,
+          model,
+          text: message,
+          timezone: effectiveTz,
+          nowISO: new Date().toISOString(),
+        });
+
+        console.log('[TIME_INTENT]', intent);
+
+        if (intent && (intent.confidence ?? 0) >= 0.55) {
+          reminderDraft = buildReminderFromIntent({
+            intent,
+            originalText: message,
+            timezone: effectiveTz,
+          });
+        }
+      } catch (e) {
+        console.error('[TIME_INTENT_FAIL]', e?.message || e);
+      }
+    }
+
+    // 2️⃣ Deterministic fallback (today / tomorrow / anchors)
+    if (!reminderDraft) {
+      reminderDraft = buildReminderFromText({
+        text: message,
+        timezone: effectiveTz,
+      });
+    }
+
     console.log('[REMINDER_JUDGE]', {
       tz: effectiveTz,
       msg: message.slice(0, 140),
       reminderDraft,
     });
 
-    let reminderCreated = null;
-
     if (reminderDraft) {
-      // Prefer user-scoped client if your middleware provides it.
-      const sb = req.supabaseUser || req.supabase;
-
-      const payload = {
-        user_id: userId,
-        due_at: reminderDraft.due_at,
-        title: reminderDraft.title,
-        body: reminderDraft.body,
-        meta: reminderDraft.meta,
-        status: 'pending',
-      };
-
-      const { data, error } = await sb
+      const { error, data } = await req.supabase
         .from('reminders')
-        .insert(payload)
-        .select('id, due_at, title, status')
+        .insert({
+          user_id: userId,
+          due_at: reminderDraft.due_at,
+          title: reminderDraft.title,
+          body: reminderDraft.body,
+          meta: reminderDraft.meta,
+          status: 'pending',
+        })
+        .select('id, due_at, status')
         .single();
 
       if (error) {
-        console.error('[REMINDER_CREATE_FAIL]', {
-          msg: error.message,
-          code: error.code,
-        });
+        console.error('[REMINDER_CREATE_FAIL]', error);
       } else {
-        reminderCreated = data;
-        console.log('[REMINDER_CREATE_OK]', reminderCreated);
+        console.log('[REMINDER_CREATE_OK]', data);
       }
     }
 
     // ------------------------------
-    // SCENE FACTS
+    // PROMPT BUILD
     // ------------------------------
     const sceneFacts = await getSceneFacts(
       req.supabase,
       userId,
       sceneKey,
-      scope
+      'global'
     );
 
     let systemPrompt = [
-      STRICT_FACT_GUARD,
-      formatFactsBlock(sceneFacts),
       formatSceneContextBlock(sceneContext),
       formatHardSceneContextBlock(sceneContext),
     ]
       .filter(Boolean)
       .join('\n\n');
-
-    // ✅ Only let Iris promise reminders if we actually created one.
-    if (reminderDraft && reminderCreated) {
-      systemPrompt += `\n\nREMINDER_CREATED:\n- id: ${reminderCreated.id}\n- due_at: ${reminderCreated.due_at}\nRULE: Confirm naturally that the reminder is set.`;
-    } else if (reminderDraft && !reminderCreated) {
-      systemPrompt += `\n\nREMINDER_FAILED:\nRULE: Do NOT promise a reminder. Say you couldn't save it and ask the user to try again.`;
-    }
 
     const coreOrigin = await loadCoreOrigin(req.supabase);
     const summaries = await loadSummaries(req.supabase);
@@ -360,20 +268,22 @@ app.post('/chat', async (req, res) => {
 
     const recall = await recallEpisodicMemory(req.supabase, message);
     if (recall?.meta?.confident && recall.memories?.length) {
-      const episodicLines = recall.memories
-        .slice(0, 4)
-        .map((m) => `- ${m.narrative}`)
-        .join('\n');
-      systemPrompt += `\n\nEPISODIC_MEMORY:\n${episodicLines}`;
+      systemPrompt +=
+        '\n\nEPISODIC_MEMORY:\n' +
+        recall.memories
+          .slice(0, 4)
+          .map((m) => `- ${m.narrative}`)
+          .join('\n');
     }
 
-    const working = buildWorkingTurns(sceneContext);
+    // ------------------------------
+    // LLM CALL
+    // ------------------------------
     const state = detectState(message);
     const engine = state === 'heated' ? 'grok' : 'openai';
 
     history.openai = [
       { role: 'system', content: systemPrompt },
-      ...working,
       { role: 'user', content: message },
     ];
 
@@ -391,7 +301,6 @@ app.post('/chat', async (req, res) => {
       last_engine: engine,
       last_engine_reply: reply,
       interaction_mode: state,
-      bridge_buffer: pushWorkingTurns(sceneContext, message, reply),
     });
 
     return res.json({ reply });
