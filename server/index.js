@@ -273,7 +273,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // 🔔 REMINDERS (FIXED: log + error handling + user-scoped client)
+    // 🔔 REMINDERS (SLEDGEHAMMER DEBUG)
     // ------------------------------
     const effectiveTz = sceneContext?.timezone || tz || 'UTC';
 
@@ -282,12 +282,18 @@ app.post('/chat', async (req, res) => {
       timezone: effectiveTz,
     });
 
+    // 🔥 always log, even if null (this proves what timeJudge returns)
+    console.log('[REMINDER_JUDGE]', {
+      tz: effectiveTz,
+      msg: message.slice(0, 140),
+      reminderDraft,
+    });
+
     let reminderCreated = null;
 
     if (reminderDraft) {
       // Prefer user-scoped client if your middleware provides it.
-      const sb =
-        req.supabaseUser || req.supabase;
+      const sb = req.supabaseUser || req.supabase;
 
       const payload = {
         user_id: userId,
