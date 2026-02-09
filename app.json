@@ -23,6 +23,13 @@
 
       "softwareKeyboardLayoutMode": "resize",
 
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS"
+      ],
+
       "intentFilters": [
         {
           "action": "VIEW",
