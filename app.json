@@ -19,7 +19,6 @@
 
     "android": {
       "package": "com.yarreddirector.iris",
-
       "googleServicesFile": "./google-services.json",
 
       "softwareKeyboardLayoutMode": "resize",
@@ -52,7 +51,6 @@
 
     "plugins": [
       "expo-router",
-
       [
         "expo-splash-screen",
         {
@@ -61,7 +59,6 @@
           "backgroundColor": "#000000"
         }
       ],
-
       "expo-secure-store",
       "expo-notifications"
     ],
