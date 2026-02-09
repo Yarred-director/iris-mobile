@@ -21,9 +21,12 @@ export async function registerForPushToken(): Promise<string | null> {
     });
   }
 
-  // EAS projectId (bez toho niekedy token failne alebo je null)
+  // projectId fallback (Expo SDK rozdiely medzi dev/standalone)
   const projectId =
-    Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
+    Constants.easConfig?.projectId ??
+    (Constants.expoConfig as any)?.extra?.eas?.projectId ??
+    (Constants as any).manifest?.extra?.eas?.projectId ??
+    (Constants as any).manifest2?.extra?.eas?.projectId;
 
   const token = await Notifications.getExpoPushTokenAsync(
     projectId ? { projectId } : undefined
