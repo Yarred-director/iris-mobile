@@ -63,7 +63,6 @@ async function markSent(reminder) {
 }
 
 async function processQueuedReceipts() {
-  // reminders that were "sent to Expo" but not confirmed delivered
   const { data: queued, error } = await supabase
     .from('reminders')
     .select('*')
@@ -74,17 +73,15 @@ async function processQueuedReceipts() {
   if (error) throw error;
   if (!queued?.length) return;
 
-  // Build a list of ticket ids to check
   for (const r of queued) {
     const ticketIds = r?.meta?.push?.ticket_ids;
+
     if (!Array.isArray(ticketIds) || ticketIds.length === 0) {
-      // No ticket ids => cannot verify => fail (or keep queued, but this is safer)
       await markFailed(r, 'MISSING_TICKET_IDS', r?.meta?.push || null);
       continue;
     }
 
     try {
-      // Expo requires chunking receipts
       const chunks = expo.chunkPushNotificationReceiptIds(ticketIds);
       let anyOk = false;
       let anyError = null;
@@ -93,26 +90,20 @@ async function processQueuedReceipts() {
       for (const chunk of chunks) {
         const receipts = await expo.getPushNotificationReceiptsAsync(chunk);
 
-        for (const [id, receipt] of Object.entries(receipts || {})) {
-          if (receipt?.status === 'ok') {
-            anyOk = true;
-          } else if (receipt?.status === 'error') {
-            anyError = receipt?.message || receipt?.details?.error || 'RECEIPT_ERROR';
+        for (const receipt of Object.values(receipts || {})) {
+          if (receipt?.status === 'ok') anyOk = true;
+          if (receipt?.status === 'error') {
+            anyError =
+              receipt?.message || receipt?.details?.error || 'RECEIPT_ERROR';
             lastDetails = receipt;
           }
         }
       }
 
-      if (anyError) {
-        await markFailed(r, anyError, lastDetails);
-      } else if (anyOk) {
-        await markSent(r);
-      } else {
-        // receipts not ready yet -> keep queued (do nothing)
-        console.log('[REMINDER] receipt pending', r.id);
-      }
+      if (anyError) await markFailed(r, anyError, lastDetails);
+      else if (anyOk) await markSent(r);
+      else console.log('[REMINDER] receipt pending', r.id);
     } catch (e) {
-      // Expo receipts might temporarily fail; keep queued but record error
       await supabase
         .from('reminders')
         .update({
@@ -174,40 +165,26 @@ async function processDuePending() {
       data: { reminder_id: r.id, meta: r.meta || {} },
     });
 
-    // sendExpoPush must return: { ok: boolean, error?: string, details?: any }
     if (!send?.ok) {
       await markFailed(r, send?.error || 'SEND_FAIL', send?.details || null);
       continue;
     }
 
-    // Extract ticket ids from whatever shape expoPush.js returns
-    // We try multiple common shapes to be robust.
-    const ticketIds =
-      send?.details?.ticketIds ||
-      send?.details?.ticket_ids ||
-      send?.details?.tickets?.map((t) => t?.id).filter(Boolean) ||
-      send?.details?.tickets?.[0]?.id
-        ? [send.details.tickets[0].id].filter(Boolean)
-        : send?.details?.id
-        ? [send.details.id]
-        : [];
+    const ticketIds = Array.isArray(send?.details?.ticketIds)
+      ? send.details.ticketIds
+      : [];
 
     if (!ticketIds.length) {
-      // If we don't have ticket ids, we cannot verify delivery => fail (truthful)
       await markFailed(r, 'NO_TICKET_ID', send?.details || null);
       continue;
     }
 
-    // IMPORTANT: do NOT mark as sent here. Only queued.
     await markQueued(r, ticketIds, token);
   }
 }
 
 async function run() {
-  // 1) First verify previously queued sends via receipts
   await processQueuedReceipts();
-
-  // 2) Then process newly due pending reminders
   await processDuePending();
 }
 
