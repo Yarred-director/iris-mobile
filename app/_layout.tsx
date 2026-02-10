@@ -3,9 +3,12 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { Linking } from "react-native";
+
 import { UI_MANIFEST_URL } from "../constants/ui";
 import { supabase } from "../lib/supabase";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
+
+import PushBootstrap from "./components/PushBootstrap";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -23,7 +26,10 @@ function Gate() {
         const path = parsed.pathname || "";
 
         // očakávame iris://auth/callback?code=...
-        if (code && (url.includes("iris://auth/callback") || path.includes("/callback"))) {
+        if (
+          code &&
+          (url.includes("iris://auth/callback") || path.includes("/callback"))
+        ) {
           await supabase.auth.exchangeCodeForSession(code);
         }
       } catch {
@@ -71,9 +77,9 @@ export default function RootLayout() {
     const boot = async () => {
       const started = Date.now();
       try {
-        await fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`, { cache: "no-store" as any }).catch(
-          () => null
-        );
+        await fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`, {
+          cache: "no-store" as any,
+        }).catch(() => null);
       } finally {
         // krátky buffer proti flickeru
         const minMs = 350;
@@ -98,6 +104,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
+      {/* 🔔 MUST run inside AuthProvider so it can read accessToken */}
+      <PushBootstrap />
+
       <Gate />
       <StatusBar style="light" />
     </AuthProvider>
