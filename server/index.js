@@ -29,6 +29,9 @@ import {
   recallEpisodicMemory,
 } from './memory/recall.js';
 
+// ✅ NEW: robust multilingual intent judge for routing
+import { intentJudgeLLM } from './behavior/intentJudge.js';
+
 // 🔔 REMINDERS
 
 const app = express();
@@ -144,14 +147,59 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // LLM ROUTING
+    // LLM ROUTING (intent-based + engine lock)
     // ------------------------------
     const state = detectState(message);
-    const engine = state === 'heated' ? 'grok' : 'openai';
+
+    const intent = await intentJudgeLLM({
+      text: message,
+      sceneContext: sceneContext || {},
+    });
+
+    console.log('[INTENT]', {
+      physicality: intent.physicality,
+      intent: intent.intent,
+      safety_level: intent.safety_level,
+      body: intent.is_body_topic,
+      romance: intent.is_romance_topic,
+      erotic: intent.is_erotic_topic,
+      confidence: intent.confidence,
+    });
+
+    const prevEngine = sceneContext?.last_engine || null;
+    const prevLock = Number(sceneContext?.engine_lock_count || 0);
+
+    // Trigger Grok for body/romance/erotic (with confidence gates)
+    const triggersGrok =
+      intent.is_erotic_topic ||
+      intent.intent === 'erotic' ||
+      intent.physicality === 'explicit' ||
+      intent.safety_level === 'explicit' ||
+      (intent.physicality === 'intimate' && intent.confidence >= 0.55) ||
+      (intent.is_romance_topic && intent.confidence >= 0.65) ||
+      // keep your old "heated" as an extra safety net
+      state === 'heated';
+
+    let engine = 'openai';
+    let nextLock = 0;
+
+    if (triggersGrok) {
+      engine = 'grok';
+      nextLock = 3; // keep Grok for next 2–3 messages
+    } else if (prevEngine === 'grok' && prevLock > 0) {
+      engine = 'grok';
+      nextLock = prevLock - 1;
+    } else {
+      engine = 'openai';
+      nextLock = 0;
+    }
 
     console.log('[LLM_ROUTE]', {
       engine,
       state,
+      prevEngine,
+      prevLock,
+      nextLock,
       sceneKey,
     });
 
@@ -177,6 +225,7 @@ app.post('/chat', async (req, res) => {
 
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: engine,
+      engine_lock_count: nextLock,
       last_engine_reply: reply,
       interaction_mode: state,
     });

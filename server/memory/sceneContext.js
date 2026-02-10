@@ -23,6 +23,7 @@ const ALLOWED_PATCH_KEYS = new Set([
   'last_engine',
   'last_engine_reply',
   'bridge_buffer',
+  'engine_lock_count', // ✅ NEW: allow engine lock persistence
 ]);
 
 function sanitizePatch(patch) {
@@ -93,7 +94,11 @@ export async function getSceneContext(supabaseClient, sceneKey = 'global') {
   return resolveContext(row);
 }
 
-export async function patchSceneContext(supabaseClient, sceneKey = 'global', patch = {}) {
+export async function patchSceneContext(
+  supabaseClient,
+  sceneKey = 'global',
+  patch = {}
+) {
   const cleanPatch = sanitizePatch(patch);
   if (!Object.keys(cleanPatch).length) return false;
 
@@ -159,7 +164,8 @@ export function formatHardSceneContextBlock(sceneContext) {
   if (r.city) lines.push(`- city: ${r.city}`);
   if (sceneContext.place) lines.push(`- place: ${sceneContext.place}`);
   if (sceneContext.room) lines.push(`- room: ${sceneContext.room}`);
-  if (sceneContext.time_of_day) lines.push(`- time_of_day: ${sceneContext.time_of_day}`);
+  if (sceneContext.time_of_day)
+    lines.push(`- time_of_day: ${sceneContext.time_of_day}`);
 
   if (!lines.length) return '';
 
