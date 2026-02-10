@@ -74,6 +74,57 @@ async function requireUserId(req, res) {
 }
 
 // =======================================================
+// PUSH TOKEN REGISTER
+// =======================================================
+app.post('/push/register', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+
+    const expoPushToken = (req.body?.expo_push_token || '').toString().trim();
+    const platform = (req.body?.platform || '').toString().trim() || null;
+    const deviceId = (req.body?.device_id || '').toString().trim() || null;
+
+    console.log('[PUSH_REGISTER]', {
+      userId,
+      token_last6: expoPushToken ? expoPushToken.slice(-6) : null,
+      platform,
+      deviceId,
+    });
+
+    if (!expoPushToken) {
+      return res.status(400).json({ error: 'MISSING_TOKEN' });
+    }
+
+    // Upsert by user_id => updated_at sa MUSÍ meniť
+    const { data, error } = await req.supabase
+      .from('push_tokens')
+      .upsert(
+        {
+          user_id: userId,
+          expo_push_token: expoPushToken,
+          platform,
+          device_id: deviceId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' }
+      )
+      .select('id, user_id, updated_at')
+      .single();
+
+    if (error) {
+      console.error('[PUSH_REGISTER_FAIL]', error);
+      return res.status(500).json({ error: 'DB_FAIL' });
+    }
+
+    return res.json({ ok: true, row: data });
+  } catch (e) {
+    console.error('[PUSH_REGISTER_ERR]', e);
+    return res.status(500).json({ error: e?.message || 'SERVER_ERR' });
+  }
+});
+
+// =======================================================
 // CHAT
 // =======================================================
 app.post('/chat', async (req, res) => {
@@ -171,11 +222,10 @@ app.post('/chat', async (req, res) => {
     }
 
     // =======================================================
-    // 🔔 REMINDER PIPELINE (GLOBAL & SAFE)
+    // 🔔 REMINDER PIPELINE
     // =======================================================
     let reminderDraft = null;
 
-    // 1️⃣ LLM time intent (language-agnostic)
     if (looksLikeReminder(message)) {
       try {
         const client = getLLMClient('openai');
@@ -203,7 +253,6 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    // 2️⃣ Deterministic fallback (today / tomorrow / anchors)
     if (!reminderDraft) {
       reminderDraft = buildReminderFromText({
         text: message,
@@ -231,22 +280,14 @@ app.post('/chat', async (req, res) => {
         .select('id, due_at, status')
         .single();
 
-      if (error) {
-        console.error('[REMINDER_CREATE_FAIL]', error);
-      } else {
-        console.log('[REMINDER_CREATE_OK]', data);
-      }
+      if (error) console.error('[REMINDER_CREATE_FAIL]', error);
+      else console.log('[REMINDER_CREATE_OK]', data);
     }
 
     // ------------------------------
     // PROMPT BUILD
     // ------------------------------
-    const sceneFacts = await getSceneFacts(
-      req.supabase,
-      userId,
-      sceneKey,
-      'global'
-    );
+    await getSceneFacts(req.supabase, userId, sceneKey, 'global');
 
     let systemPrompt = [
       formatSceneContextBlock(sceneContext),

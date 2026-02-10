@@ -32,8 +32,9 @@ async function markFailed(reminder, send_error, send_details = null) {
   console.log('[REMINDER] failed', reminder.id, send_error);
 }
 
-async function markQueued(reminder, ticketIds, token) {
-  await supabase
+async function markQueuedAtomic(reminder, ticketIds, token) {
+  // Atomic: pending -> queued only once (prevents infinite re-queue loops)
+  const { error } = await supabase
     .from('reminders')
     .update({
       status: 'queued',
@@ -48,9 +49,16 @@ async function markQueued(reminder, ticketIds, token) {
         },
       },
     })
-    .eq('id', reminder.id);
+    .eq('id', reminder.id)
+    .eq('status', 'pending');
 
-  console.log('[REMINDER] queued', reminder.id, ticketIds?.length || 0);
+  if (error) {
+    await markFailed(reminder, 'QUEUE_UPDATE_FAIL', error);
+    return false;
+  }
+
+  console.log('[REMINDER] queued', reminder.id, ticketIds.length);
+  return true;
 }
 
 async function markSent(reminder) {
@@ -60,6 +68,24 @@ async function markSent(reminder) {
     .eq('id', reminder.id);
 
   console.log('[REMINDER] sent', reminder.id);
+}
+
+function extractTicketIds(send) {
+  // Accept multiple possible shapes to avoid false NO_TICKET_ID
+  const d = send?.details || send || {};
+
+  if (Array.isArray(d.ticketIds) && d.ticketIds.length) return d.ticketIds.filter(Boolean);
+  if (Array.isArray(d.ticket_ids) && d.ticket_ids.length) return d.ticket_ids.filter(Boolean);
+
+  const tickets = d.tickets || d.data || d.messages;
+  if (Array.isArray(tickets)) {
+    const ids = tickets.map((t) => t?.id).filter(Boolean);
+    if (ids.length) return ids;
+  }
+
+  if (typeof d.id === 'string' && d.id) return [d.id];
+
+  return [];
 }
 
 async function processQueuedReceipts() {
@@ -170,16 +196,14 @@ async function processDuePending() {
       continue;
     }
 
-    const ticketIds = Array.isArray(send?.details?.ticketIds)
-      ? send.details.ticketIds
-      : [];
+    const ticketIds = extractTicketIds(send);
 
     if (!ticketIds.length) {
-      await markFailed(r, 'NO_TICKET_ID', send?.details || null);
+      await markFailed(r, 'NO_TICKET_ID', send?.details || send || null);
       continue;
     }
 
-    await markQueued(r, ticketIds, token);
+    await markQueuedAtomic(r, ticketIds, token);
   }
 }
 
