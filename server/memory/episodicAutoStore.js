@@ -1,5 +1,6 @@
 // server/memory/episodicAutoStore.js
 import { randomUUID } from 'crypto';
+import { createEmbedding } from './embeddings.js';
 
 /**
  * Hybrid autonomous memory pipeline:
@@ -7,6 +8,7 @@ import { randomUUID } from 'crypto';
  * 1) LLM decides whether memory is worth storing
  * 2) If yes → deterministic DB insert (raw text)
  * 3) LLM enriches row (title, summary, tags, importance)
+ * 4) ✅ Generate embedding from SUMMARY and store it (required for recall)
  *
  * No language triggers.
  * No hardcoded phrases.
@@ -58,7 +60,7 @@ Rules:
     ],
   });
 
-  let judgeOutput = judgeResponse.output_text || '';
+  const judgeOutput = judgeResponse.output_text || '';
 
   let decision = null;
   try {
@@ -72,9 +74,7 @@ Rules:
     }
   }
 
-  if (!decision?.should_store) {
-    return; // nothing to store
-  }
+  if (!decision?.should_store) return;
 
   let importance = Number(decision.importance);
   if (!Number.isFinite(importance)) importance = 0.8;
@@ -110,12 +110,12 @@ Rules:
     importance,
   };
 
-  const { error } = await supabase
+  const { error: insertError } = await supabase
     .from('episodic_memory')
     .insert(insertPayload);
 
-  if (error) {
-    console.error('[AUTO_MEMORY_INSERT_ERROR]', error);
+  if (insertError) {
+    console.error('[AUTO_MEMORY_INSERT_ERROR]', insertError);
     return;
   }
 
@@ -150,7 +150,7 @@ Original text:
     input: [{ role: 'user', content: enrichPrompt }],
   });
 
-  let enrichOutput = enrichResponse.output_text || '';
+  const enrichOutput = enrichResponse.output_text || '';
   let enrichData = null;
 
   try {
@@ -167,8 +167,7 @@ Original text:
   if (!enrichData) return;
 
   const title = String(enrichData.title || '').slice(0, 80) || 'Memory';
-  const summary =
-    String(enrichData.summary || '').trim() || userText;
+  const summary = String(enrichData.summary || '').trim() || userText;
 
   const emotional_tags = Array.isArray(enrichData.emotional_tags)
     ? enrichData.emotional_tags
@@ -178,13 +177,21 @@ Original text:
     : [];
 
   let enrichedImportance = Number(enrichData.importance);
-  if (!Number.isFinite(enrichedImportance))
-    enrichedImportance = importance;
+  if (!Number.isFinite(enrichedImportance)) enrichedImportance = importance;
 
-  enrichedImportance = Math.max(
-    0.3,
-    Math.min(1.0, enrichedImportance)
-  );
+  enrichedImportance = Math.max(0.3, Math.min(1.0, enrichedImportance));
+
+  // --------------------------------------------------
+  // STEP 4 — ✅ Create embedding (required for recall)
+  // --------------------------------------------------
+  let embedding = null;
+  try {
+    // Use SUMMARY for embedding (more stable than raw)
+    embedding = await createEmbedding(summary);
+  } catch (e) {
+    console.error('[AUTO_MEMORY_EMBEDDING_ERROR]', e?.message || e);
+    // Continue without embedding; recall may not work for this row
+  }
 
   const { error: updateError } = await supabase
     .from('episodic_memory')
@@ -193,6 +200,7 @@ Original text:
       narrative: summary,
       emotional_tags,
       importance: enrichedImportance,
+      embedding, // ✅ critical
       memory_revision: 2,
       memory_note: JSON.stringify({
         stage: 'enriched',
@@ -204,6 +212,7 @@ Original text:
 
   if (updateError) {
     console.error('[AUTO_MEMORY_ENRICH_ERROR]', updateError);
+    return;
   }
 
   console.log('[AUTO_MEMORY_ENRICHED]', rowId);

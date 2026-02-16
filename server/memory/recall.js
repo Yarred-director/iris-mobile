@@ -8,10 +8,10 @@ function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}
   return topSim >= minSimilarity;
 }
 
-export async function recallEpisodicMemory(supabaseClient, text) {
+export async function recallEpisodicMemory(supabaseClient, text, userID) {
   const embedding = await createEmbedding(text);
 
-  const match_threshold = 0.25;
+  const match_threshold = 0.15;
   const match_count = 12;
 
   const { data, error } = await supabaseClient.rpc('match_episodic_memory_v2', {
@@ -20,20 +20,18 @@ export async function recallEpisodicMemory(supabaseClient, text) {
     match_count,
     w_similarity: 0.75,
     w_importance: 0.25,
+    p_user_id: userID,
   });
 
   if (error) {
-    return {
-      memories: [],
-      meta: {
-        confident: false,
-        topSimilarity: 0,
-        match_threshold,
-        match_count,
-        reason: `rpc_error:${error.message || 'unknown'}`,
-      },
-    };
-  }
+  return {
+    memories: [],
+    meta: {
+      confident: false,
+      reason: error.message || 'rpc_error',
+    },
+  };
+}
 
   const memories = data || [];
   const topSimilarity =

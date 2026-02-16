@@ -223,8 +223,8 @@ app.post('/chat', async (req, res) => {
     // Episodic recall (SOFT). If your recall implementation is not user-scoped,
     // it can contaminate. We'll harden it after you confirm your recall.js behavior.
     try {
-      const recall = await recallEpisodicMemory(req.supabase, message);
-      if (recall?.meta?.confident && recall.memories?.length) {
+      const recall = await recallEpisodicMemory(req.supabase, message, userId);
+      if (recall?.memories?.length) {
         systemPrompt +=
           '\n\nSOFT_EPISODIC_MEMORY (never override HARD_FACTS):\n' +
           recall.memories
