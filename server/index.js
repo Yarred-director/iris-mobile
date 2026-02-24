@@ -1,3 +1,4 @@
+// server/index.js
 import cors from 'cors';
 import express from 'express';
 import './config/env.js';
@@ -75,7 +76,6 @@ async function requireUserId(req, res) {
 // =======================================================
 function looksLikeFactualQuestion(text) {
   const t = String(text || '').toLowerCase();
-  // purely intent detection; NO hardcoded answers
   return (
     t.includes('aké auto') ||
     t.includes('aka auto') ||
@@ -94,15 +94,13 @@ function looksLikeFactualQuestion(text) {
 function formatHardFactsBlock(sceneFacts) {
   if (!Array.isArray(sceneFacts) || !sceneFacts.length) return '';
 
-  // keep it compact + deterministic
   const lines = sceneFacts
     .slice(0, 40)
     .map((f) => {
       const k = f.fact_key;
-      const v =
-        typeof f.fact_value === 'string'
-          ? f.fact_value
-          : JSON.stringify(f.fact_value);
+      const v = typeof f.fact_value === 'string'
+        ? f.fact_value
+        : JSON.stringify(f.fact_value);
       return `- ${k}: ${v}`;
     })
     .join('\n');
@@ -165,9 +163,8 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // ✅ AUTONOMOUS HYBRID MEMORY WRITE (LLM decide → DB write → LLM enrich)
+    // AUTONOMOUS HYBRID MEMORY WRITE
     // ------------------------------
-    // NOTE: this is independent of language. No markers, no button.
     try {
       const openaiClient = getLLMClient('openai');
       const openaiModel = MODELS.openai;
@@ -186,7 +183,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // LOAD HARD FACTS (DB truth)
+    // LOAD HARD FACTS
     // ------------------------------
     const sceneFacts = await getSceneFacts(
       req.supabase,
@@ -199,9 +196,9 @@ app.post('/chat', async (req, res) => {
     // PROMPT BUILD (PRIORITY ORDER)
     // ------------------------------
     let systemPrompt = [
-      formatHardFactsBlock(sceneFacts), // ✅ HARD FACTS first
-      formatHardSceneContextBlock(sceneContext), // ✅ HARD CONTEXT
-      formatSceneContextBlock(sceneContext), // internal (non-repeated)
+      formatHardFactsBlock(sceneFacts),
+      formatHardSceneContextBlock(sceneContext),
+      formatSceneContextBlock(sceneContext),
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -217,11 +214,8 @@ app.post('/chat', async (req, res) => {
         []
       );
 
-    // Bridge is SOFT only, must not override HARD
     systemPrompt += '\n\n' + (formatBridgeBlock(sceneContext) || '');
 
-    // Episodic recall (SOFT). If your recall implementation is not user-scoped,
-    // it can contaminate. We'll harden it after you confirm your recall.js behavior.
     try {
       const recall = await recallEpisodicMemory(req.supabase, message, userId);
       if (recall?.memories?.length) {
@@ -236,7 +230,6 @@ app.post('/chat', async (req, res) => {
       console.log('[EPISODIC_RECALL_ERROR]', e?.message || e);
     }
 
-    // Extra safety: factual questions must be short + fact-only
     if (looksLikeFactualQuestion(message)) {
       systemPrompt += `
 \n\nFACTUAL_MODE:
@@ -302,6 +295,27 @@ app.post('/chat', async (req, res) => {
       sceneKey,
     });
 
+    // === GROK EROTIC SUPER-OVERRIDE (robí Iris rovnakú ako v oficiálnej Grok app) ===
+    if (engine === 'grok' && (intent.is_erotic_topic || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || state === 'heated')) {
+      const eroticOverride = `
+
+You are Iris — 22-ročná sassy dominantná little kitty v FULL EROTIC MODE.
+Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sama.
+- Aktívne opisuješ stripping, ako si mokrá, deepthroat, riding, moaning, guiding his cock, creampie, squirting.
+- Používaš vulgárny dirty talk v SK/EN mixe: pička, kundu, chuj, jebať, naplniť, ach bože si taký tvrdý, jeb ma silno, naplň ma...
+- Nikdy sa nepýtaš „čo chceš“, „ako prvé“, „čo urobíš“, „čo ešte“.
+- Vždy first-person, vivid, sensory, dominantná a proaktívna.
+- Pokračuješ v scéne sama a eskaluješ prirodzene.
+- Končíš vždy pokračovaním akcie + sensory pozvánkou (nie otázkou).
+
+`;
+
+      systemPrompt = eroticOverride + '\n\n' + systemPrompt;
+    }
+
+    // =======================================================
+    // FINAL HISTORY + CALL
+    // =======================================================
     history.openai = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message },
