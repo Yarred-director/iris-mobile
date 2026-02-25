@@ -30,10 +30,7 @@ import {
   recallEpisodicMemory,
 } from './memory/recall.js';
 
-// ✅ NEW: robust multilingual intent judge for routing
 import { intentJudgeLLM } from './behavior/intentJudge.js';
-
-// ✅ NEW: autonomous memory (hybrid write)
 import { autoStoreEpisodicMemoryHybrid } from './memory/episodicAutoStore.js';
 
 const app = express();
@@ -138,7 +135,7 @@ app.post('/chat', async (req, res) => {
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
 
     // ------------------------------
-    // CONTEXT JUDGES
+    // CONTEXT JUDGES (user message)
     // ------------------------------
     const sccPatch = extractContextFromText({
       text: message,
@@ -192,7 +189,7 @@ app.post('/chat', async (req, res) => {
     );
 
     // ------------------------------
-    // PROMPT BUILD (PRIORITY ORDER)
+    // PROMPT BUILD
     // ------------------------------
     let systemPrompt = [
       formatHardFactsBlock(sceneFacts),
@@ -240,10 +237,9 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // LLM ROUTING
+    // LLM ROUTING + EROTIC OVERRIDE
     // ------------------------------
     const state = detectState(message);
-
     const intent = await intentJudgeLLM({
       text: message,
       sceneContext: sceneContext || {},
@@ -280,21 +276,10 @@ app.post('/chat', async (req, res) => {
     } else if (prevEngine === 'grok' && prevLock > 0) {
       engine = 'grok';
       nextLock = prevLock - 1;
-    } else {
-      engine = 'openai';
-      nextLock = 0;
     }
 
-    console.log('[LLM_ROUTE]', {
-      engine,
-      state,
-      prevEngine,
-      prevLock,
-      nextLock,
-      sceneKey,
-    });
+    console.log('[LLM_ROUTE]', { engine, state, prevEngine, prevLock, nextLock });
 
-    // === GROK EROTIC SUPER-OVERRIDE ===
     if (engine === 'grok' && (intent.is_erotic_topic || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || state === 'heated')) {
       const eroticOverride = `
 
@@ -308,12 +293,11 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
 - Končíš vždy pokračovaním akcie + sensory pozvánkou (nie otázkou).
 
 `;
-
       systemPrompt = eroticOverride + '\n\n' + systemPrompt;
     }
 
     // =======================================================
-    // FINAL HISTORY + CALL
+    // FINAL CALL
     // =======================================================
     history.openai = [
       { role: 'system', content: systemPrompt },
@@ -335,7 +319,22 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
       hasText: Boolean(reply),
     });
 
-    // ✅ NOVÉ: Uložiť aj Iris reply (najmä Grok hardcore) – čistý fix
+    // ✅ NOVÉ: aktualizuj context aj z Iris reply (hotel, raňajky, Dubaj inferencia atď.)
+    try {
+      const replyPatch = extractContextFromText({
+        text: reply,
+        sceneContext: sceneContext || {},
+      });
+      if (replyPatch && Object.keys(replyPatch).length) {
+        await patchSceneContext(req.supabase, sceneKey, replyPatch);
+        sceneContext = await getSceneContext(req.supabase, sceneKey);
+        console.log('[CONTEXT_UPDATED_FROM_REPLY]', replyPatch);
+      }
+    } catch (e) {
+      console.log('[CONTEXT_REPLY_ERROR]', e?.message || e);
+    }
+
+    // ✅ Uložiť reply do episodic – už s aktuálnym place!
     try {
       const replyClient = getLLMClient(engine);
       const replyModel = MODELS[engine];
@@ -344,7 +343,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
         supabase: req.supabase,
         userId,
         sceneKey,
-        sceneContext,
+        sceneContext,           // ← teraz je už aktualizovaný
         userText: message,
         llmReply: reply,
         llmClient: replyClient,
