@@ -1,4 +1,3 @@
-// server/index.js
 import cors from 'cors';
 import express from 'express';
 import './config/env.js';
@@ -163,7 +162,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // AUTONOMOUS HYBRID MEMORY WRITE
+    // AUTONOMOUS HYBRID MEMORY WRITE (user message)
     // ------------------------------
     try {
       const openaiClient = getLLMClient('openai');
@@ -295,7 +294,7 @@ app.post('/chat', async (req, res) => {
       sceneKey,
     });
 
-    // === GROK EROTIC SUPER-OVERRIDE (robí Iris rovnakú ako v oficiálnej Grok app) ===
+    // === GROK EROTIC SUPER-OVERRIDE ===
     if (engine === 'grok' && (intent.is_erotic_topic || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || state === 'heated')) {
       const eroticOverride = `
 
@@ -335,6 +334,25 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
       engine,
       hasText: Boolean(reply),
     });
+
+    // ✅ NOVÉ: Uložiť aj Iris reply (najmä Grok hardcore) – čistý fix
+    try {
+      const replyClient = getLLMClient(engine);
+      const replyModel = MODELS[engine];
+
+      await autoStoreEpisodicMemoryHybrid({
+        supabase: req.supabase,
+        userId,
+        sceneKey,
+        sceneContext,
+        userText: message,
+        llmReply: reply,
+        llmClient: replyClient,
+        model: replyModel,
+      });
+    } catch (e) {
+      console.log('[AUTO_MEMORY_REPLY_ERROR]', e?.message || e);
+    }
 
     await patchSceneContext(req.supabase, sceneKey, {
       last_engine: engine,

@@ -1,4 +1,3 @@
-// server/memory/episodicAutoStore.js
 import { randomUUID } from 'crypto';
 import { createEmbedding } from './embeddings.js';
 
@@ -13,6 +12,8 @@ import { createEmbedding } from './embeddings.js';
  * No language triggers.
  * No hardcoded phrases.
  * Fully model-driven decision.
+ * 
+ * UPDATED 25.2.2026: podporuje llmReply (Grok hardcore scény) + bypass OpenAI filter
  */
 
 export async function autoStoreEpisodicMemoryHybrid({
@@ -21,16 +22,21 @@ export async function autoStoreEpisodicMemoryHybrid({
   sceneKey = 'global',
   sceneContext,
   userText,
+  llmReply = null,           // ← NOVÉ: Grok / OpenAI reply
   llmClient,
   model,
 }) {
-  if (!userText || !userText.trim()) return;
+  const textToStore = llmReply || userText;
+  if (!textToStore || !textToStore.trim()) return;
 
   // --------------------------------------------------
   // STEP 1 — LLM decides if this message is memory-worthy
   // --------------------------------------------------
+  let decision = { should_store: true, reason: 'IRIS reply - always store', importance: 0.9 };
 
-  const judgePrompt = `
+  if (!llmReply) {
+    // pôvodný judge len pre user messages
+    const judgePrompt = `
 You are a memory decision system for a long-term AI.
 
 Decide whether the user's message contains a meaningful event,
@@ -51,33 +57,33 @@ Rules:
 - Be selective but not overly strict.
 `.trim();
 
-  const judgeResponse = await llmClient.responses.create({
-    model,
-    temperature: 0.2,
-    input: [
-      { role: 'system', content: judgePrompt },
-      { role: 'user', content: userText },
-    ],
-  });
+    const judgeResponse = await llmClient.responses.create({
+      model,
+      temperature: 0.2,
+      input: [
+        { role: 'system', content: judgePrompt },
+        { role: 'user', content: textToStore },
+      ],
+    });
 
-  const judgeOutput = judgeResponse.output_text || '';
+    const judgeOutput = judgeResponse.output_text || '';
 
-  let decision = null;
-  try {
-    decision = JSON.parse(judgeOutput);
-  } catch {
-    const match = judgeOutput.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        decision = JSON.parse(match[0]);
-      } catch {}
+    try {
+      decision = JSON.parse(judgeOutput);
+    } catch {
+      const match = judgeOutput.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          decision = JSON.parse(match[0]);
+        } catch {}
+      }
     }
   }
 
   if (!decision?.should_store) return;
 
   let importance = Number(decision.importance);
-  if (!Number.isFinite(importance)) importance = 0.8;
+  if (!Number.isFinite(importance)) importance = 0.85;
   importance = Math.max(0.3, Math.min(1.0, importance));
 
   // --------------------------------------------------
@@ -97,14 +103,15 @@ Rules:
     user_id: userId,
     scene_key: sceneKey,
     title: 'Pending memory',
-    narrative: userText,
-    people: ['user'],
+    narrative: textToStore,
+    people: ['Iris', 'user'],
     location,
     emotional_tags: [],
     memory_type: 'episodic',
     memory_revision: 1,
     memory_note: JSON.stringify({
       stage: 'raw',
+      is_llm_reply: !!llmReply,
       judge_reason: decision.reason || null,
     }),
     importance,
@@ -119,7 +126,7 @@ Rules:
     return;
   }
 
-  console.log('[AUTO_MEMORY_STORED]', rowId);
+  console.log('[AUTO_MEMORY_STORED]', rowId, llmReply ? '(GROK REPLY)' : '(USER)');
 
   // --------------------------------------------------
   // STEP 3 — LLM enrichment (non-blocking intelligence)
@@ -141,7 +148,7 @@ Return STRICT JSON:
 }
 
 Original text:
-"""${userText}"""
+"""${textToStore}"""
 `.trim();
 
   const enrichResponse = await llmClient.responses.create({
@@ -167,7 +174,7 @@ Original text:
   if (!enrichData) return;
 
   const title = String(enrichData.title || '').slice(0, 80) || 'Memory';
-  const summary = String(enrichData.summary || '').trim() || userText;
+  const summary = String(enrichData.summary || '').trim() || textToStore;
 
   const emotional_tags = Array.isArray(enrichData.emotional_tags)
     ? enrichData.emotional_tags
@@ -186,11 +193,9 @@ Original text:
   // --------------------------------------------------
   let embedding = null;
   try {
-    // Use SUMMARY for embedding (more stable than raw)
     embedding = await createEmbedding(summary);
   } catch (e) {
     console.error('[AUTO_MEMORY_EMBEDDING_ERROR]', e?.message || e);
-    // Continue without embedding; recall may not work for this row
   }
 
   const { error: updateError } = await supabase
@@ -200,11 +205,12 @@ Original text:
       narrative: summary,
       emotional_tags,
       importance: enrichedImportance,
-      embedding, // ✅ critical
+      embedding,
       memory_revision: 2,
       memory_note: JSON.stringify({
         stage: 'enriched',
-        original: userText,
+        original: textToStore,
+        is_llm_reply: !!llmReply,
       }),
       updated_at: new Date().toISOString(),
     })
@@ -215,5 +221,5 @@ Original text:
     return;
   }
 
-  console.log('[AUTO_MEMORY_ENRICHED]', rowId);
+  console.log('[AUTO_MEMORY_ENRICHED]', rowId, llmReply ? '(GROK REPLY)' : '(USER)');
 }
