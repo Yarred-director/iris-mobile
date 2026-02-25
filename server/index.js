@@ -137,7 +137,7 @@ app.post('/chat', async (req, res) => {
     // ------------------------------
     // CONTEXT JUDGES (user message)
     // ------------------------------
-    const sccPatch = extractContextFromText({
+    const sccPatch = await extractContextFromText({
       text: message,
       sceneContext: sceneContext || {},
     });
@@ -321,7 +321,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
 
     // ✅ NOVÉ: aktualizuj context aj z Iris reply (hotel, raňajky, Dubaj inferencia atď.)
     try {
-      const replyPatch = extractContextFromText({
+      const replyPatch = await extractContextFromText({
         text: reply,
         sceneContext: sceneContext || {},
       });
