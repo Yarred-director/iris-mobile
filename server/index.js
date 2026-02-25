@@ -143,8 +143,14 @@ app.post('/chat', async (req, res) => {
     });
 
     if (sccPatch && Object.keys(sccPatch).length) {
+      // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú (bedroom, cabin atď.)
+      if (!('room' in sccPatch)) {
+        sccPatch.room = null;
+        console.log('[AUTO_NULL_ROOM_USER] - LLM nespomenul room, nulujem starú hodnotu');
+      }
       await patchSceneContext(req.supabase, sceneKey, sccPatch);
       sceneContext = await getSceneContext(req.supabase, sceneKey);
+      console.log('[CONTEXT_UPDATED_FROM_USER]', sccPatch);
     }
 
     const subjectResult = applySubjectLock(message, sceneContext || {});
@@ -319,13 +325,19 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
       hasText: Boolean(reply),
     });
 
-    // ✅ NOVÉ: aktualizuj context aj z Iris reply (hotel, raňajky, Dubaj inferencia atď.)
+    // ✅ NOVÉ: aktualizuj context aj z Iris reply
     try {
       const replyPatch = await extractContextFromText({
         text: reply,
         sceneContext: sceneContext || {},
       });
+
       if (replyPatch && Object.keys(replyPatch).length) {
+        // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú
+        if (!('room' in replyPatch)) {
+          replyPatch.room = null;
+          console.log('[AUTO_NULL_ROOM_REPLY] - LLM nespomenul room, nulujem starú hodnotu');
+        }
         await patchSceneContext(req.supabase, sceneKey, replyPatch);
         sceneContext = await getSceneContext(req.supabase, sceneKey);
         console.log('[CONTEXT_UPDATED_FROM_REPLY]', replyPatch);
