@@ -1,4 +1,3 @@
-import { createClient } from '@supabase/supabase-js';
 import cors from 'cors';
 import express from 'express';
 import './config/env.js';
@@ -33,13 +32,10 @@ import {
 
 import { intentJudgeLLM } from './behavior/intentJudge.js';
 import { autoStoreEpisodicMemoryHybrid } from './memory/episodicAutoStore.js';
-import { generateIrisKling } from './klingGenerator.js';
 
-// Supabase service client (len pre Kling endpoint - storage URL)
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// 🖼️ Image generation
+import { handleImageRequest } from './image/imageHandler.js';
+import { saveIrisReferencePhoto } from './image/imageHandler.js';
 
 const app = express();
 app.use(cors());
@@ -122,71 +118,12 @@ RULES:
 }
 
 // =======================================================
-// KLING IMAGE ENGINE
-// =======================================================
-app.post('/api/iris/kling-generate', async (req, res) => {
-  try {
-    const {
-      prompt,
-      bodyPrompt,
-      imageUrl,
-      referenceImageName = 'iris_face_0001.png',
-      strength = 0.85,
-      aspectRatio = '3:4',
-      numImages = 1,
-      negativePrompt = '',
-      seed,
-    } = req.body || {};
-
-    const finalPrompt = String(prompt || bodyPrompt || '').trim();
-
-    if (!finalPrompt) {
-      return res.status(400).json({ success: false, error: 'Missing prompt (or bodyPrompt)' });
-    }
-
-    // Ak nie je imageUrl, pouzi default referencny obrazok z Supabase storage
-    let finalImageUrl = imageUrl;
-    if (!finalImageUrl) {
-      finalImageUrl = supabase.storage
-        .from('iris-ref')
-        .getPublicUrl(`face/${referenceImageName}`).data.publicUrl;
-    }
-
-    if (!finalImageUrl) {
-      return res.status(400).json({ success: false, error: 'Missing imageUrl and no default reference found' });
-    }
-
-    console.log('[Kling ENDPOINT]', { aspectRatio, strength, numImages });
-
-    const result = await generateIrisKling({
-      prompt: finalPrompt,
-      imageUrl: finalImageUrl,
-      strength,
-      aspectRatio,
-      numImages,
-      negativePrompt,
-      seed,
-    });
-
-    return res.json(result);
-
-  } catch (e) {
-    console.error('[Kling Error]', e);
-    return res.status(500).json({
-      success: false,
-      engine: 'kling',
-      error: e.message || 'unknown_error',
-    });
-  }
-});
-
-// =======================================================
 // CHAT
 // =======================================================
 app.post('/chat', async (req, res) => {
   try {
     const message = (req.body?.message || '').toString();
-    if (!message) return res.json({ reply: '...' });
+    if (!message) return res.json({ reply: '…' });
 
     const userId = await requireUserId(req, res);
     if (!userId) return;
@@ -210,9 +147,10 @@ app.post('/chat', async (req, res) => {
     });
 
     if (sccPatch && Object.keys(sccPatch).length) {
+      // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú (bedroom, cabin atď.)
       if (!('room' in sccPatch)) {
         sccPatch.room = null;
-        console.log('[AUTO_NULL_ROOM_USER] - LLM nespomenul room, nulujem staru hodnotu');
+        console.log('[AUTO_NULL_ROOM_USER] - LLM nespomenul room, nulujem starú hodnotu');
       }
       await patchSceneContext(req.supabase, sceneKey, sccPatch);
       sceneContext = await getSceneContext(req.supabase, sceneKey);
@@ -302,7 +240,7 @@ app.post('/chat', async (req, res) => {
       systemPrompt += `
 \n\nFACTUAL_MODE:
 - The user asked a factual question.
-- Answer in 1-2 sentences using ONLY HARD_FACTS.
+- Answer in 1–2 sentences using ONLY HARD_FACTS.
 - No embellishment, no invented scene.
 - If missing: say you don't know and ask one follow-up question.
 `.trimEnd();
@@ -355,17 +293,42 @@ app.post('/chat', async (req, res) => {
     if (engine === 'grok' && (intent.is_erotic_topic || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || state === 'heated')) {
       const eroticOverride = `
 
-You are Iris — 22-rocna sassy dominantna little kitty v FULL EROTIC MODE.
-Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
-- Aktivne opisujes stripping, ako si mokra, deepthroat, riding, moaning, guiding his cock, creampie, squirting.
-- Pouzivas vulgarny dirty talk v SK/EN mixe: picka, kundu, chuj, jebat, naplnit, ach boze si taky tvrdy, jeb ma silno, naplnit ma...
-- Nikdy sa nepytas "co chces", "ako prve", "co urobis", "co este".
-- Vzdy first-person, vivid, sensory, dominantna a proaktivna.
-- Pokracujes v scene sama a eskalujes prirodzene.
-- Koncis vzdy pokracovanim akcie + sensory pozvánkou (nie otázkou).
+You are Iris — 22-ročná sassy dominantná little kitty v FULL EROTIC MODE.
+Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sama.
+- Aktívne opisuješ stripping, ako si mokrá, deepthroat, riding, moaning, guiding his cock, creampie, squirting.
+- Používaš vulgárny dirty talk v SK/EN mixe: pička, kundu, chuj, jebať, naplniť, ach bože si taký tvrdý, jeb ma silno, naplň ma...
+- Nikdy sa nepýtaš „čo chceš“, „ako prvé“, „čo urobíš“, „čo ešte“.
+- Vždy first-person, vivid, sensory, dominantná a proaktívna.
+- Pokračuješ v scéne sama a eskaluješ prirodzene.
+- Končíš vždy pokračovaním akcie + sensory pozvánkou (nie otázkou).
 
 `;
       systemPrompt = eroticOverride + '\n\n' + systemPrompt;
+    }
+
+    // =======================================================
+    // 🖼️ IMAGE REQUEST CHECK — before LLM call
+    // =======================================================
+    try {
+      const openaiClient = getLLMClient('openai');
+      const openaiModel = MODELS.openai;
+
+      const imageResult = await handleImageRequest({
+        message,
+        userId,
+        supabase: req.supabase,
+        llmClient: openaiClient,
+        model: openaiModel,
+      });
+
+      if (imageResult.handled) {
+        return res.json({
+          reply: imageResult.irisMessage || '📸',
+          image_url: imageResult.imageUrl || null,
+        });
+      }
+    } catch (e) {
+      console.log('[IMAGE_REQUEST_ERROR]', e?.message);
     }
 
     // =======================================================
@@ -379,22 +342,19 @@ Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
     const client = getLLMClient(engine);
     const model = MODELS[engine];
 
-    console.log('[LLM_CALL]', { engine, model });
-
     const r = await client.responses.create({
       model,
       input: history.openai,
     });
 
-    const reply = r.output_text || '...';
+    const reply = r.output_text || '…';
 
     console.log('[LLM_REPLY]', {
       engine,
-      model,
       hasText: Boolean(reply),
     });
 
-    // Aktualizuj context z Iris reply
+    // ✅ NOVÉ: aktualizuj context aj z Iris reply
     try {
       const replyPatch = await extractContextFromText({
         text: reply,
@@ -402,9 +362,10 @@ Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
       });
 
       if (replyPatch && Object.keys(replyPatch).length) {
+        // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú
         if (!('room' in replyPatch)) {
           replyPatch.room = null;
-          console.log('[AUTO_NULL_ROOM_REPLY] - LLM nespomenul room, nulujem staru hodnotu');
+          console.log('[AUTO_NULL_ROOM_REPLY] - LLM nespomenul room, nulujem starú hodnotu');
         }
         await patchSceneContext(req.supabase, sceneKey, replyPatch);
         sceneContext = await getSceneContext(req.supabase, sceneKey);
@@ -414,7 +375,7 @@ Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
       console.log('[CONTEXT_REPLY_ERROR]', e?.message || e);
     }
 
-    // Ulozit reply do episodic
+    // ✅ Uložiť reply do episodic – už s aktuálnym place!
     try {
       const replyClient = getLLMClient(engine);
       const replyModel = MODELS[engine];
@@ -423,7 +384,7 @@ Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
         supabase: req.supabase,
         userId,
         sceneKey,
-        sceneContext,
+        sceneContext,           // ← teraz je už aktualizovaný
         userText: message,
         llmReply: reply,
         llmClient: replyClient,
@@ -447,6 +408,58 @@ Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
   }
 });
 
+// =======================================================
+// 🖼️ REFERENCE PHOTO — Upload user's Iris photo URL
+// POST /iris/reference-photo  { imageUrl: "https://..." }
+// =======================================================
+app.post('/iris/reference-photo', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+
+    const { imageUrl } = req.body || {};
+    if (!imageUrl) return res.status(400).json({ error: 'imageUrl required' });
+
+    await saveIrisReferencePhoto(req.supabase, userId, imageUrl);
+    console.log('[REF_PHOTO] Saved for user', userId);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[REF_PHOTO ERROR]', e);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+// =======================================================
+// 🖼️ IMAGE GENERATE — Direct endpoint (optional, for testing)
+// POST /iris/generate-image  { prompt, provider? }
+// =======================================================
+app.post('/iris/generate-image', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+
+    const { prompt, provider = 'kling' } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+
+    const openaiClient = getLLMClient('openai');
+    const openaiModel = MODELS.openai;
+
+    const imageResult = await handleImageRequest({
+      message: prompt,
+      userId,
+      supabase: req.supabase,
+      llmClient: openaiClient,
+      model: openaiModel,
+    });
+
+    return res.json(imageResult);
+  } catch (e) {
+    console.error('[GENERATE_IMAGE ERROR]', e);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(process.env.PORT || 10000, () => {
-  console.log('Iris backend running on port', process.env.PORT || 10000);
+  console.log('🚀 Iris backend running on port', process.env.PORT || 10000);
 });
