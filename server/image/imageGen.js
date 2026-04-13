@@ -5,7 +5,7 @@
 //   'xai'    → fal-ai/grok-imagine-image/edit          (nudity-friendly)
 
 const FAL_API_URL_KLING = 'https://fal.run/fal-ai/kling-image/v3/image-to-image';
-const FAL_API_URL_XAI   = 'https://fal.run/fal-ai/grok-imagine-image/edit';
+const FAL_API_URL_XAI   = 'https://fal.run/xai/grok-imagine-image/edit';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
