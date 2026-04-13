@@ -1,11 +1,11 @@
 // server/image/imageGen.js
 // Iris image generation — fal.ai providers
 // Providers:
-//   'kling'  → kling-image/v3/image-to-image   (safe/artistic)
-//   'xai'    → xai/grok-imagine-image/edit      (nudity-friendly)
+//   'kling'  → fal-ai/kling-image/v3/image-to-image   (safe/artistic)
+//   'xai'    → fal-ai/grok-imagine-image/edit          (nudity-friendly)
 
-const FAL_API_URL_KLING = 'https://fal.run/kling-image/v3/image-to-image';
-const FAL_API_URL_XAI   = 'https://fal.run/xai/grok-imagine-image/edit';
+const FAL_API_URL_KLING = 'https://fal.run/fal-ai/kling-image/v3/image-to-image';
+const FAL_API_URL_XAI   = 'https://fal.run/fal-ai/grok-imagine-image/edit';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
