@@ -2,34 +2,6 @@
 // Detects if user wants Iris to generate an image of herself
 // Returns null (no image intent) or { prompt, provider }
 
-// ─────────────────────────────────────────────────────────────────
-// Keyword-based fast check (cheap, no LLM call)
-// ─────────────────────────────────────────────────────────────────
-const IMAGE_TRIGGERS_SK = [
-  'vytvor fotku', 'urob fotku', 'pošli fotku', 'ukáž mi fotku',
-  'vygeneruj fotku', 'vygeneruj foto', 'urob foto', 'pošli foto',
-  'pošli obrázok', 'vytvor obrázok', 'urob obrázok',
-  'selfie', 'foť sa', 'nafot sa',
-];
-
-const IMAGE_TRIGGERS_EN = [
-  'create a photo', 'send me a photo', 'show me a photo',
-  'generate a photo', 'generate an image', 'take a selfie',
-  'create an image of you', 'make a photo', 'make an image',
-  'send a pic', 'send me a pic', 'show me a pic',
-];
-
-const ALL_TRIGGERS = [...IMAGE_TRIGGERS_SK, ...IMAGE_TRIGGERS_EN];
-
-export function looksLikeImageRequest(text) {
-  const t = (text || '').toLowerCase();
-  return ALL_TRIGGERS.some(trigger => t.includes(trigger));
-}
-
-// ─────────────────────────────────────────────────────────────────
-// LLM-based intent + prompt extraction
-// Uses OpenAI (cheap, small model) to extract what Iris should do
-// ─────────────────────────────────────────────────────────────────
 const SYSTEM_EXTRACT = `You are a parser. The user is talking to an AI companion called Iris.
 Determine if the user wants Iris to generate/send a photo of HERSELF doing something.
 
@@ -63,7 +35,6 @@ export async function extractImageIntent({ text, llmClient, model }) {
     return {
       prompt: parsed.irisAction,
       explicit: !!parsed.explicit,
-      // explicit content → xAI, safe → kling
       provider: parsed.explicit ? 'xai' : 'kling',
     };
   } catch (e) {
@@ -74,7 +45,6 @@ export async function extractImageIntent({ text, llmClient, model }) {
 
 // ─────────────────────────────────────────────────────────────────
 // Autonomous occasion triggers (Iris initiates a photo herself)
-// Called e.g. from reminderWorker or special moments
 // ─────────────────────────────────────────────────────────────────
 const AUTONOMOUS_OCCASIONS = [
   { key: 'good_morning', promptTemplate: 'Iris waking up in the morning, looking sleepy and cozy in bed, natural light' },
