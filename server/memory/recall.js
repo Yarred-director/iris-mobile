@@ -1,7 +1,6 @@
 // server/memory/recall.js
 import { createEmbedding } from './embeddings.js';
 
-// ───────────────────────────────────────────────────────────
 function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}) {
   if (!Array.isArray(memories) || memories.length < minCount) return false;
   const top = memories[0];
@@ -52,7 +51,6 @@ export async function recallEpisodicMemory(supabaseClient, text, userID) {
   };
 }
 
-// ───────────────────────────────────────────────────────────
 export async function recallSharedExperiences(supabaseClient, text, userID) {
   try {
     const embedding = await createEmbedding(text);
@@ -76,7 +74,6 @@ export async function recallSharedExperiences(supabaseClient, text, userID) {
   }
 }
 
-// ───────────────────────────────────────────────────────────
 export async function loadUserProfile(supabaseClient, userID) {
   try {
     const { data, error } = await supabaseClient
@@ -97,7 +94,6 @@ export async function loadUserProfile(supabaseClient, userID) {
   }
 }
 
-// ───────────────────────────────────────────────────────────
 export async function loadCoreOrigin(supabaseClient) {
   const { data, error } = await supabaseClient
     .from('episodic_memory')
@@ -121,7 +117,6 @@ export async function loadSummaries(supabaseClient) {
   return data || [];
 }
 
-// ───────────────────────────────────────────────────────────
 export function formatUserProfileBlock(profileFacts) {
   if (!profileFacts || profileFacts.length === 0) return '';
 
