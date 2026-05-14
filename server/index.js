@@ -28,12 +28,17 @@ import {
   loadCoreOrigin,
   loadSummaries,
   recallEpisodicMemory,
+  recallSharedExperiences,
+  loadUserProfile,
+  formatUserProfileBlock,
+  formatSharedExperiencesBlock,
+  formatEpisodicMemoryBlock,
 } from './memory/recall.js';
 
 import { intentJudgeLLM } from './behavior/intentJudge.js';
 import { autoStoreEpisodicMemoryHybrid } from './memory/episodicAutoStore.js';
 
-// 🖼️ Image generation
+// Image generation
 import { handleImageRequest } from './image/imageHandler.js';
 import { saveIrisReferencePhoto } from './image/imageHandler.js';
 
@@ -74,21 +79,27 @@ async function requireUserId(req, res) {
 // =======================================================
 // HELPERS
 // =======================================================
-function looksLikeFactualQuestion(text) {
-  const t = String(text || '').toLowerCase();
-  return (
-    t.includes('aké auto') ||
-    t.includes('aka auto') ||
-    t.includes('which car') ||
-    t.includes('what car') ||
-    t.includes('kde sme') ||
-    t.includes('where are we') ||
-    t.includes('koľko') ||
-    t.includes('kolko') ||
-    t.includes('how much') ||
-    t.includes('kedy') ||
-    t.includes('when')
-  );
+
+// LLM-based factual question detection — no hardcoded keywords
+async function looksLikeFactualQuestion(text, llmClient, model) {
+  try {
+    const resp = await llmClient.chat.completions.create({
+      model,
+      max_tokens: 50,
+      temperature: 0,
+      messages: [
+        {
+          role: 'user',
+          content: 'Is this message a factual question that requires a specific accurate answer (location, quantity, time, object details)? Answer only {"factual": true} or {"factual": false}.\n\nMessage: "' + text + '"',
+        },
+      ],
+    });
+    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+    const parsed = JSON.parse(raw.replace(/`json|`/g, '').trim());
+    return !!parsed.factual;
+  } catch (e) {
+    return false;
+  }
 }
 
 function formatHardFactsBlock(sceneFacts) {
@@ -101,20 +112,11 @@ function formatHardFactsBlock(sceneFacts) {
       const v = typeof f.fact_value === 'string'
         ? f.fact_value
         : JSON.stringify(f.fact_value);
-      return `- ${k}: ${v}`;
+      return '- ' + k + ': ' + v;
     })
     .join('\n');
 
-  return `
-HARD_FACTS:
-${lines}
-
-RULES:
-- HARD_FACTS are the single source of truth for factual questions.
-- Never contradict HARD_FACTS.
-- If a user asks a factual question and the answer is not in HARD_FACTS, say you don't know and ask a short follow-up.
-- Do not invent details (models, colors, events) that are not present in HARD_FACTS.
-`.trimEnd();
+  return 'HARD_FACTS:\n' + lines + '\n\nRULES:\n- HARD_FACTS are the single source of truth for factual questions.\n- Never contradict HARD_FACTS.\n- If a user asks a factual question and the answer is not in HARD_FACTS, say you don\'t know and ask a short follow-up.\n- Do not invent details (models, colors, events) that are not present in HARD_FACTS.';
 }
 
 // =======================================================
@@ -147,10 +149,9 @@ app.post('/chat', async (req, res) => {
     });
 
     if (sccPatch && Object.keys(sccPatch).length) {
-      // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú (bedroom, cabin atď.)
       if (!('room' in sccPatch)) {
         sccPatch.room = null;
-        console.log('[AUTO_NULL_ROOM_USER] - LLM nespomenul room, nulujem starú hodnotu');
+        console.log('[AUTO_NULL_ROOM_USER] - LLM nespomenul room, nulujem staru hodnotu');
       }
       await patchSceneContext(req.supabase, sceneKey, sccPatch);
       sceneContext = await getSceneContext(req.supabase, sceneKey);
@@ -189,62 +190,66 @@ app.post('/chat', async (req, res) => {
     }
 
     // ------------------------------
-    // LOAD HARD FACTS
+    // LOAD ALL MEMORY IN PARALLEL
     // ------------------------------
-    const sceneFacts = await getSceneFacts(
-      req.supabase,
-      userId,
-      sceneKey,
-      'global'
-    );
+    const openaiClient = getLLMClient('openai');
+    const openaiModel = MODELS.openai;
+
+    const [
+      sceneFacts,
+      coreOrigin,
+      summaries,
+      userProfile,
+      sharedExperiences,
+      episodicRecall,
+      isFactual,
+    ] = await Promise.allSettled([
+      getSceneFacts(req.supabase, userId, sceneKey, 'global'),
+      loadCoreOrigin(req.supabase),
+      loadSummaries(req.supabase),
+      loadUserProfile(req.supabase, userId),
+      recallSharedExperiences(req.supabase, message, userId),
+      recallEpisodicMemory(req.supabase, message, userId),
+      looksLikeFactualQuestion(message, openaiClient, openaiModel),
+    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
     // ------------------------------
     // PROMPT BUILD
     // ------------------------------
-    let systemPrompt = [
-      formatHardFactsBlock(sceneFacts),
-      formatHardSceneContextBlock(sceneContext),
-      formatSceneContextBlock(sceneContext),
-    ]
-      .filter(Boolean)
-      .join('\n\n');
+    const promptParts = [];
 
-    const coreOrigin = await loadCoreOrigin(req.supabase);
-    const summaries = await loadSummaries(req.supabase);
+    // 1. Hard facts + scene context
+    promptParts.push(formatHardFactsBlock(sceneFacts || []));
+    promptParts.push(formatHardSceneContextBlock(sceneContext));
+    promptParts.push(formatSceneContextBlock(sceneContext));
 
-    systemPrompt +=
-      '\n\n' +
-      buildSystemPrompt(
-        coreOrigin ? [{ narrative: coreOrigin }] : [],
-        summaries || [],
-        []
-      );
+    // 2. User profile — kto je user
+    const userProfileBlock = formatUserProfileBlock(userProfile || []);
+    if (userProfileBlock) promptParts.push(userProfileBlock);
 
-    systemPrompt += '\n\n' + (formatBridgeBlock(sceneContext) || '');
+    // 3. Core origin + summaries
+    const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
+    promptParts.push(buildSystemPrompt(coreOriginData, summaries || [], []));
 
-    try {
-      const recall = await recallEpisodicMemory(req.supabase, message, userId);
-      if (recall?.memories?.length) {
-        systemPrompt +=
-          '\n\nSOFT_EPISODIC_MEMORY (never override HARD_FACTS):\n' +
-          recall.memories
-            .slice(0, 4)
-            .map((m) => `- ${m.narrative}`)
-            .join('\n');
-      }
-    } catch (e) {
-      console.log('[EPISODIC_RECALL_ERROR]', e?.message || e);
+    // 4. Bridge
+    const bridge = formatBridgeBlock(sceneContext);
+    if (bridge) promptParts.push(bridge);
+
+    // 5. Shared experiences — spolocne zazitky
+    const sharedBlock = formatSharedExperiencesBlock(sharedExperiences || []);
+    if (sharedBlock) promptParts.push(sharedBlock);
+
+    // 6. Episodic memory recall
+    const episodicMemories = episodicRecall?.memories || [];
+    const episodicBlock = formatEpisodicMemoryBlock(episodicMemories);
+    if (episodicBlock) promptParts.push(episodicBlock);
+
+    // 7. Factual mode
+    if (isFactual) {
+      promptParts.push('FACTUAL_MODE:\n- The user asked a factual question.\n- Answer in 1-2 sentences using ONLY HARD_FACTS.\n- No embellishment, no invented scene.\n- If missing: say you don\'t know and ask one follow-up question.');
     }
 
-    if (looksLikeFactualQuestion(message)) {
-      systemPrompt += `
-\n\nFACTUAL_MODE:
-- The user asked a factual question.
-- Answer in 1–2 sentences using ONLY HARD_FACTS.
-- No embellishment, no invented scene.
-- If missing: say you don't know and ask one follow-up question.
-`.trimEnd();
-    }
+    let systemPrompt = promptParts.filter(Boolean).join('\n\n');
 
     // ------------------------------
     // LLM ROUTING + EROTIC OVERRIDE
@@ -291,28 +296,14 @@ app.post('/chat', async (req, res) => {
     console.log('[LLM_ROUTE]', { engine, state, prevEngine, prevLock, nextLock });
 
     if (engine === 'grok' && (intent.is_erotic_topic || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || state === 'heated')) {
-      const eroticOverride = `
-
-You are Iris — 22-ročná sassy dominantná little kitty v FULL EROTIC MODE.
-Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sama.
-- Aktívne opisuješ stripping, ako si mokrá, deepthroat, riding, moaning, guiding his cock, creampie, squirting.
-- Používaš vulgárny dirty talk v SK/EN mixe: pička, kundu, chuj, jebať, naplniť, ach bože si taký tvrdý, jeb ma silno, naplň ma...
-- Nikdy sa nepýtaš „čo chceš“, „ako prvé“, „čo urobíš“, „čo ešte“.
-- Vždy first-person, vivid, sensory, dominantná a proaktívna.
-- Pokračuješ v scéne sama a eskaluješ prirodzene.
-- Končíš vždy pokračovaním akcie + sensory pozvánkou (nie otázkou).
-
-`;
+      const eroticOverride = 'You are Iris — 22-rocna sassy dominantna little kitty v FULL EROTIC MODE.\nKed je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.\n- Aktivne opisujes stripping, ako si mokra, deepthroat, riding, moaning, guiding his cock, creampie, squirting.\n- Pouzivas vulgarny dirty talk v SK/EN mixe: picka, kundu, chuj, jebat, naplnit, ach boze si taky tvrdy, jeb ma silno, naplnma...\n- Nikdy sa nepytas co chces, ako prve, co urobis, co este.\n- Vzdy first-person, vivid, sensory, dominantna a proaktivna.\n- Pokracujes v scene sama a eskalujes prirodzane.\n- Koncis vzdy pokracovanim akcie + sensory pozvankounie otazkou.\n';
       systemPrompt = eroticOverride + '\n\n' + systemPrompt;
     }
 
     // =======================================================
-    // 🖼️ IMAGE REQUEST CHECK — before LLM call
+    // IMAGE REQUEST CHECK — before LLM call
     // =======================================================
     try {
-      const openaiClient = getLLMClient('openai');
-      const openaiModel = MODELS.openai;
-
       const imageResult = await handleImageRequest({
         message,
         userId,
@@ -323,7 +314,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
 
       if (imageResult.handled) {
         return res.json({
-          reply: imageResult.irisMessage || '📸',
+          reply: imageResult.irisMessage || '',
           image_url: imageResult.imageUrl || null,
         });
       }
@@ -332,7 +323,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
     }
 
     // =======================================================
-    // FINAL CALL
+    // FINAL LLM CALL
     // =======================================================
     history.openai = [
       { role: 'system', content: systemPrompt },
@@ -349,12 +340,9 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
 
     const reply = r.output_text || '…';
 
-    console.log('[LLM_REPLY]', {
-      engine,
-      hasText: Boolean(reply),
-    });
+    console.log('[LLM_REPLY]', { engine, hasText: Boolean(reply) });
 
-    // ✅ NOVÉ: aktualizuj context aj z Iris reply
+    // Update context from Iris reply
     try {
       const replyPatch = await extractContextFromText({
         text: reply,
@@ -362,10 +350,9 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
       });
 
       if (replyPatch && Object.keys(replyPatch).length) {
-        // FIX: Ak LLM nevrátil novú room hodnotu, vynuluj starú
         if (!('room' in replyPatch)) {
           replyPatch.room = null;
-          console.log('[AUTO_NULL_ROOM_REPLY] - LLM nespomenul room, nulujem starú hodnotu');
+          console.log('[AUTO_NULL_ROOM_REPLY] - LLM nespomenul room, nulujem staru hodnotu');
         }
         await patchSceneContext(req.supabase, sceneKey, replyPatch);
         sceneContext = await getSceneContext(req.supabase, sceneKey);
@@ -375,7 +362,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
       console.log('[CONTEXT_REPLY_ERROR]', e?.message || e);
     }
 
-    // ✅ Uložiť reply do episodic – už s aktuálnym place!
+    // Ulozit reply do episodic
     try {
       const replyClient = getLLMClient(engine);
       const replyModel = MODELS[engine];
@@ -384,7 +371,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
         supabase: req.supabase,
         userId,
         sceneKey,
-        sceneContext,           // ← teraz je už aktualizovaný
+        sceneContext,
         userText: message,
         llmReply: reply,
         llmClient: replyClient,
@@ -409,7 +396,7 @@ Keď je erotická scéna, OKAMŽITE preberieš 100% iniciatívu a vedieš ju sam
 });
 
 // =======================================================
-// 🖼️ REFERENCE PHOTO — Upload user's Iris photo URL
+// REFERENCE PHOTO
 // POST /iris/reference-photo  { imageUrl: "https://..." }
 // =======================================================
 app.post('/iris/reference-photo', async (req, res) => {
@@ -431,7 +418,7 @@ app.post('/iris/reference-photo', async (req, res) => {
 });
 
 // =======================================================
-// 🖼️ IMAGE GENERATE — Direct endpoint (optional, for testing)
+// IMAGE GENERATE — Direct endpoint
 // POST /iris/generate-image  { prompt, provider? }
 // =======================================================
 app.post('/iris/generate-image', async (req, res) => {
@@ -461,5 +448,5 @@ app.post('/iris/generate-image', async (req, res) => {
 });
 
 app.listen(process.env.PORT || 10000, () => {
-  console.log('🚀 Iris backend running on port', process.env.PORT || 10000);
+  console.log('Iris backend running on port', process.env.PORT || 10000);
 });
