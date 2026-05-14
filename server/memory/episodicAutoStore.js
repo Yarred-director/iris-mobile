@@ -1,225 +1,227 @@
+// server/memory/episodicAutoStore.js
+// Hybrid autonomous memory pipeline + USER PROFILE EXTRACTION
+// - Ukladá epizodickú pamäť (čo si Iris + user hovorili)
+// - Extrahuje fakty o userovi a ukladá do user_profile
+
 import { randomUUID } from 'crypto';
 import { createEmbedding } from './embeddings.js';
 
-/**
- * Hybrid autonomous memory pipeline:
- *
- * 1) LLM decides whether memory is worth storing
- * 2) If yes → deterministic DB insert (raw text)
- * 3) LLM enriches row (title, summary, tags, importance)
- * 4) ✅ Generate embedding from SUMMARY and store it (required for recall)
- *
- * No language triggers.
- * No hardcoded phrases.
- * Fully model-driven decision.
- * 
- * UPDATED 25.2.2026: podporuje llmReply (Grok hardcore scény) + bypass OpenAI filter
- */
-
+// ───────────────────────────────────────────────────────────
+// MAIN EXPORT
+// ───────────────────────────────────────────────────────────
 export async function autoStoreEpisodicMemoryHybrid({
   supabase,
   userId,
   sceneKey = 'global',
   sceneContext,
   userText,
-  llmReply = null,           // ← NOVÉ: Grok / OpenAI reply
+  llmReply = null,
   llmClient,
   model,
 }) {
   const textToStore = llmReply || userText;
   if (!textToStore || !textToStore.trim()) return;
 
-  // --------------------------------------------------
-  // STEP 1 — LLM decides if this message is memory-worthy
-  // --------------------------------------------------
+  // ── STEP 1: LLM rozhodne či pamäť stojí za uloženie ───────────────
   let decision = { should_store: true, reason: 'IRIS reply - always store', importance: 0.9 };
 
   if (!llmReply) {
-    // pôvodný judge len pre user messages
-    const judgePrompt = `
-You are a memory decision system for a long-term AI.
-
-Decide whether the user's message contains a meaningful event,
-emotional moment, commitment, gift, milestone, shared experience,
-or something that should be remembered long-term.
-
-Return STRICT JSON:
-
-{
-  "should_store": boolean,
-  "reason": string,
-  "importance": number (0.3 to 1.0)
-}
-
-Rules:
-- Store only if it represents a meaningful event or emotional memory.
-- Do NOT store normal conversation, small talk, or simple questions.
-- Be selective but not overly strict.
-`.trim();
-
-    const judgeResponse = await llmClient.responses.create({
-      model,
-      temperature: 0.2,
-      input: [
-        { role: 'system', content: judgePrompt },
-        { role: 'user', content: textToStore },
-      ],
-    });
-
-    const judgeOutput = judgeResponse.output_text || '';
-
     try {
-      decision = JSON.parse(judgeOutput);
-    } catch {
-      const match = judgeOutput.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          decision = JSON.parse(match[0]);
-        } catch {}
-      }
+      const judgePrompt = `You are a memory judge for an AI companion called Iris.
+Decide if the following user message contains something worth remembering long-term.
+
+Worth storing: personal facts, emotions, life events, preferences, opinions, important context.
+NOT worth storing: greetings, short filler messages, one-word answers, generic questions.
+
+User message: """${userText}"""
+
+Respond ONLY with valid JSON:
+{"should_store": true|false, "reason": "short reason", "importance": 0.1-1.0}`;
+
+      const judgeResp = await llmClient.chat.completions.create({
+        model,
+        max_tokens: 100,
+        temperature: 0,
+        messages: [{ role: 'user', content: judgePrompt }],
+      });
+
+      const raw = judgeResp.choices?.[0]?.message?.content?.trim() || '';
+      decision = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    } catch (e) {
+      console.log('[MEMORY_JUDGE_ERROR]', e?.message);
+      decision = { should_store: true, importance: 0.5 };
     }
   }
 
   if (!decision?.should_store) return;
 
-  let importance = Number(decision.importance);
-  if (!Number.isFinite(importance)) importance = 0.85;
-  importance = Math.max(0.3, Math.min(1.0, importance));
-
-  // --------------------------------------------------
-  // STEP 2 — Deterministic insert (RAW memory first)
-  // --------------------------------------------------
-
+  const importance = decision.importance ?? 0.7;
   const rowId = randomUUID();
 
-  const location =
-    sceneContext?.place ||
-    sceneContext?.room ||
-    sceneContext?.city ||
-    null;
-
-  const insertPayload = {
-    id: rowId,
-    user_id: userId,
-    scene_key: sceneKey,
-    title: 'Pending memory',
-    narrative: textToStore,
-    people: ['Iris', 'user'],
-    location,
-    emotional_tags: [],
-    memory_type: 'episodic',
-    memory_revision: 1,
-    memory_note: JSON.stringify({
-      stage: 'raw',
-      is_llm_reply: !!llmReply,
-      judge_reason: decision.reason || null,
-    }),
-    importance,
-  };
-
-  const { error: insertError } = await supabase
-    .from('episodic_memory')
-    .insert(insertPayload);
-
-  if (insertError) {
-    console.error('[AUTO_MEMORY_INSERT_ERROR]', insertError);
+  // ── STEP 2: RAW insert ─────────────────────────────
+  try {
+    await supabase.from('episodic_memory').insert({
+      id: rowId,
+      user_id: userId,
+      scene_key: sceneKey,
+      title: 'Pending memory',
+      narrative: textToStore,
+      memory_type: 'episodic',
+      importance,
+      memory_note: JSON.stringify({ stage: 'raw', source: llmReply ? 'iris' : 'user' }),
+    });
+  } catch (e) {
+    console.log('[AUTO_MEMORY_INSERT_ERROR]', e?.message);
     return;
   }
 
-  console.log('[AUTO_MEMORY_STORED]', rowId, llmReply ? '(GROK REPLY)' : '(USER)');
+  // ── STEP 3: Enrich + Embedding (async, neblokuje odpoveď) ─────────────
+  setImmediate(async () => {
+    try {
+      // Enrich — LLM vytvorí lepší summary + title
+      const enrichPrompt = `Summarize this memory from the perspective of Iris, an AI companion.
+Write a short narrative (2-3 sentences) capturing the key facts, emotions, and context.
+Also suggest a short title (5 words max).
 
-  // --------------------------------------------------
-  // STEP 3 — LLM enrichment (non-blocking intelligence)
-  // --------------------------------------------------
+Memory: """${textToStore}"""
+Scene: ${sceneKey}
+Context: ${JSON.stringify(sceneContext || {})}
 
-  const enrichPrompt = `
-You are refining a stored memory.
+Respond ONLY with JSON:
+{"title": "...", "summary": "...", "emotional_tags": ["tag1", "tag2"]}`;
 
-Summarize the text without adding new facts.
-Make it concise and recall-friendly.
+      const enrichResp = await llmClient.chat.completions.create({
+        model,
+        max_tokens: 300,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: enrichPrompt }],
+      });
 
-Return STRICT JSON:
+      const enrichRaw = enrichResp.choices?.[0]?.message?.content?.trim() || '';
+      const enriched = JSON.parse(enrichRaw.replace(/```json|```/g, '').trim());
 
-{
-  "title": string (max 80 chars),
-  "summary": string (1–2 sentences),
-  "emotional_tags": string[],
-  "importance": number (0.3–1.0)
+      const summary = enriched.summary || textToStore;
+      const title = enriched.title || 'Memory';
+      const emotional_tags = enriched.emotional_tags || [];
+
+      // Embedding
+      const embedding = await createEmbedding(summary, llmClient);
+
+      // Update záznamu
+      await supabase
+        .from('episodic_memory')
+        .update({
+          title,
+          narrative: summary,
+          emotional_tags,
+          embedding,
+          memory_revision: 2,
+          memory_note: JSON.stringify({ stage: 'enriched', source: llmReply ? 'iris' : 'user' }),
+        })
+        .eq('id', rowId);
+
+      console.log('[AUTO_MEMORY_ENRICHED]', rowId, llmReply ? '(IRIS REPLY)' : '(USER)');
+    } catch (e) {
+      console.log('[AUTO_MEMORY_ENRICH_ERROR]', e?.message);
+    }
+
+    // ── STEP 4: Extrakcia user profile faktov ───────────────────
+    try {
+      await extractAndStoreUserProfile({
+        supabase,
+        userId,
+        userText,
+        irisReply: llmReply,
+        llmClient,
+        model,
+      });
+    } catch (e) {
+      console.log('[USER_PROFILE_EXTRACT_ERROR]', e?.message);
+    }
+  });
 }
 
-Original text:
-"""${textToStore}"""
-`.trim();
+// ───────────────────────────────────────────────────
+// USER PROFILE EXTRACTION
+// Extrahuje fakty o USEROVI a ukladá do user_profile tabuľky
+// ───────────────────────────────────────────────────
+async function extractAndStoreUserProfile({ supabase, userId, userText, irisReply, llmClient, model }) {
+  const combinedText = [
+    userText ? `User: ${userText}` : null,
+    irisReply ? `Iris: ${irisReply}` : null,
+  ].filter(Boolean).join('\n');
 
-  const enrichResponse = await llmClient.responses.create({
+  const extractPrompt = `You are extracting personal facts about the USER from a conversation with an AI companion called Iris.
+
+Extract ONLY facts about the USER (not about Iris). Focus on:
+
+- appearance: physical looks (hair, eyes, height, build, tattoos, style)
+- personality: character traits, communication style, values
+- hobbies: activities they enjoy regularly
+- interests: topics they care about
+- mood: current emotional state
+- preferences: things they like (music, food, activities)
+- dislikes: things they dislike
+- personal: name, age, job, city, relationship status, life situation
+
+Only extract facts that are clearly stated or strongly implied.
+Ignore vague or uncertain information.
+
+Conversation:
+"""${combinedText}"""
+
+Respond ONLY with a valid JSON array (can be empty []):
+[
+  {
+    "category": "appearance|personality|hobbies|interests|mood|preferences|dislikes|personal",
+    "fact_key": "snake_case_key (e.g. hair_color, current_mood, favorite_music)",
+    "fact_value": "the value (e.g. blond, happy, techno)",
+    "confidence": 0.6-1.0
+  }
+]`;
+
+  const response = await llmClient.chat.completions.create({
     model,
-    temperature: 0.3,
-    input: [{ role: 'user', content: enrichPrompt }],
+    max_tokens: 400,
+    temperature: 0,
+    messages: [{ role: 'user', content: extractPrompt }],
   });
 
-  const enrichOutput = enrichResponse.output_text || '';
-  let enrichData = null;
+  const raw = response.choices?.[0]?.message?.content?.trim() || '';
 
+  let facts = [];
   try {
-    enrichData = JSON.parse(enrichOutput);
-  } catch {
-    const match = enrichOutput.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        enrichData = JSON.parse(match[0]);
-      } catch {}
-    }
-  }
-
-  if (!enrichData) return;
-
-  const title = String(enrichData.title || '').slice(0, 80) || 'Memory';
-  const summary = String(enrichData.summary || '').trim() || textToStore;
-
-  const emotional_tags = Array.isArray(enrichData.emotional_tags)
-    ? enrichData.emotional_tags
-        .map((t) => String(t).trim())
-        .filter(Boolean)
-        .slice(0, 10)
-    : [];
-
-  let enrichedImportance = Number(enrichData.importance);
-  if (!Number.isFinite(enrichedImportance)) enrichedImportance = importance;
-
-  enrichedImportance = Math.max(0.3, Math.min(1.0, enrichedImportance));
-
-  // --------------------------------------------------
-  // STEP 4 — ✅ Create embedding (required for recall)
-  // --------------------------------------------------
-  let embedding = null;
-  try {
-    embedding = await createEmbedding(summary);
+    const match = raw.match(/[\s\S]*/);
+    if (match) facts = JSON.parse(match[0]);
   } catch (e) {
-    console.error('[AUTO_MEMORY_EMBEDDING_ERROR]', e?.message || e);
-  }
-
-  const { error: updateError } = await supabase
-    .from('episodic_memory')
-    .update({
-      title,
-      narrative: summary,
-      emotional_tags,
-      importance: enrichedImportance,
-      embedding,
-      memory_revision: 2,
-      memory_note: JSON.stringify({
-        stage: 'enriched',
-        original: textToStore,
-        is_llm_reply: !!llmReply,
-      }),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', rowId);
-
-  if (updateError) {
-    console.error('[AUTO_MEMORY_ENRICH_ERROR]', updateError);
+    console.log('[USER_PROFILE_PARSE_ERROR]', e?.message);
     return;
   }
 
-  console.log('[AUTO_MEMORY_ENRICHED]', rowId, llmReply ? '(GROK REPLY)' : '(USER)');
+  if (!Array.isArray(facts) || facts.length === 0) return;
+
+  for (const fact of facts) {
+    if (!fact.fact_key || !fact.fact_value) continue;
+    if ((fact.confidence || 0) < 0.6) continue;
+
+    const { error } = await supabase
+      .from('user_profile')
+      .upsert({
+        user_id: userId,
+        category: fact.category || 'personal',
+        fact_key: fact.fact_key,
+        fact_value: String(fact.fact_value),
+        confidence: fact.confidence || 0.8,
+        source: 'auto',
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'user_id,fact_key',
+      });
+
+    if (error) {
+      console.log('[USER_PROFILE_UPSERT_ERROR]', error.message);
+    } else {
+      console.log('[USER_PROFILE_SAVED]', fact.fact_key, '=', fact.fact_value);
+    }
+  }
 }
