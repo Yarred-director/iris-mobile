@@ -160,14 +160,15 @@ export function formatSharedExperiencesBlock(experiences) {
     return `${i + 1}. ${parts.join(' | ')}`;
   });
 
-  return `SHARED_MEMORIES (experiences we had together):
-${lines.join('
-')}
-RULES:
-- These are real memories of things we experienced together.
-- Reference them naturally when relevant.
-- Don't list them all at once. Use them subtly.
-- Intimate/erotic memories: reference with warmth and discretion unless user brings them up explicitly.`.trim();
+  return [
+    'SHARED_MEMORIES (experiences we had together):',
+    ...lines,
+    'RULES:',
+    '- These are real memories of things we experienced together.',
+    '- Reference them naturally when relevant.',
+    '- Don\'t list them all at once. Use them subtly.',
+    '- Intimate/erotic memories: reference with warmth and discretion unless user brings them up explicitly.'
+  ].join('\n');
 }
 
 export function formatEpisodicMemoryBlock(memories) {
