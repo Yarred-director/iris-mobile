@@ -1,7 +1,8 @@
 // server/memory/episodicAutoStore.js
-// Hybrid autonomous memory pipeline + USER PROFILE EXTRACTION
-// - Ukladá epizodickú pamäť (čo si Iris + user hovorili)
-// - Extrahuje fakty o userovi a ukladá do user_profile
+// Hybrid autonomous memory pipeline:
+// 1. Epizodická pamäť (čo si Iris + user hovorili)
+// 2. Shared experiences (roleplay, intímne scény, spoločné miesta)
+// 3. User profile extrakcia (fakty o userovi)
 
 import { randomUUID } from 'crypto';
 import { createEmbedding } from './embeddings.js';
@@ -30,7 +31,7 @@ export async function autoStoreEpisodicMemoryHybrid({
       const judgePrompt = `You are a memory judge for an AI companion called Iris.
 Decide if the following user message contains something worth remembering long-term.
 
-Worth storing: personal facts, emotions, life events, preferences, opinions, important context.
+Worth storing: personal facts, emotions, life events, preferences, opinions, important context, roleplay scenes, intimate moments, locations visited together.
 NOT worth storing: greetings, short filler messages, one-word answers, generic questions.
 
 User message: """${userText}"""
@@ -58,7 +59,7 @@ Respond ONLY with valid JSON:
   const importance = decision.importance ?? 0.7;
   const rowId = randomUUID();
 
-  // ── STEP 2: RAW insert ─────────────────────────────
+  // ── STEP 2: RAW insert do episodic_memory ─────────────────────────
   try {
     await supabase.from('episodic_memory').insert({
       id: rowId,
@@ -75,39 +76,17 @@ Respond ONLY with valid JSON:
     return;
   }
 
-  // ── STEP 3: Enrich + Embedding (async, neblokuje odpoveď) ─────────────
+  // ── STEP 3: Async enrich + všetky extrakcie ─────────────────────────────
   setImmediate(async () => {
     try {
-      // Enrich — LLM vytvorí lepší summary + title
-      const enrichPrompt = `Summarize this memory from the perspective of Iris, an AI companion.
-Write a short narrative (2-3 sentences) capturing the key facts, emotions, and context.
-Also suggest a short title (5 words max).
+      const enriched = await enrichMemory({ textToStore, sceneContext, llmClient, model });
 
-Memory: """${textToStore}"""
-Scene: ${sceneKey}
-Context: ${JSON.stringify(sceneContext || {})}
+      const summary = enriched?.summary || textToStore;
+      const title = enriched?.title || 'Memory';
+      const emotional_tags = enriched?.emotional_tags || [];
 
-Respond ONLY with JSON:
-{"title": "...", "summary": "...", "emotional_tags": ["tag1", "tag2"]}`;
-
-      const enrichResp = await llmClient.chat.completions.create({
-        model,
-        max_tokens: 300,
-        temperature: 0.3,
-        messages: [{ role: 'user', content: enrichPrompt }],
-      });
-
-      const enrichRaw = enrichResp.choices?.[0]?.message?.content?.trim() || '';
-      const enriched = JSON.parse(enrichRaw.replace(/```json|```/g, '').trim());
-
-      const summary = enriched.summary || textToStore;
-      const title = enriched.title || 'Memory';
-      const emotional_tags = enriched.emotional_tags || [];
-
-      // Embedding
       const embedding = await createEmbedding(summary, llmClient);
 
-      // Update záznamu
       await supabase
         .from('episodic_memory')
         .update({
@@ -125,7 +104,23 @@ Respond ONLY with JSON:
       console.log('[AUTO_MEMORY_ENRICH_ERROR]', e?.message);
     }
 
-    // ── STEP 4: Extrakcia user profile faktov ───────────────────
+    // ── STEP 4: Detekcia shared experience (roleplay/intímna scéna) ─────────────
+    try {
+      await detectAndStoreSharedExperience({
+        supabase,
+        userId,
+        sceneKey,
+        userText,
+        irisReply: llmReply,
+        sceneContext,
+        llmClient,
+        model,
+      });
+    } catch (e) {
+      console.log('[SHARED_EXP_ERROR]', e?.message);
+    }
+
+    // ── STEP 5: Extrakcia user profile faktov ───────────────────
     try {
       await extractAndStoreUserProfile({
         supabase,
@@ -139,6 +134,144 @@ Respond ONLY with JSON:
       console.log('[USER_PROFILE_EXTRACT_ERROR]', e?.message);
     }
   });
+}
+
+// ───────────────────────────────────────────────────
+// ENRICH MEMORY
+// ───────────────────────────────────────────────────
+async function enrichMemory({ textToStore, sceneContext, llmClient, model }) {
+  const enrichPrompt = `Summarize this memory from the perspective of Iris, an AI companion.
+Write a short narrative (2-3 sentences) capturing the key facts, emotions, and context.
+Also suggest a short title (5 words max).
+
+Memory: """${textToStore}"""
+Scene: ${JSON.stringify(sceneContext || {})}
+
+Respond ONLY with JSON:
+{"title": "...", "summary": "...", "emotional_tags": ["tag1", "tag2"]}`;
+
+  const resp = await llmClient.chat.completions.create({
+    model,
+    max_tokens: 300,
+    temperature: 0.3,
+    messages: [{ role: 'user', content: enrichPrompt }],
+  });
+
+  const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+  return JSON.parse(raw.replace(/`json|`/g, '').trim());
+}
+
+// ───────────────────────────────────────────────────
+// SHARED EXPERIENCE DETECTION
+// Zachytáva roleplay, intímne scény, spoločné miesta
+// Spomienka časom bledne — summary ostane, full_narrative sa zachová
+// ───────────────────────────────────────────────────
+async function detectAndStoreSharedExperience({
+  supabase,
+  userId,
+  sceneKey,
+  userText,
+  irisReply,
+  sceneContext,
+  llmClient,
+  model,
+}) {
+  const combinedText = [
+    userText ? `User: ${userText}` : null,
+    irisReply ? `Iris: ${irisReply}` : null,
+  ].filter(Boolean).join('\n');
+
+  const detectPrompt = `You are analyzing a conversation between a user and Iris (AI companion).
+Determine if this exchange contains a SHARED EXPERIENCE worth remembering as a special memory.
+
+A shared experience is:
+
+- A roleplay scene (being together somewhere, doing something together)
+- An intimate or romantic moment (touching, kissing, sensual or erotic scene)
+- A significant emotional moment together
+- Visiting a place together in imagination or roleplay
+
+If YES, extract the details. If NO, return {"isExperience": false}.
+
+Conversation:
+"""${combinedText}"""
+
+Current scene context: ${JSON.stringify({
+    location: sceneContext?.place,
+    country: sceneContext?.location_country,
+    city: sceneContext?.location_city,
+  })}
+
+Respond ONLY with valid JSON:
+{
+  "isExperience": true|false,
+  "location": "full location description e.g. beach in Japan" | null,
+  "country": "country in English" | null,
+  "city": "city in English" | null,
+  "summary": "short poetic summary of what happened, 1-2 sentences" | null,
+  "full_narrative": "detailed description of the scene, atmosphere, what happened" | null,
+  "actions": ["action1", "action2"] | [],
+  "emotional_tone": "romantic|intimate|erotic|playful|tender|passionate" | null,
+  "intensity": "soft|romantic|sensual|explicit",
+  "iris_emotion": "how Iris felt in this moment" | null,
+  "iris_notes": "what Iris privately thinks about this memory" | null
+}`;
+
+  const resp = await llmClient.chat.completions.create({
+    model,
+    max_tokens: 500,
+    temperature: 0.2,
+    messages: [{ role: 'user', content: detectPrompt }],
+  });
+
+  const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+  let result;
+  try {
+    result = JSON.parse(raw.replace(/`json|`/g, '').trim());
+  } catch (e) {
+    console.log('[SHARED_EXP_PARSE_ERROR]', e?.message);
+    return;
+  }
+
+  if (!result?.isExperience || !result?.summary) return;
+
+  // Embedding pre semantic recall
+  const embeddingText = [
+    result.location,
+    result.summary,
+    result.actions?.join(', '),
+    result.emotional_tone,
+  ].filter(Boolean).join('. ');
+
+  let embedding = null;
+  try {
+    embedding = await createEmbedding(embeddingText, llmClient);
+  } catch (e) {
+    console.log('[SHARED_EXP_EMBEDDING_ERROR]', e?.message);
+  }
+
+  const { error } = await supabase.from('shared_experiences').insert({
+    user_id: userId,
+    scene_key: sceneKey,
+    location: result.location,
+    country: result.country,
+    city: result.city,
+    summary: result.summary,
+    full_narrative: result.full_narrative,
+    actions: result.actions || [],
+    emotional_tone: result.emotional_tone,
+    intensity: result.intensity || 'soft',
+    iris_emotion: result.iris_emotion,
+    iris_notes: result.iris_notes,
+    importance: 0.95,
+    embedding,
+  });
+
+  if (error) {
+    console.log('[SHARED_EXP_INSERT_ERROR]', error.message);
+  } else {
+    console.log('[SHARED_EXP_SAVED]', result.location, '|', result.emotional_tone);
+  }
 }
 
 // ───────────────────────────────────────────────────
