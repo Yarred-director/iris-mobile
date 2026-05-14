@@ -2,8 +2,13 @@
 import { createEmbedding } from './embeddings.js';
 
 // ───────────────────────────────────────────────────────────
-// EPISODIC MEMORY RECALL
-// ───────────────────────────────────────────────────────────
+function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}) {
+  if (!Array.isArray(memories) || memories.length < minCount) return false;
+  const top = memories[0];
+  const topSim = typeof top?.similarity === 'number' ? top.similarity : 0;
+  return topSim >= minSimilarity;
+}
+
 export async function recallEpisodicMemory(supabaseClient, text, userID) {
   const embedding = await createEmbedding(text);
 
@@ -47,16 +52,6 @@ export async function recallEpisodicMemory(supabaseClient, text, userID) {
   };
 }
 
-function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}) {
-  if (!Array.isArray(memories) || memories.length < minCount) return false;
-  const top = memories[0];
-  const topSim = typeof top?.similarity === 'number' ? top.similarity : 0;
-  return topSim >= minSimilarity;
-}
-
-// ───────────────────────────────────────────────────────────
-// SHARED EXPERIENCES RECALL
-// Načíta intímne/roleplay spomienky relevantné pre aktuálny kontext
 // ───────────────────────────────────────────────────────────
 export async function recallSharedExperiences(supabaseClient, text, userID) {
   try {
@@ -81,9 +76,6 @@ export async function recallSharedExperiences(supabaseClient, text, userID) {
   }
 }
 
-// ───────────────────────────────────────────────────────────
-// USER PROFILE RECALL
-// Načíta všetky fakty o userovi (vzhľad, záľuby, nálada…)
 // ───────────────────────────────────────────────────────────
 export async function loadUserProfile(supabaseClient, userID) {
   try {
@@ -145,15 +137,13 @@ export function formatUserProfileBlock(profileFacts) {
     lines.push(...facts.map(f => `  - ${f}`));
   }
 
-  return `
-USER_PROFILE:
+  return `USER_PROFILE:
 ${lines.join('
 ')}
 RULES:
 - Use this to personalize every response naturally.
 - Never list these facts back to the user robotically.
-- Reference them only when relevant and natural.
-  `.trim();
+- Reference them only when relevant and natural.`.trim();
 }
 
 export function formatSharedExperiencesBlock(experiences) {
@@ -170,16 +160,14 @@ export function formatSharedExperiencesBlock(experiences) {
     return `${i + 1}. ${parts.join(' | ')}`;
   });
 
-  return `
-SHARED_MEMORIES (experiences we had together):
+  return `SHARED_MEMORIES (experiences we had together):
 ${lines.join('
 ')}
 RULES:
 - These are real memories of things we experienced together.
-- Reference them naturally when relevant — “remember when we were in Japan…”
-- Don’t list them all at once. Use them subtly to show you remember.
-- Intimate/erotic memories: reference with warmth and discretion unless user brings them up explicitly.
-  `.trim();
+- Reference them naturally when relevant.
+- Don't list them all at once. Use them subtly.
+- Intimate/erotic memories: reference with warmth and discretion unless user brings them up explicitly.`.trim();
 }
 
 export function formatEpisodicMemoryBlock(memories) {
