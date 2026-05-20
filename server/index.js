@@ -9,7 +9,6 @@ import { buildSystemPrompt } from './prompt/systemPrompt.js';
 
 import { getLLMClient } from './lib/llmClient.js';
 import { MODELS } from './lib/llmModels.js';
-import { history } from './llm/history.js';
 
 import { extractContextFromText } from './memory/contextJudge.js';
 import { applySubjectLock } from './memory/subjectLock.js';
@@ -325,7 +324,7 @@ app.post('/chat', async (req, res) => {
     // =======================================================
     // FINAL LLM CALL
     // =======================================================
-    history.openai = [
+    const requestMessages = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: message },
     ];
@@ -337,7 +336,7 @@ app.post('/chat', async (req, res) => {
     // Gives Iris access to current events, game releases, news, etc.
     const responseOptions = {
       model,
-      input: history.openai,
+      input: requestMessages,
       ...(engine === 'openai' ? { tools: [{ type: 'web_search_preview' }] } : {}),
     };
 
