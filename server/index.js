@@ -333,10 +333,15 @@ app.post('/chat', async (req, res) => {
     const client = getLLMClient(engine);
     const model = MODELS[engine];
 
-    const r = await client.responses.create({
+    // Web search only for OpenAI (gpt-4.1 supports web_search_preview).
+    // Gives Iris access to current events, game releases, news, etc.
+    const responseOptions = {
       model,
       input: history.openai,
-    });
+      ...(engine === 'openai' ? { tools: [{ type: 'web_search_preview' }] } : {}),
+    };
+
+    const r = await client.responses.create(responseOptions);
 
     const reply = r.output_text || '…';
 

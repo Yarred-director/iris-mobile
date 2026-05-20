@@ -72,14 +72,14 @@ export async function handleImageRequest({ message, userId, supabase, llmClient,
     return {
       handled: true,
       imageUrl: result.imageUrl,
-      irisMessage: null,
+      irisMessage: '📸',
     };
   } catch (e) {
     console.log('[IMAGE_HANDLER] Generation failed:', e?.message);
     return {
       handled: true,
       imageUrl: null,
-      irisMessage: null,
+      irisMessage: 'Ojoj, niečo sa pokazilo s fotkou 🙈 Skús to znova o chvíľu!',
     };
   }
 }
