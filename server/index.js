@@ -149,6 +149,14 @@ app.post('/chat', async (req, res) => {
     const userId = await requireUserId(req, res);
     if (!userId) return;
 
+    // Save user timezone if provided
+    const { timezone } = req.body;
+    if (timezone) {
+      req.supabase.from('iris_profiles')
+        .upsert({ user_id: userId, user_timezone: timezone }, { onConflict: 'user_id' })
+        .then(() => {}).catch(() => {});
+    }
+
     const sceneKey = 'global';
 
     console.log('[CHAT]', {
