@@ -37,6 +37,11 @@ import {
 import { intentJudgeLLM } from './behavior/intentJudge.js';
 import { autoStoreEpisodicMemoryHybrid } from './memory/episodicAutoStore.js';
 
+// Governance Engine
+import { buildTemporalContextBlock, loadTemporalProfile, touchLastInteraction, touchLastPhotoSent } from './memory/timeContext.js';
+import { loadRelationshipState, updateRelationshipState, formatRelationshipBlock, inferRelationshipDelta } from './memory/relationshipTimeline.js';
+import { loadInternalState, updateInternalState, formatInternalStateBlock, inferStateUpdate } from './memory/internalState.js';
+
 // Image generation
 import { handleImageRequest } from './image/imageHandler.js';
 import { saveIrisReferencePhoto } from './image/imageHandler.js';
@@ -202,6 +207,9 @@ app.post('/chat', async (req, res) => {
       sharedExperiences,
       episodicRecall,
       isFactual,
+      temporalProfile,
+      relationshipState,
+      internalState,
     ] = await Promise.allSettled([
       getSceneFacts(req.supabase, userId, sceneKey, 'global'),
       loadCoreOrigin(req.supabase),
@@ -210,6 +218,9 @@ app.post('/chat', async (req, res) => {
       recallSharedExperiences(req.supabase, message, userId),
       recallEpisodicMemory(req.supabase, message, userId),
       looksLikeFactualQuestion(message, openaiClient, openaiModel),
+      loadTemporalProfile(req.supabase, userId),
+      loadRelationshipState(req.supabase, userId),
+      loadInternalState(req.supabase, userId),
     ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
     // ------------------------------
@@ -243,7 +254,24 @@ app.post('/chat', async (req, res) => {
     const episodicBlock = formatEpisodicMemoryBlock(episodicMemories);
     if (episodicBlock) promptParts.push(episodicBlock);
 
-    // 7. Factual mode
+    // 7. Temporal context
+    const temporalBlock = buildTemporalContextBlock({
+      userTimezone: temporalProfile?.user_timezone || 'UTC',
+      lastInteractionAt: temporalProfile?.last_interaction_at,
+      relationshipStartedAt: temporalProfile?.relationship_started_at,
+      lastPhotoSentAt: temporalProfile?.last_photo_sent_at,
+    });
+    if (temporalBlock) promptParts.push(temporalBlock);
+
+    // 8. Relationship state
+    const relationshipBlock = formatRelationshipBlock(relationshipState);
+    if (relationshipBlock) promptParts.push(relationshipBlock);
+
+    // 9. Internal state
+    const internalStateBlock = formatInternalStateBlock(internalState);
+    if (internalStateBlock) promptParts.push(internalStateBlock);
+
+    // 10. Factual mode
     if (isFactual) {
       promptParts.push('FACTUAL_MODE:\n- The user asked a factual question.\n- Answer in 1-2 sentences using ONLY HARD_FACTS.\n- No embellishment, no invented scene.\n- If missing: say you don\'t know and ask one follow-up question.');
     }
@@ -312,6 +340,9 @@ app.post('/chat', async (req, res) => {
       });
 
       if (imageResult.handled) {
+        if (imageResult.imageUrl) {
+          touchLastPhotoSent(req.supabase, userId).catch(() => {});
+        }
         return res.json({
           reply: imageResult.irisMessage || '',
           image_url: imageResult.imageUrl || null,
@@ -391,6 +422,33 @@ app.post('/chat', async (req, res) => {
       last_engine_reply: reply,
       interaction_mode: state,
     });
+
+    // Governance: update temporal, relationship, internal state (non-blocking)
+    Promise.all([
+      touchLastInteraction(req.supabase, userId),
+      inferRelationshipDelta({
+        userText: message,
+        irisReply: reply,
+        currentState: relationshipState || {},
+        llmClient: openaiClient,
+        model: openaiModel,
+      }).then(delta => {
+        if (Object.keys(delta).length) {
+          return updateRelationshipState(req.supabase, userId, delta);
+        }
+      }),
+      inferStateUpdate({
+        userText: message,
+        irisReply: reply,
+        currentState: internalState || {},
+        llmClient: openaiClient,
+        model: openaiModel,
+      }).then(patch => {
+        if (Object.keys(patch).length) {
+          return updateInternalState(req.supabase, userId, patch);
+        }
+      }),
+    ]).catch(e => console.log('[GOVERNANCE_UPDATE_ERROR]', e?.message));
 
     return res.json({ reply });
   } catch (e) {
