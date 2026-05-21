@@ -1,5 +1,4 @@
 // server/image/imageGen.js
-// Iris image generation providers
 
 const FAL_API_URL_KLING = 'https://fal.run/fal-ai/kling-image/v3/image-to-image';
 const FAL_API_URL_XAI = 'https://fal.run/xai/grok-imagine-image/edit';
@@ -17,15 +16,41 @@ function getOpenAIKey() {
   return key;
 }
 
+async function saveGeneratedImage(base64, supabase, userId) {
+  if (!supabase) return null;
+
+  const bytes = Buffer.from(base64, 'base64');
+  const filePath = `generated/${userId}/${Date.now()}.png`;
+
+  const upload = await supabase.storage
+    .from('iris-photos')
+    .upload(filePath, bytes, {
+      contentType: 'image/png',
+      upsert: false,
+    });
+
+  if (upload.error) {
+    throw new Error(upload.error.message);
+  }
+
+  const publicData = supabase.storage
+    .from('iris-photos')
+    .getPublicUrl(filePath);
+
+  return publicData?.data?.publicUrl || null;
+}
+
 export async function generateIrisImage({
   prompt,
   imageUrl,
   provider = 'openai',
   strength = 0.75,
   aspectRatio = '1:1',
+  supabase = null,
+  userId = 'shared',
 }) {
   if (provider === 'openai') {
-    return generateOpenAI({ prompt });
+    return generateOpenAI({ prompt, supabase, userId });
   }
 
   const falKey = getFalKey();
@@ -37,7 +62,7 @@ export async function generateIrisImage({
   return generateKling({ prompt, imageUrl, strength, aspectRatio, falKey });
 }
 
-async function generateOpenAI({ prompt }) {
+async function generateOpenAI({ prompt, supabase, userId }) {
   const apiKey = getOpenAIKey();
 
   const res = await fetch(OPENAI_IMAGE_URL, {
@@ -56,18 +81,20 @@ async function generateOpenAI({ prompt }) {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`[OPENAI] ${res.status}: ${err}`);
+    throw new Error(err);
   }
 
   const data = await res.json();
-
   const base64 = data?.data?.[0]?.b64_json;
+
   if (!base64) {
-    throw new Error('[OPENAI] No image returned');
+    throw new Error('No image returned');
   }
 
+  const imageUrl = await saveGeneratedImage(base64, supabase, userId);
+
   return {
-    imageBase64: base64,
+    imageUrl,
     provider: 'openai',
   };
 }
@@ -88,6 +115,7 @@ async function generateKling({ prompt, imageUrl, strength, aspectRatio, falKey }
   });
 
   const data = await res.json();
+
   return {
     imageUrl: data?.images?.[0]?.url || data?.image?.url,
     seed: data?.seed,
@@ -110,6 +138,7 @@ async function generateXAI({ prompt, imageUrl, strength, falKey }) {
   });
 
   const data = await res.json();
+
   return {
     imageUrl: data?.images?.[0]?.url || data?.image?.url,
     seed: data?.seed,
