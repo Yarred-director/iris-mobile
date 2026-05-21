@@ -87,6 +87,11 @@ async function requireUserId(req, res) {
 
 // LLM-based factual question detection — no hardcoded keywords
 async function looksLikeFactualQuestion(text, llmClient, model) {
+  // Short messages (under 4 words) are almost never factual questions —
+  // they're greetings, nicknames, emotional expressions, or reactions.
+  const wordCount = text.trim().split(/\s+/).length;
+  if (wordCount <= 3) return false;
+
   try {
     const resp = await llmClient.chat.completions.create({
       model,
@@ -95,12 +100,21 @@ async function looksLikeFactualQuestion(text, llmClient, model) {
       messages: [
         {
           role: 'user',
-          content: 'Is this message a factual question that requires a specific accurate answer (location, quantity, time, object details)? Answer only {"factual": true} or {"factual": false}.\n\nMessage: "' + text + '"',
+          content: `You are classifying messages in a conversation between a user and Iris, their AI companion.
+
+Is this message a SPECIFIC FACTUAL QUESTION requiring a precise answer (a number, date, location, technical spec)?
+- Terms of endearment, nicknames, emotional expressions, and greetings are NOT factual questions.
+- Vague questions, feelings, opinions, and relationship topics are NOT factual questions.
+- Only return true for clear factual queries like "What is the capital of France?" or "How tall is Eiffel Tower?"
+
+Answer only {"factual": true} or {"factual": false}.
+
+Message: "${text}"`,
         },
       ],
     });
     const raw = resp.choices?.[0]?.message?.content?.trim() || '';
-    const parsed = JSON.parse(raw.replace(/`json|`/g, '').trim());
+    const parsed = JSON.parse(raw.replace(/\`json|\`/g, '').trim());
     return !!parsed.factual;
   } catch (e) {
     return false;
