@@ -38,6 +38,7 @@ import { intentJudgeLLM } from './behavior/intentJudge.js';
 import { autoStoreEpisodicMemoryHybrid } from './memory/episodicAutoStore.js';
 
 // Governance Engine
+import { maybeRunDecay } from './memory/memoryDecay.js';
 import { buildTemporalContextBlock, loadTemporalProfile, touchLastInteraction, touchLastPhotoSent } from './memory/timeContext.js';
 import { loadRelationshipState, updateRelationshipState, formatRelationshipBlock, inferRelationshipDelta } from './memory/relationshipTimeline.js';
 import { loadInternalState, updateInternalState, formatInternalStateBlock, inferStateUpdate } from './memory/internalState.js';
@@ -140,6 +141,14 @@ app.post('/chat', async (req, res) => {
       userId,
       sceneKey,
       msg: message.slice(0, 160),
+    });
+
+    // Memory decay — runs at most once per 24h per user, non-blocking
+    maybeRunDecay({
+      supabase: req.supabase,
+      userId,
+      llmClient: getLLMClient('openai'),
+      model: MODELS.openai,
     });
 
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
