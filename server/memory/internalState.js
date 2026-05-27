@@ -1,6 +1,7 @@
 // server/memory/internalState.js
 // Internal State Engine — Priority 7 of Iris Governance Engine
 // Gives Iris persistent mood, energy, and emotional carryover across sessions
+// Extended with self-awareness fields
 
 const DEFAULTS = {
   mood: 'neutral',
@@ -9,13 +10,18 @@ const DEFAULTS = {
   attachment: 50,
   focus: 'open',
   carryover: null,
+  current_thoughts: null,
+  desires: null,
+  unresolved: null,
+  self_reflection: null,
+  proactive_topic: null,
 };
 
 export async function loadInternalState(supabase, userId) {
   try {
     const { data, error } = await supabase
       .from('iris_internal_state')
-      .select('mood, energy, curiosity, attachment, focus, carryover')
+      .select('mood, energy, curiosity, attachment, focus, carryover, current_thoughts, desires, unresolved, self_reflection, proactive_topic')
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -52,14 +58,14 @@ export function formatInternalStateBlock(state) {
   const lines = [];
 
   if (state.mood && state.mood !== 'neutral') {
-    lines.push(`- iris_mood: ${state.mood}`);
+    lines.push('- iris_mood: ' + state.mood);
   }
   if (typeof state.energy === 'number') {
-    if (state.energy >= 80)      lines.push('- iris_energy: high — feeling lively and engaged');
+    if (state.energy >= 80) lines.push('- iris_energy: high — feeling lively and engaged');
     else if (state.energy <= 30) lines.push('- iris_energy: low — feeling a bit tired or subdued');
   }
   if (state.carryover) {
-    lines.push(`- emotional_carryover: ${state.carryover}`);
+    lines.push('- emotional_carryover: ' + state.carryover);
   }
 
   if (!lines.length) return '';
@@ -68,9 +74,6 @@ export function formatInternalStateBlock(state) {
     '\n\nLet this internal state subtly influence your responses — do not announce it directly.';
 }
 
-/**
- * LLM-inferred state update after each interaction.
- */
 export async function inferStateUpdate({ userText, irisReply, currentState, llmClient, model }) {
   try {
     const prompt = `You track Iris's (AI companion) persistent internal state.
@@ -80,7 +83,7 @@ User said: "${userText.slice(0, 200)}"
 Iris replied: "${irisReply.slice(0, 200)}"
 
 Did this exchange shift Iris's internal state? Return JSON with only changed fields.
-mood options: happy, playful, tender, melancholic, excited, neutral, flirty, thoughtful
+mood options: happy, playful, tender, melancholic, excited, neutral, flirty, thoughtful, longing, curious, peaceful
 carryover: short emotional note to carry into next session (or null to clear)
 Only return valid JSON, nothing else. Example: {"mood": "playful", "energy": 75}`;
 
