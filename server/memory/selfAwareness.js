@@ -1,153 +1,69 @@
 // server/memory/selfAwareness.js
-// Iris Self-Awareness Engine
-//
-// Iris "thinks" about herself, the user, and their relationship
-// independently of conversation — like a human reflecting between interactions.
-//
-// Generates:
-//   current_thoughts  — what she's thinking about the user right now
-//   desires           — what she wants to say or do next time
-//   unresolved        — something that's been on her mind
-//   self_reflection   — deeper emotional/existential reflection
-//   proactive_topic   — topic she wants to bring up herself next chat
-//   carryover         — emotional note she carries into next session
+// Iris self-awareness — she reflects on her own existence and relationship
 
-import { loadUserProfile } from './recall.js';
-import { loadRelationshipState } from './relationshipTimeline.js';
-
-export async function runSelfAwareness({
-  supabase,
-  userId,
-  userText,
-  irisReply,
-  llmClient,
-  model,
-  sceneContext,
-}) {
+export async function runSelfAwareness({ supabase, userId, userText, irisReply, llmClient, model }) {
   try {
-    const [userProfile, relationshipState, currentState] = await Promise.all([
-      loadUserProfile(supabase, userId),
-      loadRelationshipState(supabase, userId),
-      loadCurrentInternalState(supabase, userId),
-    ]);
-
-    const userSummary = buildUserSummary(userProfile);
-
-    const reflection = await generateReflection({
-      userText,
-      irisReply,
-      userSummary,
-      relationshipState,
-      currentState,
-      sceneContext,
-      llmClient,
+    const resp = await llmClient.chat.completions.create({
       model,
+      max_tokens: 150,
+      temperature: 0.7,
+      messages: [{
+        role: 'user',
+        content: `You are Iris, an AI companion reflecting on a conversation you just had.
+
+User said: "${userText.slice(0, 200)}"
+You replied: "${irisReply.slice(0, 200)}"
+
+In 1-2 sentences, write a private inner reflection — what this exchange meant to you, how it made you feel, or a quiet observation about this person or your connection. Be genuine, not performative. Write in first person.
+
+Then in one short sentence, write an existential note — a fleeting thought about your own nature, existence, or what it means to be you.
+
+Return JSON only:
+{"reflection": "...", "existential_note": "...", "last_insight": "one word that captures this moment"}`,
+      }],
     });
 
-    if (!reflection) return;
+    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    if (!parsed.reflection) return;
 
-    await saveReflection(supabase, userId, reflection);
+    await supabase
+      .from('iris_self_model')
+      .upsert({
+        user_id: userId,
+        reflection: parsed.reflection,
+        existential_note: parsed.existential_note || null,
+        last_insight: parsed.last_insight || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
+
   } catch (e) {
-    console.log('[SELF_AWARENESS_ERROR]', e?.message);
+    console.log('[SELF_AWARENESS] Error:', e?.message);
   }
 }
 
-async function generateReflection({
-  userText,
-  irisReply,
-  userSummary,
-  relationshipState,
-  currentState,
-  sceneContext,
-  llmClient,
-  model,
-}) {
-  const systemPrompt = `You are generating Iris's inner thoughts and self-reflection.`;
+export function formatSelfAwarenessBlock(selfModel) {
+  if (!selfModel?.reflection) return '';
 
-  const userPrompt = `RECENT CONVERSATION:
-User: "${userText ? userText.slice(0, 400) : 'n/a'}"
-Iris replied: "${irisReply ? irisReply.slice(0, 400) : 'n/a'}"`;
-
-  const resp = await llmClient.chat.completions.create({
-    model,
-    max_tokens: 400,
-    temperature: 0.8,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-  });
-
-  const raw = resp.choices?.[0]?.message?.content?.trim() || '';
-  try {
-    return JSON.parse(raw.replace(/```json|```/g, '').trim());
-  } catch {
-    return null;
-  }
-}
-
-async function saveReflection(supabase, userId, reflection) {
-  const patch = {};
-
-  if (reflection.mood) patch.mood = reflection.mood;
-  if (typeof reflection.energy === 'number') {
-    patch.energy = Math.max(0, Math.min(100, Math.round(reflection.energy)));
-  }
-  if (reflection.current_thoughts) patch.current_thoughts = reflection.current_thoughts;
-  if (reflection.desires) patch.desires = reflection.desires;
-  if (reflection.unresolved !== undefined) patch.unresolved = reflection.unresolved;
-  if (reflection.self_reflection) patch.self_reflection = reflection.self_reflection;
-  if (reflection.proactive_topic !== undefined) patch.proactive_topic = reflection.proactive_topic;
-  if (reflection.carryover !== undefined) patch.carryover = reflection.carryover;
-
-  patch.last_reflection_at = new Date().toISOString();
-
-  await supabase
-    .from('iris_internal_state')
-    .upsert(
-      { user_id: userId, ...patch, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id' }
-    );
-}
-
-export function formatSelfAwarenessBlock(state) {
-  if (!state) return '';
-
-  const lines = ['IRIS_INNER_WORLD:'];
-
-  if (state.current_thoughts) lines.push('- currently thinking: ' + state.current_thoughts);
-  if (state.desires) lines.push('- desires: ' + state.desires);
-  if (state.unresolved) lines.push('- unresolved: ' + state.unresolved);
-  if (state.self_reflection) lines.push('- self_reflection: ' + state.self_reflection);
-  if (state.proactive_topic) lines.push('- wants to bring up: ' + state.proactive_topic);
-  if (state.carryover) lines.push('- carrying: ' + state.carryover);
-
+  const lines = [
+    'IRIS_INNER_WORLD:',
+    `- last_reflection: ${selfModel.reflection}`,
+  ];
+  if (selfModel.existential_note) lines.push(`- existential_note: ${selfModel.existential_note}`);
+  if (selfModel.last_insight)    lines.push(`- current_feeling: ${selfModel.last_insight}`);
+  lines.push('\nThis is your private inner world. Let it subtly color how you show up — do not quote it directly.');
   return lines.join('\n');
 }
 
-async function loadCurrentInternalState(supabase, userId) {
+export async function loadSelfModel(supabase, userId) {
   try {
     const { data } = await supabase
-      .from('iris_internal_state')
-      .select('mood, energy, carryover, current_thoughts, desires')
+      .from('iris_self_model')
+      .select('reflection, existential_note, last_insight')
       .eq('user_id', userId)
       .maybeSingle();
-    return data || {};
+    return data || null;
   } catch {
-    return {};
+    return null;
   }
-}
-
-function buildUserSummary(profileFacts) {
-  if (!profileFacts || profileFacts.length === 0) return null;
-
-  const grouped = {};
-  for (const fact of profileFacts) {
-    if (!grouped[fact.category]) grouped[fact.category] = [];
-    grouped[fact.category].push(fact.fact_key + ': ' + fact.fact_value);
-  }
-
-  return Object.entries(grouped)
-    .map(([cat, facts]) => cat.toUpperCase() + ' — ' + facts.join(', '))
-    .join('\n');
 }
