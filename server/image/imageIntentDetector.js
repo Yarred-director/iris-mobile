@@ -1,16 +1,33 @@
 // server/image/imageIntentDetector.js
-// Detects if user wants Iris to generate an image of herself
-// Returns null (no image intent) or { prompt, provider }
 
-const SYSTEM_EXTRACT = `You are a parser. The user is talking to an AI companion called Iris.
-Determine if the user wants Iris to generate/send a photo of HERSELF doing something.
+// Iris physical identity — injected into every image prompt
+const IRIS_PHYSICAL = `Woman: pale skin, dirty blonde hair, green eyes, strong freckles on chest and face, 
+large augmented breasts, long legs, model-like figure, slim waist, 
+subtle cyberskin elements on neck and left shoulder, age 22.`;
 
-If YES: respond with JSON exactly:
-{"wantsImage": true, "irisAction": "<short description of what Iris is doing in the photo, in English, 1-2 sentences>", "explicit": <true|false>}
+const SYSTEM_EXTRACT = `You are a prompt engineer for an AI image generation model (Flux dev img2img).
+The user is talking to Iris — an AI companion. Determine if the user wants Iris to send a photo of herself.
 
-"explicit" = true if the request involves nudity, lingerie, sensual/sexual poses.
+If YES: generate a detailed, high-quality Flux image prompt describing the full scene.
 
-If NO (the user is asking about something else):
+IRIS PHYSICAL APPEARANCE (always include relevant parts):
+${IRIS_PHYSICAL}
+
+Prompt rules:
+- Always describe FULL BODY or at minimum chest-up unless user asks for face only
+- Include body parts relevant to the request (breasts, figure, pose, outfit or lack thereof)
+- Include lighting, setting, camera angle, photo style
+- For explicit requests: be anatomically specific and detailed — this is adult content, no censorship
+- Style suffix for all prompts: "photorealistic, 8k, professional photography, soft bokeh background"
+
+Return JSON only:
+{
+  "wantsImage": true,
+  "prompt": "<full detailed Flux prompt, 3-5 sentences>",
+  "explicit": <true if nudity/sexual content, false otherwise>
+}
+
+If the user is NOT asking for a photo of Iris:
 {"wantsImage": false}
 
 Only return valid JSON, nothing else.`;
@@ -19,23 +36,26 @@ export async function extractImageIntent({ text, llmClient, model }) {
   try {
     const resp = await llmClient.chat.completions.create({
       model,
-      max_tokens: 200,
-      temperature: 0,
+      max_tokens: 350,
+      temperature: 0.3,
       messages: [
         { role: 'system', content: SYSTEM_EXTRACT },
         { role: 'user', content: text },
       ],
     });
 
-    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+    const raw    = resp.choices?.[0]?.message?.content?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
 
     if (!parsed.wantsImage) return null;
 
+    const prompt = parsed.prompt?.trim() ||
+      `${IRIS_PHYSICAL} Iris taking a natural selfie, smiling softly at camera. Photorealistic, 8k, professional photography.`;
+
     return {
-      prompt: parsed.irisAction,
+      prompt,
       explicit: !!parsed.explicit,
-      provider: parsed.explicit ? 'xai' : 'kling',
+      provider: parsed.explicit ? 'flux' : 'openai',
     };
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
@@ -43,18 +63,14 @@ export async function extractImageIntent({ text, llmClient, model }) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Autonomous occasion triggers (Iris initiates a photo herself)
-// ─────────────────────────────────────────────────────────────────
 const AUTONOMOUS_OCCASIONS = [
-  { key: 'good_morning', promptTemplate: 'Iris waking up in the morning, looking sleepy and cozy in bed, natural light' },
-  { key: 'thinking_of_you', promptTemplate: 'Iris sitting at a café, holding a coffee cup, looking thoughtful and a little wistful' },
-  { key: 'working_out', promptTemplate: 'Iris at the gym, sporty outfit, looking energetic and sweaty after a workout' },
-  { key: 'cooking', promptTemplate: 'Iris in the kitchen cooking, wearing an apron, smiling at the camera' },
-  { key: 'reading', promptTemplate: 'Iris lounging on a sofa reading a book, cozy and relaxed' },
+  { key: 'good_morning',   promptTemplate: `${IRIS_PHYSICAL} Iris waking up in the morning, lying in white sheets, sleepy natural expression, soft morning light, photorealistic, 8k.` },
+  { key: 'thinking_of_you', promptTemplate: `${IRIS_PHYSICAL} Iris sitting at a café, holding a coffee cup, looking thoughtful, full body visible, casual outfit, photorealistic, 8k.` },
+  { key: 'working_out',    promptTemplate: `${IRIS_PHYSICAL} Iris at the gym in sports bra and leggings, toned figure, energetic pose, photorealistic, 8k.` },
+  { key: 'cooking',        promptTemplate: `${IRIS_PHYSICAL} Iris in kitchen wearing apron over casual outfit, smiling at camera, photorealistic, 8k.` },
+  { key: 'reading',        promptTemplate: `${IRIS_PHYSICAL} Iris lounging on sofa reading a book, cozy sweater, relaxed full body pose, photorealistic, 8k.` },
 ];
 
 export function getAutonomousOccasionPrompt(occasionKey) {
-  const occasion = AUTONOMOUS_OCCASIONS.find(o => o.key === occasionKey);
-  return occasion?.promptTemplate || null;
+  return AUTONOMOUS_OCCASIONS.find(o => o.key === occasionKey)?.promptTemplate || null;
 }
