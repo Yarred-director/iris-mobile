@@ -1,9 +1,9 @@
 // server/image/imageGen.js
+// Primary: Kling Omni 3 (o3) — najnovší, najlepšia konzistencia tváre
 
-const FAL_API_URL_FLUX  = 'https://fal.run/fal-ai/flux/dev/image-to-image';
-const FAL_API_URL_KLING = 'https://fal.run/fal-ai/kling-image/v3/image-to-image';
-const FAL_API_URL_XAI   = 'https://fal.run/xai/grok-imagine-image/edit';
-const OPENAI_IMAGE_URL  = 'https://api.openai.com/v1/images/generations';
+// Kling Omni 3 — nový endpoint, image_urls je pole
+const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-image';
+const OPENAI_IMAGE_URL      = 'https://api.openai.com/v1/images/generations';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
@@ -23,7 +23,7 @@ async function persistToSupabase(imageUrl, supabase, userId) {
   try {
     const res = await fetch(imageUrl);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-    const buffer = await res.arrayBuffer();
+    const buffer   = await res.arrayBuffer();
     const filePath = `generated/${userId}/${Date.now()}.jpg`;
     const { error } = await supabase.storage
       .from('iris-photos')
@@ -58,153 +58,66 @@ async function persistBase64ToSupabase(base64, supabase, userId) {
 export async function generateIrisImage({
   prompt,
   imageUrl,
-  provider = 'flux',
-  strength = 0.82,
+  provider = 'kling',
+  strength = 0.75,
   aspectRatio = '1:1',
   supabase = null,
   userId = 'shared',
 }) {
   console.log(`[IMAGE_GEN] provider=${provider} prompt="${prompt.slice(0, 80)}"`);
 
-  if (provider === 'openai') {
-    return generateOpenAI({ prompt, supabase, userId });
-  }
-  if (provider === 'flux') {
-    return generateFlux({ prompt, imageUrl, strength, supabase, userId });
-  }
-  if (provider === 'xai') {
-    return generateXAI({ prompt, imageUrl, strength, supabase, userId });
-  }
-  // fallback
-  return generateKling({ prompt, imageUrl, strength, aspectRatio, supabase, userId });
+  if (provider === 'openai') return generateOpenAI({ prompt, supabase, userId });
+  return generateKlingO3({ prompt, imageUrl, strength, aspectRatio, supabase, userId });
 }
 
-// ─── Flux Dev img2img + Realism LoRA ─────────────────────────────
-async function generateFlux({ prompt, imageUrl, strength, supabase, userId }) {
+// ─── Kling Omni 3 img2img ─────────────────────────────────────────
+// Nový endpoint: image_urls je pole, nie single string
+async function generateKlingO3({ prompt, imageUrl, strength, aspectRatio, supabase, userId }) {
   const falKey = getFalKey();
+
+  console.log('[IMAGE_GEN][KLING_O3] Sending', { prompt: prompt.slice(0, 80), strength });
 
   const body = {
     prompt,
-    image_url: imageUrl,
+    image_urls: [imageUrl],   // ← O3 používa pole
     strength,
-    loras: [
-      {
-        path: 'XLabs-AI/flux-RealismLora',
-        scale: 1.0,
-      },
-    ],
-    num_inference_steps: 28,
-    guidance_scale: 3.5,
-    enable_safety_checker: false,
-    safety_tolerance: '5',
-    output_format: 'jpeg',
+    aspect_ratio: aspectRatio,
   };
 
-  console.log('[IMAGE_GEN][FLUX] Sending request', { prompt: prompt.slice(0, 80), strength });
-
-  const res = await fetch(FAL_API_URL_FLUX, {
+  const res = await fetch(FAL_API_URL_KLING_O3, {
     method: 'POST',
-    headers: {
-      Authorization: `Key ${falKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`[FLUX] fal.ai error ${res.status}: ${err.slice(0, 300)}`);
+    throw new Error(`[KLING_O3] ${res.status}: ${err.slice(0, 300)}`);
   }
 
-  const data = await res.json();
-  console.log('[IMAGE_GEN][FLUX] Done', { url: (data?.images?.[0]?.url || '').slice(0, 60) });
-
+  const data   = await res.json();
   const rawUrl = data?.images?.[0]?.url || data?.image?.url;
-  if (!rawUrl) throw new Error('[FLUX] No image URL in response');
+  if (!rawUrl) throw new Error('[KLING_O3] No image URL in response');
 
-  const permanentUrl = await persistToSupabase(rawUrl, supabase, userId);
-  return { imageUrl: permanentUrl, provider: 'flux' };
+  console.log('[IMAGE_GEN][KLING_O3] Done', { url: rawUrl.slice(0, 60) });
+  return { imageUrl: await persistToSupabase(rawUrl, supabase, userId), provider: 'kling_o3' };
 }
 
-// ─── OpenAI gpt-image-1 ───────────────────────────────────────────
+// ─── OpenAI gpt-image-1 (fallback pre safe bez reference) ────────
 async function generateOpenAI({ prompt, supabase, userId }) {
   const apiKey = getOpenAIKey();
 
   const res = await fetch(OPENAI_IMAGE_URL, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-image-1',
-      prompt,
-      size: '1024x1536',
-      quality: 'high',
-    }),
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1536', quality: 'high' }),
   });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[OPENAI] error ${res.status}: ${err.slice(0, 300)}`);
-  }
+  if (!res.ok) throw new Error(`[OPENAI] ${res.status}: ${(await res.text()).slice(0, 300)}`);
 
   const data   = await res.json();
   const base64 = data?.data?.[0]?.b64_json;
   if (!base64) throw new Error('[OPENAI] No image returned');
 
-  const imageUrl = await persistBase64ToSupabase(base64, supabase, userId);
-  return { imageUrl, provider: 'openai' };
-}
-
-// ─── Kling v3 img2img ─────────────────────────────────────────────
-async function generateKling({ prompt, imageUrl, strength, aspectRatio, supabase, userId }) {
-  const falKey = getFalKey();
-
-  console.log('[IMAGE_GEN][KLING] Sending request', { prompt: prompt.slice(0, 80) });
-
-  const res = await fetch(FAL_API_URL_KLING, {
-    method: 'POST',
-    headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, image_url: imageUrl, strength, aspect_ratio: aspectRatio }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[KLING] error ${res.status}: ${err.slice(0, 300)}`);
-  }
-
-  const data   = await res.json();
-  const rawUrl = data?.images?.[0]?.url || data?.image?.url;
-  if (!rawUrl) throw new Error('[KLING] No image URL');
-
-  console.log('[IMAGE_GEN][KLING] Done', { url: rawUrl.slice(0, 60) });
-  const permanentUrl = await persistToSupabase(rawUrl, supabase, userId);
-  return { imageUrl: permanentUrl, provider: 'kling' };
-}
-
-// ─── XAI Grok ────────────────────────────────────────────────────
-async function generateXAI({ prompt, imageUrl, strength, supabase, userId }) {
-  const falKey = getFalKey();
-
-  console.log('[IMAGE_GEN][XAI] Sending request', { prompt: prompt.slice(0, 80) });
-
-  const res = await fetch(FAL_API_URL_XAI, {
-    method: 'POST',
-    headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, image_url: imageUrl, strength }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[XAI] error ${res.status}: ${err.slice(0, 300)}`);
-  }
-
-  const data   = await res.json();
-  const rawUrl = data?.images?.[0]?.url || data?.image?.url;
-  if (!rawUrl) throw new Error('[XAI] No image URL');
-
-  console.log('[IMAGE_GEN][XAI] Done', { url: rawUrl.slice(0, 60) });
-  const permanentUrl = await persistToSupabase(rawUrl, supabase, userId);
-  return { imageUrl: permanentUrl, provider: 'xai' };
+  return { imageUrl: await persistBase64ToSupabase(base64, supabase, userId), provider: 'openai' };
 }

@@ -1,17 +1,9 @@
 // server/image/imageHandler.js
+// Všetko cez Kling O3 — safe aj explicit
 
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 
-// ─── Provider routing ─────────────────────────────────────────────
-// explicit/NSFW  → Flux dev + Realism LoRA (img2img, safety off)
-// safe selfie    → OpenAI gpt-image-1 (no reference needed, clean output)
-function chooseProvider(intent) {
-  if (intent?.explicit) return 'flux';
-  return 'openai';
-}
-
-// ─── Reference photo ─────────────────────────────────────────────
 export async function getIrisReferencePhoto(supabase, userId) {
   try {
     const { data, error } = await supabase
@@ -34,38 +26,31 @@ export async function saveIrisReferencePhoto(supabase, userId, imageUrl) {
   return true;
 }
 
-// ─── Main handler ─────────────────────────────────────────────────
 export async function handleImageRequest({ message, userId, supabase, llmClient, model }) {
   const intent = await extractImageIntent({ text: message, llmClient, model });
   if (!intent) return { handled: false };
 
   console.log('[IMAGE_HANDLER] Intent:', {
-    prompt: intent.prompt?.slice(0, 80),
+    prompt:   intent.prompt?.slice(0, 80),
     explicit: intent.explicit,
-    provider: chooseProvider(intent),
+    provider: 'kling_o3',
   });
 
-  const provider     = chooseProvider(intent);
   const referenceUrl = await getIrisReferencePhoto(supabase, userId);
 
-  // Flux vyžaduje referenčnú fotku — bez nej fallback na OpenAI
-  if (provider === 'flux' && !referenceUrl) {
-    console.log('[IMAGE_HANDLER] No reference photo, falling back to openai');
-  }
-
-  if (!referenceUrl && provider !== 'openai') {
+  if (!referenceUrl) {
     return {
-      handled: true,
-      imageUrl: null,
+      handled:     true,
+      imageUrl:    null,
       irisMessage: "Ešte nemám svoju fotku ako základ. Nahraj mi ju cez menu 📸",
     };
   }
 
   try {
     const result = await generateIrisImage({
-      prompt:     intent.prompt,
-      imageUrl:   referenceUrl,
-      provider,
+      prompt:   intent.prompt,
+      imageUrl: referenceUrl,
+      provider: 'kling',   // → Kling O3
       supabase,
       userId,
     });
