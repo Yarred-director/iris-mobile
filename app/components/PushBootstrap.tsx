@@ -1,36 +1,35 @@
-import { useEffect, useRef } from "react";
-
-import { useAuth } from "../../providers/AuthProvider";
-import { registerForPushToken } from "../lib/push";
-import { upsertPushTokenWithAccessToken } from "../lib/pushApi";
+import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
+import { useAuth } from '../../providers/AuthProvider';
+import { registerForPushToken } from '../lib/push';
+import { upsertPushTokenWithAccessToken } from '../lib/pushApi';
 
 export default function PushBootstrap() {
   const { accessToken } = useAuth();
-  const ranRef = useRef(false);
+  const registeredAccessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!accessToken) return;
-    if (ranRef.current) return;
-    ranRef.current = true;
+    if (Platform.OS === 'web' || !accessToken) return;
+    if (registeredAccessTokenRef.current === accessToken) return;
+    let cancelled = false;
+    registeredAccessTokenRef.current = accessToken;
 
     (async () => {
       try {
-        console.log("[PUSH] bootstrap start");
         const token = await registerForPushToken();
-        console.log("[PUSH] expo token =", token);
-
-        if (!token) {
-          console.log("[PUSH] token is null (device/permissions/projectId)");
-          return;
-        }
-
+        if (!token || cancelled) return;
         const result = await upsertPushTokenWithAccessToken(accessToken, token);
-        console.log("[PUSH] /push/register status =", result.status);
-        console.log("[PUSH] /push/register body =", result.text.slice(0, 200));
-      } catch (e: any) {
-        console.log("[PUSH] bootstrap error =", e?.message ?? String(e));
+        if (!result.ok) {
+          console.log('[PUSH] register failed:', result.status, result.text.slice(0, 160));
+          registeredAccessTokenRef.current = null;
+        }
+      } catch (error: any) {
+        console.log('[PUSH] bootstrap error:', error?.message ?? String(error));
+        registeredAccessTokenRef.current = null;
       }
     })();
+
+    return () => { cancelled = true; };
   }, [accessToken]);
 
   return null;
