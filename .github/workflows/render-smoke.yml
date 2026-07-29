@@ -1,0 +1,27 @@
+name: Render smoke test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for hardened backend
+        shell: bash
+        run: |
+          set -u
+          for attempt in $(seq 1 40); do
+            echo "Render health attempt ${attempt}/40"
+            body="$(curl --silent --show-error --fail --max-time 20 https://iris-mobile.onrender.com/health 2>/dev/null || true)"
+            if echo "$body" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+              echo "Render is serving the hardened backend: $body"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "Render did not expose the hardened /health endpoint in time."
+          exit 1
