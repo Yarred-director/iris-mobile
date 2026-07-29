@@ -1,0 +1,19 @@
+{
+  "name": "Iris",
+  "short_name": "Iris",
+  "description": "Your private Iris companion",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b0f",
+  "theme_color": "#0b0b0f",
+  "icons": [
+    {
+      "src": "/iris-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
