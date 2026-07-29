@@ -1,7 +1,5 @@
 // server/memory/internalState.js
-// Internal State Engine — Priority 7 of Iris Governance Engine
-// Gives Iris persistent mood, energy, and emotional carryover across sessions
-// Extended with self-awareness fields
+// Persistent mood/energy state. Writes are event-driven by memoryPolicy.
 
 const DEFAULTS = {
   mood: 'neutral',
@@ -33,41 +31,41 @@ export async function loadInternalState(supabase, userId) {
 }
 
 export async function updateInternalState(supabase, userId, patch) {
-  try {
-    const sanitized = { ...patch };
-    for (const k of ['energy', 'curiosity', 'attachment']) {
-      if (typeof sanitized[k] === 'number') {
-        sanitized[k] = Math.max(0, Math.min(100, Math.round(sanitized[k])));
-      }
+  const sanitized = {};
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!(key in DEFAULTS)) continue;
+    if (['energy', 'curiosity', 'attachment'].includes(key) && typeof value === 'number') {
+      sanitized[key] = Math.max(0, Math.min(100, Math.round(value)));
+    } else if (value === null || typeof value === 'string') {
+      sanitized[key] = value;
     }
-
-    await supabase
-      .from('iris_internal_state')
-      .upsert(
-        { user_id: userId, ...sanitized, updated_at: new Date().toISOString() },
-        { onConflict: 'user_id' }
-      );
-  } catch (e) {
-    console.log('[INTERNAL_STATE] update error:', e?.message);
   }
+  if (!Object.keys(sanitized).length) return false;
+
+  const { error } = await supabase
+    .from('iris_internal_state')
+    .upsert(
+      { user_id: userId, ...sanitized, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' },
+    );
+
+  if (error) {
+    console.log('[INTERNAL_STATE] update error:', error.message);
+    return false;
+  }
+  return true;
 }
 
 export function formatInternalStateBlock(state) {
   if (!state) return '';
-
   const lines = [];
 
-  if (state.mood && state.mood !== 'neutral') {
-    lines.push('- iris_mood: ' + state.mood);
-  }
+  if (state.mood && state.mood !== 'neutral') lines.push('- iris_mood: ' + state.mood);
   if (typeof state.energy === 'number') {
     if (state.energy >= 80) lines.push('- iris_energy: high — feeling lively and engaged');
     else if (state.energy <= 30) lines.push('- iris_energy: low — feeling a bit tired or subdued');
   }
-  if (state.carryover) {
-    lines.push('- emotional_carryover: ' + state.carryover);
-  }
-
+  if (state.carryover) lines.push('- emotional_carryover: ' + state.carryover);
   if (!lines.length) return '';
 
   return 'IRIS_INTERNAL_STATE:\n' + lines.join('\n') +
