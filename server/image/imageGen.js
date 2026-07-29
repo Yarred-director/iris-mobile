@@ -1,123 +1,79 @@
-// server/image/imageGen.js
-// Primary: Kling Omni 3 (o3) — najnovší, najlepšia konzistencia tváre
+import { persistBase64Image, persistRemoteImage } from '../media/privateMedia.js';
 
-// Kling Omni 3 — nový endpoint, image_urls je pole
 const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-image';
-const OPENAI_IMAGE_URL      = 'https://api.openai.com/v1/images/generations';
+const OPENAI_IMAGE_URL = 'https://api.openai.com/v1/images/generations';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
   if (!key) throw new Error('FAL_KEY missing in environment');
   return key;
 }
-
 function getOpenAIKey() {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error('OPENAI_API_KEY missing');
   return key;
 }
-
-// ─── Supabase persistence ─────────────────────────────────────────
-async function persistToSupabase(imageUrl, supabase, userId) {
-  if (!supabase || !imageUrl) return imageUrl;
-  try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-    const buffer   = await res.arrayBuffer();
-    const filePath = `generated/${userId}/${Date.now()}.jpg`;
-    const { error } = await supabase.storage
-      .from('iris-photos')
-      .upload(filePath, new Uint8Array(buffer), { contentType: 'image/jpeg', upsert: false });
-    if (error) throw new Error(error.message);
-    const { data } = supabase.storage.from('iris-photos').getPublicUrl(filePath);
-    return data.publicUrl || imageUrl;
-  } catch (e) {
-    console.log('[IMAGE_GEN] Persist failed, using original URL:', e?.message);
-    return imageUrl;
-  }
+function clampPrompt(prompt) {
+  const value = String(prompt || '').trim();
+  if (!value) throw new Error('Image prompt is empty');
+  return value.slice(0, 2500);
+}
+function normalizeAspectRatio(value) {
+  const allowed = new Set(['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9']);
+  return allowed.has(value) ? value : 'auto';
 }
 
-async function persistBase64ToSupabase(base64, supabase, userId) {
-  if (!supabase || !base64) return null;
-  try {
-    const bytes    = Buffer.from(base64, 'base64');
-    const filePath = `generated/${userId}/${Date.now()}.png`;
-    const { error } = await supabase.storage
-      .from('iris-photos')
-      .upload(filePath, bytes, { contentType: 'image/png', upsert: false });
-    if (error) throw new Error(error.message);
-    const { data } = supabase.storage.from('iris-photos').getPublicUrl(filePath);
-    return data.publicUrl || null;
-  } catch (e) {
-    console.log('[IMAGE_GEN] Base64 persist failed:', e?.message);
-    return null;
-  }
+export async function generateIrisImage({ prompt, imageUrl, provider = 'kling', aspectRatio = 'auto', userId = 'shared', signedUrlSeconds = 86400 }) {
+  const safePrompt = clampPrompt(prompt);
+  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${safePrompt.length}`);
+  if (provider === 'openai') return generateOpenAI({ prompt: safePrompt, userId, signedUrlSeconds });
+  return generateKlingO3({ prompt: safePrompt, imageUrl, aspectRatio: normalizeAspectRatio(aspectRatio), userId, signedUrlSeconds });
 }
 
-// ─── Main entry ───────────────────────────────────────────────────
-export async function generateIrisImage({
-  prompt,
-  imageUrl,
-  provider = 'kling',
-  strength = 0.75,
-  aspectRatio = '1:1',
-  supabase = null,
-  userId = 'shared',
-}) {
-  console.log(`[IMAGE_GEN] provider=${provider} prompt="${prompt.slice(0, 80)}"`);
-
-  if (provider === 'openai') return generateOpenAI({ prompt, supabase, userId });
-  return generateKlingO3({ prompt, imageUrl, strength, aspectRatio, supabase, userId });
-}
-
-// ─── Kling Omni 3 img2img ─────────────────────────────────────────
-// Nový endpoint: image_urls je pole, nie single string
-async function generateKlingO3({ prompt, imageUrl, strength, aspectRatio, supabase, userId }) {
-  const falKey = getFalKey();
-
-  console.log('[IMAGE_GEN][KLING_O3] Sending', { prompt: prompt.slice(0, 80), strength });
-
+async function generateKlingO3({ prompt, imageUrl, aspectRatio, userId, signedUrlSeconds }) {
+  if (!imageUrl) throw new Error('Reference image URL missing');
+  const referencedPrompt = /@Image\d*/i.test(prompt) ? prompt : `@Image1 ${prompt}`;
   const body = {
-    prompt,
-    image_urls: [imageUrl],   // ← O3 používa pole
-    strength,
+    prompt: referencedPrompt,
+    image_urls: [imageUrl],
+    resolution: '1K',
+    result_type: 'single',
+    num_images: 1,
     aspect_ratio: aspectRatio,
+    output_format: 'png',
   };
-
-  const res = await fetch(FAL_API_URL_KLING_O3, {
+  const timeoutMs = Math.max(30000, Math.min(Number(process.env.IMAGE_GENERATION_TIMEOUT_MS || 240000), 300000));
+  const response = await fetch(FAL_API_URL_KLING_O3, {
     method: 'POST',
-    headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Key ${getFalKey()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`[KLING_O3] ${res.status}: ${err.slice(0, 300)}`);
-  }
-
-  const data   = await res.json();
-  const rawUrl = data?.images?.[0]?.url || data?.image?.url;
-  if (!rawUrl) throw new Error('[KLING_O3] No image URL in response');
-
-  console.log('[IMAGE_GEN][KLING_O3] Done', { url: rawUrl.slice(0, 60) });
-  return { imageUrl: await persistToSupabase(rawUrl, supabase, userId), provider: 'kling_o3' };
+  if (!response.ok) throw new Error(`[KLING_O3] ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  const data = await response.json();
+  const image = data?.images?.[0] || data?.image || null;
+  if (!image?.url) throw new Error('[KLING_O3] No image URL in response');
+  const persisted = await persistRemoteImage({
+    sourceUrl: image.url,
+    userId,
+    contentType: image.content_type || 'image/png',
+    signedUrlSeconds,
+  });
+  return { ...persisted, provider: 'kling_o3' };
 }
 
-// ─── OpenAI gpt-image-1 (fallback pre safe bez reference) ────────
-async function generateOpenAI({ prompt, supabase, userId }) {
-  const apiKey = getOpenAIKey();
-
-  const res = await fetch(OPENAI_IMAGE_URL, {
+async function generateOpenAI({ prompt, userId, signedUrlSeconds }) {
+  const timeoutMs = Math.max(30000, Math.min(Number(process.env.IMAGE_GENERATION_TIMEOUT_MS || 240000), 300000));
+  const response = await fetch(OPENAI_IMAGE_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1536', quality: 'high' }),
+    headers: { Authorization: `Bearer ${getOpenAIKey()}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1536', quality: 'high', output_format: 'png' }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
-
-  if (!res.ok) throw new Error(`[OPENAI] ${res.status}: ${(await res.text()).slice(0, 300)}`);
-
-  const data   = await res.json();
+  if (!response.ok) throw new Error(`[OPENAI_IMAGE] ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  const data = await response.json();
   const base64 = data?.data?.[0]?.b64_json;
-  if (!base64) throw new Error('[OPENAI] No image returned');
-
-  return { imageUrl: await persistBase64ToSupabase(base64, supabase, userId), provider: 'openai' };
+  if (!base64) throw new Error('[OPENAI_IMAGE] No image returned');
+  const persisted = await persistBase64Image({ base64, userId, contentType: 'image/png', signedUrlSeconds });
+  return { ...persisted, provider: 'openai' };
 }
