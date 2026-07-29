@@ -2,82 +2,45 @@
   "expo": {
     "name": "Iris",
     "slug": "iris-mobile",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/iris/icons/icon.png",
     "scheme": "iris",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
-
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yarreddirector.irismobile",
-      "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
     },
-
     "android": {
       "package": "com.yarreddirector.iris",
       "googleServicesFile": "./google-services.json",
-
       "softwareKeyboardLayoutMode": "resize",
-
-      "permissions": [
-        "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE",
-        "WAKE_LOCK",
-        "POST_NOTIFICATIONS"
-      ],
-
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "data": [
-            {
-              "scheme": "iris",
-              "host": "auth",
-              "pathPrefix": "/callback"
-            }
-          ],
-          "category": ["BROWSABLE", "DEFAULT"]
-        }
-      ]
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE", "WAKE_LOCK", "POST_NOTIFICATIONS"],
+      "intentFilters": [{
+        "action": "VIEW",
+        "data": [{ "scheme": "iris", "host": "auth", "pathPrefix": "/callback" }],
+        "category": ["BROWSABLE", "DEFAULT"]
+      }]
     },
-
     "splash": {
       "image": "./assets/images/iris/icons/splash.png",
       "resizeMode": "cover",
       "backgroundColor": "#000000"
     },
-
     "web": {
       "output": "static",
+      "bundler": "metro",
       "favicon": "./assets/images/favicon.png"
     },
-
     "plugins": [
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/iris/icons/splash.png",
-          "resizeMode": "cover",
-          "backgroundColor": "#000000"
-        }
-      ],
+      ["expo-splash-screen", { "image": "./assets/images/iris/icons/splash.png", "resizeMode": "cover", "backgroundColor": "#000000" }],
       "expo-secure-store",
       "expo-notifications"
     ],
-
-    "experiments": {
-      "typedRoutes": true
-    },
-
-    "extra": {
-      "eas": {
-        "projectId": "9dbe6907-e6c8-4426-b3a6-60e116fe1b10"
-      }
-    }
+    "experiments": { "typedRoutes": true },
+    "extra": { "eas": { "projectId": "9dbe6907-e6c8-4426-b3a6-60e116fe1b10" } }
   }
 }
