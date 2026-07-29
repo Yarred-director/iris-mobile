@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
+    "check": "node --check index.js",
     "reminders:run": "node jobs/reminderWorker.js"
   },
   "dependencies": {
