@@ -200,7 +200,6 @@ export async function beginOrTouchTemporalSession(
       p_user_id: userId,
       p_user_timezone: userTimezone,
       p_session_timeout_seconds: timeout,
-      p_now: now,
     });
 
     if (error) {
@@ -224,10 +223,11 @@ export async function beginOrTouchTemporalSession(
 }
 
 export async function touchLastInteraction(supabase, userId) {
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('iris_profiles')
     .upsert(
-      { user_id: userId, last_interaction_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { user_id: userId, last_interaction_at: now, updated_at: now },
       { onConflict: 'user_id' },
     );
 
@@ -239,10 +239,11 @@ export async function touchLastInteraction(supabase, userId) {
 }
 
 export async function touchLastPhotoSent(supabase, userId) {
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('iris_profiles')
     .upsert(
-      { user_id: userId, last_photo_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { user_id: userId, last_photo_sent_at: now, updated_at: now },
       { onConflict: 'user_id' },
     );
 
