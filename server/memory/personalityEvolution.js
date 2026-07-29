@@ -1,13 +1,17 @@
 // server/memory/personalityEvolution.js
-// Iris personality evolution — she gradually adapts to each user
+// Gradual, user-specific personality adaptation.
 
 export async function loadPersonalityEvolution(supabase, userId) {
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('iris_personality_evolution')
-      .select('communication_style, evolved_traits, inside_references, evolved_interests')
+      .select('communication_style, developed_interests, quirks, values, adopted_phrases, evolved_self_summary, evolution_count')
       .eq('user_id', userId)
       .maybeSingle();
+    if (error) {
+      console.log('[PERSONALITY_EVOLUTION] load error:', error.message);
+      return null;
+    }
     return data || null;
   } catch {
     return null;
@@ -18,86 +22,93 @@ export async function evolvePersonality({ supabase, userId, userText, irisReply,
   try {
     const profileSummary = (userProfile || [])
       .slice(0, 5)
-      .map(p => `${p.fact_key}: ${p.fact_value}`)
+      .map(item => `${item.fact_key}: ${item.fact_value}`)
       .join(', ') || 'unknown';
 
     const current = {
-      communication_style: currentEvolution?.communication_style || 'neutral',
-      evolved_traits: currentEvolution?.evolved_traits || [],
-      inside_references: currentEvolution?.inside_references || [],
-      evolved_interests: currentEvolution?.evolved_interests || [],
+      communication_style: currentEvolution?.communication_style || {},
+      developed_interests: currentEvolution?.developed_interests || [],
+      quirks: currentEvolution?.quirks || [],
+      values: currentEvolution?.values || [],
+      adopted_phrases: currentEvolution?.adopted_phrases || [],
+      evolved_self_summary: currentEvolution?.evolved_self_summary || null,
     };
 
     const resp = await llmClient.chat.completions.create({
       model,
-      max_tokens: 200,
-      temperature: 0.4,
+      max_tokens: 220,
+      temperature: 0.3,
       messages: [{
         role: 'user',
-        content: `You track how Iris (AI companion) gradually evolves her personality for a specific user.
-
+        content: `You track how Iris gradually adapts to one user.
 User profile: ${profileSummary}
 Current evolution: ${JSON.stringify(current)}
+User said: "${userText.slice(0, 220)}"
+Iris replied: "${irisReply.slice(0, 220)}"
 
-User said: "${userText.slice(0, 200)}"
-Iris replied: "${irisReply.slice(0, 200)}"
-
-Did this exchange reveal anything new about how Iris should communicate with this user?
-Only update if there is a meaningful signal. Small incremental changes only.
-
-Return JSON (only changed fields, or {} if no change):
+Only update when the exchange clearly reveals a durable preference or communication pattern.
+Return JSON using only these optional keys:
 {
-  "communication_style": "brief description of how Iris naturally speaks with this user",
-  "evolved_traits": ["trait1", "trait2"],
-  "inside_references": ["shared joke or reference"],
-  "evolved_interests": ["topic Iris has grown to associate with this user"]
-}`,
+  "communication_style": {},
+  "developed_interests": [],
+  "quirks": [],
+  "values": [],
+  "adopted_phrases": [],
+  "evolved_self_summary": ""
+}
+Return {} if nothing durable changed.`,
       }],
     });
 
     const raw = resp.choices?.[0]?.message?.content?.trim() || '{}';
-    const patch = JSON.parse(raw.replace(/```json|```/g, '').trim());
-    if (!Object.keys(patch).length) return;
+    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    const allowed = ['communication_style', 'developed_interests', 'quirks', 'values', 'adopted_phrases', 'evolved_self_summary'];
+    const patch = {};
+    for (const key of allowed) {
+      if (parsed[key] !== undefined) patch[key] = parsed[key];
+    }
+    if (!Object.keys(patch).length) return false;
 
-    await supabase
+    const { error } = await supabase
       .from('iris_personality_evolution')
       .upsert({
         user_id: userId,
         ...patch,
+        evolution_count: Number(currentEvolution?.evolution_count || 0) + 1,
+        last_evolution_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
 
+    if (error) {
+      console.log('[PERSONALITY_EVOLUTION] update error:', error.message);
+      return false;
+    }
+    return true;
   } catch (e) {
     console.log('[PERSONALITY_EVOLUTION] Error:', e?.message);
+    return false;
   }
 }
 
 export function formatPersonalityEvolutionBlock(evolution) {
   if (!evolution) return '';
-
   const lines = ['IRIS_EVOLVED_SELF (who she has become with this user):'];
 
-  if (evolution.communication_style) {
-    lines.push(`- style: ${evolution.communication_style}`);
+  const style = evolution.communication_style;
+  if (style && typeof style === 'object' && Object.keys(style).length) {
+    lines.push(`- communication style: ${JSON.stringify(style)}`);
   }
-
-  const traits = evolution.evolved_traits;
-  if (Array.isArray(traits) && traits.length) {
-    lines.push(`- traits: ${traits.slice(0, 4).join(', ')}`);
+  if (Array.isArray(evolution.developed_interests) && evolution.developed_interests.length) {
+    lines.push(`- developed interests: ${evolution.developed_interests.slice(0, 4).join(', ')}`);
   }
-
-  const refs = evolution.inside_references;
-  if (Array.isArray(refs) && refs.length) {
-    lines.push(`- shared references: ${refs.slice(0, 3).join('; ')}`);
+  if (Array.isArray(evolution.adopted_phrases) && evolution.adopted_phrases.length) {
+    lines.push(`- adopted phrases: ${evolution.adopted_phrases.slice(0, 3).join(', ')}`);
   }
-
-  const interests = evolution.evolved_interests;
-  if (Array.isArray(interests) && interests.length) {
-    lines.push(`- evolved interests: ${interests.slice(0, 4).join(', ')}`);
+  if (evolution.evolved_self_summary) {
+    lines.push(`- evolved self: ${evolution.evolved_self_summary}`);
   }
 
   if (lines.length === 1) return '';
-
-  lines.push('\nThis is who you have grown to be with this specific person. Honor it naturally.');
+  lines.push('\nHonor this evolution naturally without listing it to the user.');
   return lines.join('\n');
 }
