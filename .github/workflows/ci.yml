@@ -25,4 +25,5 @@ jobs:
       - run: npm run lint
       - run: npm run check:server
       - run: npm run test:image-context
+      - run: npm run test:live-assistance
       - run: npm run build:web
