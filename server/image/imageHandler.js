@@ -41,18 +41,40 @@ export async function saveIrisReferencePhoto(userId, { bucket, path }) {
   return true;
 }
 
-export async function handleImageRequest({ message, userId, supabase, llmClient, model }) {
-  const intent = await extractImageIntent({ text: message, llmClient, model });
+export async function handleImageRequest({
+  message,
+  userId,
+  supabase,
+  llmClient,
+  model,
+  conversationHistory = [],
+  sceneContext = null,
+}) {
+  const intent = await extractImageIntent({
+    text: message,
+    conversationHistory,
+    sceneContext,
+    llmClient,
+    model,
+  });
   if (!intent) return { handled: false };
+
   const reference = await getIrisReferencePhoto(supabase, userId);
   if (!reference?.url) {
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: 'Ešte nemám svoju fotku ako základ. Nahraj mi ju cez menu 📸' };
   }
+
   const usage = await consumeDailyUsage(supabase, userId, 'image');
   if (!usage.allowed) {
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
-  console.log('[IMAGE_HANDLER] generation requested', { promptChars: String(intent.prompt || '').length, provider: 'kling_o3' });
+
+  console.log('[IMAGE_HANDLER] generation requested', {
+    promptChars: String(intent.prompt || '').length,
+    contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
+    provider: 'kling_o3',
+  });
+
   try {
     const result = await generateIrisImage({
       prompt: intent.prompt,
@@ -61,10 +83,24 @@ export async function handleImageRequest({ message, userId, supabase, llmClient,
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
     });
-    return { handled: true, imageUrl: result.imageUrl || null, imageBucket: result.imageBucket || null, imagePath: result.imagePath || null, irisMessage: '📸', usage };
+    return {
+      handled: true,
+      imageUrl: result.imageUrl || null,
+      imageBucket: result.imageBucket || null,
+      imagePath: result.imagePath || null,
+      irisMessage: '📸',
+      usage,
+    };
   } catch (error) {
     console.log('[IMAGE_HANDLER] generation failed:', error?.message);
-    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!', usage };
+    return {
+      handled: true,
+      imageUrl: null,
+      imageBucket: null,
+      imagePath: null,
+      irisMessage: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!',
+      usage,
+    };
   }
 }
 
