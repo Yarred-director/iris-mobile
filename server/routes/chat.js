@@ -193,6 +193,9 @@ router.post('/chat', async (req, res) => {
     if (engine === 'openai') {
       responseArgs.reasoning = { effort: useWebSearch ? 'low' : 'none' };
       if (useWebSearch) responseArgs.tools = [{ type: 'web_search' }];
+    } else if (engine === 'grok') {
+      // Grok 4.5 defaults to high reasoning; low is a better fit for latency/cost-sensitive roleplay chat.
+      responseArgs.reasoning = { effort: 'low' };
     }
 
     const response = await client.responses.create(responseArgs);
