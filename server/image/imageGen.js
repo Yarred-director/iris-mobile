@@ -62,12 +62,23 @@ async function persistFalResult(data, { userId, signedUrlSeconds, provider }) {
 
 export async function generateIrisImage({ prompt, imageUrl, provider = DEFAULT_IMAGE_PROVIDER, aspectRatio = 'auto', userId = 'shared', signedUrlSeconds = 86400 }) {
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
+  const safePrompt = clampPrompt(prompt, provider === 'qwen2' ? 800 : 2500);
   console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length}`);
 
-  if (provider === 'openai') return generateOpenAI({ prompt: clampPrompt(prompt), userId, signedUrlSeconds });
-  if (provider === 'nano-banana-2') return generateNanoBanana2({ prompt: clampPrompt(prompt), imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-  if (provider === 'kling' || provider === 'kling_o3') return generateKlingO3({ prompt: clampPrompt(prompt), imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-  return generateQwenImage2({ prompt: clampPrompt(prompt, 800), imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  if (provider === 'openai') return generateOpenAI({ prompt: safePrompt, userId, signedUrlSeconds });
+  if (provider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  if (provider === 'kling' || provider === 'kling_o3') return generateKlingO3({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+
+  try {
+    return await generateQwenImage2({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  } catch (qwenError) {
+    console.log('[IMAGE_GEN] Qwen Image 2 failed, falling back to Kling O3:', qwenError?.message);
+    try {
+      return await generateKlingO3({ prompt: clampPrompt(prompt), imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+    } catch (klingError) {
+      throw new Error(`Qwen failed: ${qwenError?.message}; Kling fallback failed: ${klingError?.message}`);
+    }
+  }
 }
 
 async function generateQwenImage2({ prompt, imageUrl, aspectRatio, userId, signedUrlSeconds }) {

@@ -254,11 +254,13 @@ export default function ChatScreen() {
           : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} />)}
         {isTyping && <View style={styles.typing}><TypingIndicator /></View>}
       </ScrollView>
-      <View style={{ paddingBottom: Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} /></View>
+      <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} /></View>
     </View>
   );
 
-  const body = <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{chat}</KeyboardAvoidingView>;
+  const body = Platform.OS === 'web'
+    ? <View style={styles.root}>{chat}</View>
+    : <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{chat}</KeyboardAvoidingView>;
   if (background?.image_url) {
     return <ImageBackground source={{ uri: background.image_url }} style={styles.root} blurRadius={background.blur ?? 0}><View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: `rgba(0,0,0,${background.overlay ?? 0.35})` }]} /><SafeAreaView style={styles.root}>{body}</SafeAreaView></ImageBackground>;
   }
