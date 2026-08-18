@@ -53,7 +53,7 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
 
 const styles = StyleSheet.create({
   container: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(0,0,0,0.35)' },
-  input: { flex: 1, minHeight: 44, maxHeight: 132, backgroundColor: '#1a1a1f', color: '#ffffff', paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginRight: 8, outlineStyle: 'none' as any },
+  input: { flex: 1, minHeight: 44, maxHeight: 132, backgroundColor: '#1a1a1f', color: '#ffffff', fontSize: 16, lineHeight: 21, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginRight: 8, outlineStyle: 'none' as any },
   button: { minHeight: 44, backgroundColor: '#5b6cff', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
   buttonDisabled: { opacity: 0.45 },
   buttonPressed: { opacity: 0.8 },
