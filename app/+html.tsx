@@ -3,7 +3,7 @@ import type { PropsWithChildren } from 'react';
 
 export default function Root({ children }: PropsWithChildren) {
   return (
-    <html lang="sk">
+    <html lang="sk">">
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
@@ -19,9 +19,18 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="apple-touch-icon" href="/iris-icon.svg" />
         <ScrollViewStyleReset />
         <style dangerouslySetInnerHTML={{ __html: `
-          html, body { width: 100%; height: 100%; margin: 0; background: #0b0b0f; }
-          #root { width: 100%; height: var(--iris-visual-height, 100dvh); min-height: 0; background: #0b0b0f; }
-          body { overflow: hidden; overscroll-behavior: none; }
+          html, body { width: 100%; height: 100%; margin: 0; background: #0b0b0f; overflow: hidden; overscroll-behavior: none; }
+          #root {
+            position: fixed;
+            left: 0;
+            right: 0;
+            top: var(--iris-visual-top, 0px);
+            width: 100%;
+            height: var(--iris-visual-height, 100dvh);
+            min-height: 0;
+            overflow: hidden;
+            background: #0b0b0f;
+          }
           input, textarea { font-size: 16px !important; }
           * { box-sizing: border-box; }
         ` }} />
@@ -30,10 +39,13 @@ export default function Root({ children }: PropsWithChildren) {
             function syncVisualViewport() {
               var viewport = window.visualViewport;
               var height = viewport && viewport.height ? viewport.height : window.innerHeight;
+              var top = viewport && typeof viewport.offsetTop === 'number' ? viewport.offsetTop : 0;
               document.documentElement.style.setProperty('--iris-visual-height', Math.round(height) + 'px');
+              document.documentElement.style.setProperty('--iris-visual-top', Math.round(top) + 'px');
             }
             syncVisualViewport();
             window.addEventListener('resize', syncVisualViewport, { passive: true });
+            window.addEventListener('orientationchange', syncVisualViewport, { passive: true });
             if (window.visualViewport) {
               window.visualViewport.addEventListener('resize', syncVisualViewport, { passive: true });
               window.visualViewport.addEventListener('scroll', syncVisualViewport, { passive: true });
