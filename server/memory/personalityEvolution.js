@@ -34,39 +34,30 @@ export async function evolvePersonality({ supabase, userId, userText, irisReply,
       evolved_self_summary: currentEvolution?.evolved_self_summary || null,
     };
 
-    const resp = await llmClient.chat.completions.create({
+    const resp = await llmClient.responses.create({
       model,
-      max_tokens: 220,
-      temperature: 0.3,
-      messages: [{
+      reasoning: { effort: 'none' },
+      max_output_tokens: 260,
+      input: [{
         role: 'user',
         content: `You track how Iris gradually adapts to one user.
 User profile: ${profileSummary}
 Current evolution: ${JSON.stringify(current)}
-User said: "${userText.slice(0, 220)}"
-Iris replied: "${irisReply.slice(0, 220)}"
+User said: ${JSON.stringify(String(userText || '').slice(0, 220))}
+Iris replied: ${JSON.stringify(String(irisReply || '').slice(0, 220))}
 
-Only update when the exchange clearly reveals a durable preference or communication pattern.
+Only update when this exchange clearly reveals a durable preference or communication pattern. Never infer protected/sensitive attributes unless explicitly necessary to the user's stated preference.
 Return JSON using only these optional keys:
-{
-  "communication_style": {},
-  "developed_interests": [],
-  "quirks": [],
-  "values": [],
-  "adopted_phrases": [],
-  "evolved_self_summary": ""
-}
-Return {} if nothing durable changed.`,
+{"communication_style":{},"developed_interests":[],"quirks":[],"values":[],"adopted_phrases":[],"evolved_self_summary":""}
+Return {} if nothing durable changed. JSON only.`,
       }],
     });
 
-    const raw = resp.choices?.[0]?.message?.content?.trim() || '{}';
+    const raw = resp.output_text?.trim() || '{}';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     const allowed = ['communication_style', 'developed_interests', 'quirks', 'values', 'adopted_phrases', 'evolved_self_summary'];
     const patch = {};
-    for (const key of allowed) {
-      if (parsed[key] !== undefined) patch[key] = parsed[key];
-    }
+    for (const key of allowed) if (parsed[key] !== undefined) patch[key] = parsed[key];
     if (!Object.keys(patch).length) return false;
 
     const { error } = await supabase
@@ -93,21 +84,11 @@ Return {} if nothing durable changed.`,
 export function formatPersonalityEvolutionBlock(evolution) {
   if (!evolution) return '';
   const lines = ['IRIS_EVOLVED_SELF (who she has become with this user):'];
-
   const style = evolution.communication_style;
-  if (style && typeof style === 'object' && Object.keys(style).length) {
-    lines.push(`- communication style: ${JSON.stringify(style)}`);
-  }
-  if (Array.isArray(evolution.developed_interests) && evolution.developed_interests.length) {
-    lines.push(`- developed interests: ${evolution.developed_interests.slice(0, 4).join(', ')}`);
-  }
-  if (Array.isArray(evolution.adopted_phrases) && evolution.adopted_phrases.length) {
-    lines.push(`- adopted phrases: ${evolution.adopted_phrases.slice(0, 3).join(', ')}`);
-  }
-  if (evolution.evolved_self_summary) {
-    lines.push(`- evolved self: ${evolution.evolved_self_summary}`);
-  }
-
+  if (style && typeof style === 'object' && Object.keys(style).length) lines.push(`- communication style: ${JSON.stringify(style)}`);
+  if (Array.isArray(evolution.developed_interests) && evolution.developed_interests.length) lines.push(`- developed interests: ${evolution.developed_interests.slice(0, 4).join(', ')}`);
+  if (Array.isArray(evolution.adopted_phrases) && evolution.adopted_phrases.length) lines.push(`- adopted phrases: ${evolution.adopted_phrases.slice(0, 3).join(', ')}`);
+  if (evolution.evolved_self_summary) lines.push(`- evolved self: ${evolution.evolved_self_summary}`);
   if (lines.length === 1) return '';
   lines.push('\nHonor this evolution naturally without listing it to the user.');
   return lines.join('\n');
