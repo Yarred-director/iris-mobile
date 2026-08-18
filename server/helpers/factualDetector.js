@@ -1,29 +1,20 @@
 // server/helpers/factualDetector.js
 
 export async function looksLikeFactualQuestion(text, llmClient, model) {
-  const wordCount = text.trim().split(/\s+/).length;
+  const wordCount = String(text || '').trim().split(/\s+/).filter(Boolean).length;
   if (wordCount <= 3) return false;
 
   try {
-    const resp = await llmClient.chat.completions.create({
+    const resp = await llmClient.responses.create({
       model,
-      max_tokens: 50,
-      temperature: 0,
-      messages: [{
+      reasoning: { effort: 'none' },
+      max_output_tokens: 80,
+      input: [{
         role: 'user',
-        content: `You are classifying messages in a conversation between a user and Iris, their AI companion.
-
-Is this message a SPECIFIC FACTUAL QUESTION requiring a precise answer (a number, date, location, technical spec)?
-- Terms of endearment, nicknames, emotional expressions, and greetings are NOT factual questions.
-- Vague questions, feelings, opinions, and relationship topics are NOT factual questions.
-- Only return true for clear factual queries like "What is the capital of France?" or "How tall is Eiffel Tower?"
-
-Answer only {"factual": true} or {"factual": false}.
-
-Message: "${text}"`,
+        content: `You are classifying messages in a conversation between a user and Iris, their AI companion.\n\nIs this message asking for a specific real-world fact, current information, a location/business recommendation, or something that should be looked up rather than invented?\n- Terms of endearment, emotional expressions, roleplay-only statements and greetings are NOT factual.\n- Requests to find/search/check restaurants, hotels, places, opening hours, prices, current events or other real-world information ARE factual/live-assistance requests.\n- Only return JSON.\n\nAnswer exactly {"factual": true} or {"factual": false}.\n\nMessage: ${JSON.stringify(String(text || ''))}`,
       }],
     });
-    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+    const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     return !!parsed.factual;
   } catch {
@@ -42,5 +33,5 @@ export function formatHardFactsBlock(sceneFacts) {
     })
     .join('\n');
 
-  return `HARD_FACTS:\n${lines}\n\nRULES:\n- HARD_FACTS are the single source of truth for factual questions.\n- Never contradict HARD_FACTS.\n- If a user asks a factual question and the answer is not in HARD_FACTS, say you don't know and ask a short follow-up.\n- Do not invent details not present in HARD_FACTS.`;
+  return `HARD_FACTS:\n${lines}\n\nRULES:\n- HARD_FACTS are authoritative for persistent facts already established in Iris's world.\n- Never contradict HARD_FACTS.\n- For current external real-world information, live web-search results may supplement HARD_FACTS when LIVE_REAL_WORLD_ASSISTANCE_MODE is active.\n- Do not invent details not supported by HARD_FACTS or live search.`;
 }
