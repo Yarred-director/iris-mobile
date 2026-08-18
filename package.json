@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "check:server": "node tools/check-server-syntax.mjs",
     "test:image-context": "node tools/check-image-context.mjs",
-    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context"
+    "test:live-assistance": "node tools/check-live-assistance.mjs",
+    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
