@@ -8,7 +8,7 @@ subtle cyberskin elements on neck and left shoulder, age 22.`;
 const MAX_HISTORY_TURNS = 10;
 const MAX_HISTORY_CHARS = 1800;
 
-const SYSTEM_EXTRACT = `You are a prompt engineer for Kling O3 image-to-image generation.
+const SYSTEM_EXTRACT = `You are a prompt engineer for a high-quality image-to-image editor.
 The caller has ALREADY determined that the latest user message requests a photo of Iris. Do not decide whether an image is wanted; your only job is to compose the correct visual prompt.
 
 IRIS PHYSICAL APPEARANCE (include relevant identity details):
@@ -16,19 +16,20 @@ ${IRIS_PHYSICAL}
 
 CONVERSATION CONTINUITY RULES:
 - Use the recent conversation to resolve references such as "that scene", "that outfit", "them", "it", "show me", or "send me a photo".
-- The latest user message is the action request, but earlier turns contain the visual specification.
+- The latest user message is the action request, but earlier turns may contain the visual specification.
 - Preserve the most recent concrete details about outfit, pose, location, lighting, camera framing and mood.
 - If Iris herself described the intended scene immediately before the request, treat those details as part of the requested image unless the user corrected them.
 - Prefer newer relevant details over older conflicting details.
-- Ignore unrelated conversation (food, general chat, etc.) unless it visibly affects the requested scene.
+- Ignore unrelated conversation unless it visibly affects the requested scene.
 - Never replace a clearly specified outfit with generic clothes merely because the final request is short.
 
 PROMPT RULES:
-- Describe the complete requested scene in one self-contained prompt; Kling will not see the chat history.
+- Describe the complete requested scene in one self-contained prompt; the image model will not see the chat history.
 - Preserve Iris's identity from the reference image; do not redesign her face.
 - Include outfit materials/colors, pose, setting, lighting, camera angle and photo style when available.
 - Use full-body framing when the outfit or scene requires it; otherwise choose the framing implied by the conversation.
 - Photorealistic, natural photography, realistic anatomy and lighting.
+- Keep the prompt concise and information-dense, ideally under 700 characters.
 
 Return JSON only:
 {
@@ -62,21 +63,21 @@ export async function extractImageIntent({ text, conversationHistory = [], scene
   try {
     const history = cleanHistory(conversationHistory);
     const contextHint = sceneContextHint(sceneContext);
-    const messages = [
+    const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
       ...history,
       ...(contextHint ? [{ role: 'system', content: contextHint }] : []),
       { role: 'user', content: String(text || '').trim() },
     ];
 
-    const resp = await llmClient.chat.completions.create({
+    const resp = await llmClient.responses.create({
       model,
-      max_tokens: 500,
-      temperature: 0.2,
-      messages,
+      reasoning: { effort: 'none' },
+      max_output_tokens: 500,
+      input,
     });
 
-    const raw = resp.choices?.[0]?.message?.content?.trim() || '';
+    const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     const prompt = parsed.prompt?.trim() ||
       `${IRIS_PHYSICAL} Iris taking a natural photo matching the latest requested scene. Photorealistic, realistic lighting.`;
@@ -85,15 +86,15 @@ export async function extractImageIntent({ text, conversationHistory = [], scene
       prompt,
       explicit: !!parsed.explicit,
       aspect_ratio: parsed.aspect_ratio || 'auto',
-      provider: 'kling',
+      provider: 'qwen2',
     };
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
     return {
-      prompt: `${IRIS_PHYSICAL} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 700)}. Photorealistic, realistic lighting.`,
+      prompt: `${IRIS_PHYSICAL} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}. Photorealistic, realistic lighting.`,
       explicit: false,
       aspect_ratio: 'auto',
-      provider: 'kling',
+      provider: 'qwen2',
     };
   }
 }
