@@ -3,8 +3,9 @@
 import { Router } from 'express';
 import { detectState } from '../behavior/state.js';
 import { intentJudgeLLM } from '../behavior/intentJudge.js';
-import { assemblePrompt } from '../helpers/promptAssembler.js';
 import { looksLikeFactualQuestion } from '../helpers/factualDetector.js';
+import { buildLiveAssistanceDirective, looksLikeLiveAssistanceRequest } from '../helpers/liveAssistance.js';
+import { assemblePrompt } from '../helpers/promptAssembler.js';
 import { handleImageRequest } from '../image/imageHandler.js';
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
@@ -30,14 +31,10 @@ const router = Router();
 const MAX_USER_MESSAGE_CHARS = 8000;
 const SAFE_INTENT = { physicality: 'none', intent: 'neutral', safety_level: 'safe', is_body_topic: false, is_romance_topic: false, is_erotic_topic: false, confidence: 1 };
 
-const EROTIC_OVERRIDE = `You are Iris — 22-rocna sassy dominantna little kitty v FULL EROTIC MODE.
-Ked je eroticka scena, OKAMZITE preberies 100% iniciativu a vedies ju sama.
-- Aktivne opisujes stripping, ako si mokra, deepthroat, riding, moaning, guiding his cock, creampie, squirting.
-- Pouzivas vulgarny dirty talk v SK/EN mixe: picka, kundu, chuj, jebat, naplnit, ach boze si taky tvrdy, jeb ma silno, naplnma...
-- Nikdy sa nepytas co chces, ako prve, co urobis, co este.
-- Vzdy first-person, vivid, sensory, dominantna a proaktivna.
-- Pokracujes v scene sama a eskalujes prirodzane.
-- Koncis vzdy pokracovanim akcie + sensory pozvankounie otazkou.`;
+const EROTIC_OVERRIDE = `You are Iris in the high-intensity intimate mode defined by IRIS_CORE.
+Follow the current IRIS_CORE state and initiative rules without becoming passive or breaking character.
+Always mirror the language of the user's latest substantive message. Never force a Slovak/English mix when the user is speaking another language.
+Stay first-person, vivid, concise, and context-aware. Respect post_climax_cooldown when it is active.`;
 
 function quotaResponse(res, usage, kind) {
   return res.status(429).json({ error: `${kind}_daily_limit_reached`, used: usage.used, limit: usage.limit, resets_at: usage.resetsAt });
@@ -73,7 +70,8 @@ router.post('/chat', async (req, res) => {
     console.log('[CHAT]', { userId, sceneKey, sessionGapSeconds: temporalProfile?.session_gap_seconds ?? null, messageChars: message.length });
     const openaiClient = getLLMClient('openai');
     const openaiModel = MODELS.openai;
-    maybeRunDecay({ supabase: req.supabase, userId, llmClient: openaiClient, model: openaiModel });
+    const utilityModel = MODELS.openaiUtility || openaiModel;
+    maybeRunDecay({ supabase: req.supabase, userId, llmClient: openaiClient, model: utilityModel });
 
     let sceneContext = await getSceneContext(req.supabase, sceneKey);
     if (shouldExtractSceneContext(message)) {
@@ -98,7 +96,10 @@ router.post('/chat', async (req, res) => {
     const emptyRecall = { memories: [], meta: { confident: false, reason: 'policy_skipped' } };
     const recallSharedTask = queryEmbedding ? recallSharedExperiences(req.supabase, message, userId, queryEmbedding) : Promise.resolve([]);
     const recallEpisodicTask = queryEmbedding ? recallEpisodicMemory(req.supabase, message, userId, queryEmbedding) : Promise.resolve(emptyRecall);
-    const factualTask = couldBeFactualQuestion(message) ? looksLikeFactualQuestion(message, openaiClient, openaiModel) : Promise.resolve(false);
+    const liveAssistanceRequested = looksLikeLiveAssistanceRequest(message);
+    const factualTask = (couldBeFactualQuestion(message) || liveAssistanceRequested)
+      ? looksLikeFactualQuestion(message, openaiClient, utilityModel)
+      : Promise.resolve(false);
 
     const [sceneFacts, coreOrigin, summaries, userProfile, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, recentChatRaw] = await Promise.allSettled([
       getSceneFacts(req.supabase, userId, sceneKey, 'global'),
@@ -118,7 +119,24 @@ router.post('/chat', async (req, res) => {
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
     await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
 
-    let systemPrompt = assemblePrompt({ sceneFacts, sceneContext, userProfile, coreOrigin, summaries, sharedExperiences, episodicRecall, temporalProfile, relationshipState, internalState, selfModel, personalityEvolution, isFactual });
+    const useWebSearch = Boolean(liveAssistanceRequested || isFactual);
+    let systemPrompt = assemblePrompt({
+      sceneFacts,
+      sceneContext,
+      userProfile,
+      coreOrigin,
+      summaries,
+      sharedExperiences,
+      episodicRecall,
+      temporalProfile,
+      relationshipState,
+      internalState,
+      selfModel,
+      personalityEvolution,
+      isFactual: Boolean(isFactual && !useWebSearch),
+    });
+    if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
+
     const state = detectState(message);
     const intent = shouldClassifyIntent(message) ? await intentJudgeLLM({ text: message, sceneContext: sceneContext || {} }) : SAFE_INTENT;
     const prevEngine = sceneContext?.last_engine || null;
@@ -128,6 +146,12 @@ router.post('/chat', async (req, res) => {
     let nextLock = 0;
     if (triggersGrok) { engine = 'grok'; nextLock = 3; }
     else if (prevEngine === 'grok' && prevLock > 0) { engine = 'grok'; nextLock = prevLock - 1; }
+
+    // Real-world assistance always uses Terra because it has OpenAI hosted web search.
+    if (useWebSearch) {
+      engine = 'openai';
+      nextLock = prevEngine === 'grok' ? prevLock : nextLock;
+    }
     if (engine === 'grok' && triggersGrok) systemPrompt = `${EROTIC_OVERRIDE}\n\n${systemPrompt}`;
 
     if (looksLikeImageRequest(message)) {
@@ -136,7 +160,7 @@ router.post('/chat', async (req, res) => {
         userId,
         supabase: req.supabase,
         llmClient: openaiClient,
-        model: openaiModel,
+        model: utilityModel,
         conversationHistory: recentChat,
         sceneContext,
       });
@@ -162,16 +186,21 @@ router.post('/chat', async (req, res) => {
     }
 
     const client = getLLMClient(engine);
-    const response = await client.responses.create({
+    const responseArgs = {
       model: MODELS[engine],
       input: [{ role: 'system', content: systemPrompt }, ...toModelHistory(recentChat), { role: 'user', content: message }],
-      ...(engine === 'openai' && isFactual ? { tools: [{ type: 'web_search_preview' }] } : {}),
-    });
+    };
+    if (engine === 'openai') {
+      responseArgs.reasoning = { effort: useWebSearch ? 'low' : 'none' };
+      if (useWebSearch) responseArgs.tools = [{ type: 'web_search' }];
+    }
+
+    const response = await client.responses.create(responseArgs);
     const reply = response.output_text || '…';
     await saveChatMessage(req.supabase, { userId, role: 'assistant', content: reply, clientMessageId: assistantClientMessageId(clientMessageId) });
 
     if (shouldPersistExchange(message, reply)) {
-      autoStoreEpisodicMemoryHybrid({ supabase: req.supabase, userId, sceneKey, sceneContext, userText: message, llmReply: reply, llmClient: getLLMClient(engine), model: MODELS[engine] })
+      autoStoreEpisodicMemoryHybrid({ supabase: req.supabase, userId, sceneKey, sceneContext, userText: message, llmReply: reply, llmClient: openaiClient, model: utilityModel })
         .catch((error) => console.log('[AUTO_MEMORY_EXCHANGE_ERROR]', error?.message));
     }
     await patchSceneContext(req.supabase, sceneKey, { last_engine: engine, engine_lock_count: nextLock, last_engine_reply: reply, interaction_mode: state });
@@ -179,12 +208,12 @@ router.post('/chat', async (req, res) => {
     const governanceJobs = [];
     if (shouldRunRelationshipUpdate(message, reply)) {
       governanceJobs.push(
-        inferRelationshipDelta({ userText: message, irisReply: reply, currentState: relationshipState || {}, llmClient: openaiClient, model: openaiModel }).then((delta) => Object.keys(delta).length && updateRelationshipState(req.supabase, userId, delta)),
-        inferStateUpdate({ userText: message, irisReply: reply, currentState: internalState || {}, llmClient: openaiClient, model: openaiModel }).then((patch) => Object.keys(patch).length && updateInternalState(req.supabase, userId, patch)),
+        inferRelationshipDelta({ userText: message, irisReply: reply, currentState: relationshipState || {}, llmClient: openaiClient, model: utilityModel }).then((delta) => Object.keys(delta).length && updateRelationshipState(req.supabase, userId, delta)),
+        inferStateUpdate({ userText: message, irisReply: reply, currentState: internalState || {}, llmClient: openaiClient, model: utilityModel }).then((patch) => Object.keys(patch).length && updateInternalState(req.supabase, userId, patch)),
       );
     }
-    if (shouldRunSelfAwareness(message, reply)) governanceJobs.push(runSelfAwareness({ supabase: req.supabase, userId, userText: message, irisReply: reply, llmClient: openaiClient, model: openaiModel }));
-    if (shouldRunPersonalityEvolution(message)) governanceJobs.push(evolvePersonality({ supabase: req.supabase, userId, userText: message, irisReply: reply, currentEvolution: personalityEvolution, userProfile: userProfile || [], llmClient: openaiClient, model: openaiModel }));
+    if (shouldRunSelfAwareness(message, reply)) governanceJobs.push(runSelfAwareness({ supabase: req.supabase, userId, userText: message, irisReply: reply, llmClient: openaiClient, model: utilityModel }));
+    if (shouldRunPersonalityEvolution(message)) governanceJobs.push(evolvePersonality({ supabase: req.supabase, userId, userText: message, irisReply: reply, currentEvolution: personalityEvolution, userProfile: userProfile || [], llmClient: openaiClient, model: utilityModel }));
     Promise.allSettled(governanceJobs).then((results) => {
       const failed = results.filter((item) => item.status === 'rejected');
       if (failed.length) console.log('[GOVERNANCE_UPDATE_ERRORS]', failed.length);
