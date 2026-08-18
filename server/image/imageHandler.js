@@ -69,17 +69,18 @@ export async function handleImageRequest({
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
 
+  const provider = process.env.IRIS_IMAGE_PROVIDER || intent.provider || 'qwen2';
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
-    provider: 'kling_o3',
+    provider,
   });
 
   try {
     const result = await generateIrisImage({
       prompt: intent.prompt,
       imageUrl: reference.url,
-      provider: 'kling',
+      provider,
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
     });
@@ -104,7 +105,7 @@ export async function handleImageRequest({
   }
 }
 
-export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = 'kling' }) {
+export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = process.env.IRIS_IMAGE_PROVIDER || 'qwen2' }) {
   const reference = await getIrisReferencePhoto(supabase, userId);
   if (!reference?.url) return null;
   return generateIrisImage({ prompt, imageUrl: reference.url, provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
