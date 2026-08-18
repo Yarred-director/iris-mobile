@@ -1,25 +1,19 @@
 import assert from 'node:assert/strict';
 import { extractImageIntent } from '../server/image/imageIntentDetector.js';
 
-let capturedMessages = null;
+let capturedInput = null;
 
 const llmClient = {
-  chat: {
-    completions: {
-      create: async ({ messages }) => {
-        capturedMessages = messages;
-        return {
-          choices: [{
-            message: {
-              content: JSON.stringify({
-                prompt: 'Iris on a balcony at sunset wearing black lace swimwear with a long sheer black skirt.',
-                explicit: false,
-                aspect_ratio: 'auto',
-              }),
-            },
-          }],
-        };
-      },
+  responses: {
+    create: async ({ input }) => {
+      capturedInput = input;
+      return {
+        output_text: JSON.stringify({
+          prompt: 'Iris on a balcony at sunset wearing black lace swimwear with a long sheer black skirt.',
+          explicit: false,
+          aspect_ratio: 'auto',
+        }),
+      };
     },
   },
 };
@@ -39,8 +33,8 @@ const result = await extractImageIntent({
   model: 'mock-model',
 });
 
-assert.ok(Array.isArray(capturedMessages), 'Image prompt composer did not receive messages.');
-const joined = capturedMessages.map((message) => String(message.content || '')).join('\n').toLowerCase();
+assert.ok(Array.isArray(capturedInput), 'Image prompt composer did not receive Responses API input.');
+const joined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
 assert.match(joined, /čierne plavky|black lace/, 'Recent outfit context was not passed into image prompt synthesis.');
 assert.match(joined, /priesvitn|sheer/, 'Recent skirt detail was not passed into image prompt synthesis.');
 assert.match(joined, /balk[oó]n|balcony/, 'Recent scene context was not passed into image prompt synthesis.');
