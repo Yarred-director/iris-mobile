@@ -2,8 +2,7 @@
 
 // Iris physical identity — injected into every image prompt
 const IRIS_PHYSICAL = `Woman: pale skin, dirty blonde hair, green eyes, strong freckles on chest and face,
-large augmented breasts, long legs, model-like figure, slim waist,
-subtle cyberskin elements on neck and left shoulder, age 22.`;
+large augmented breasts, long legs, model-like figure, slim waist, age 22.`;
 
 const MAX_HISTORY_TURNS = 10;
 const MAX_HISTORY_CHARS = 1800;
