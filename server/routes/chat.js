@@ -131,7 +131,15 @@ router.post('/chat', async (req, res) => {
     if (engine === 'grok' && triggersGrok) systemPrompt = `${EROTIC_OVERRIDE}\n\n${systemPrompt}`;
 
     if (looksLikeImageRequest(message)) {
-      const imageResult = await handleImageRequest({ message, userId, supabase: req.supabase, llmClient: openaiClient, model: openaiModel });
+      const imageResult = await handleImageRequest({
+        message,
+        userId,
+        supabase: req.supabase,
+        llmClient: openaiClient,
+        model: openaiModel,
+        conversationHistory: recentChat,
+        sceneContext,
+      });
       if (imageResult.handled) {
         const reply = imageResult.irisMessage || '';
         await saveChatMessage(req.supabase, {
