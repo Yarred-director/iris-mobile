@@ -5,6 +5,8 @@ const FAL_API_URL_QWEN_IMAGE_2 = 'https://fal.run/fal-ai/qwen-image-2/edit';
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
 const OPENAI_IMAGE_URL = 'https://api.openai.com/v1/images/generations';
 const DEFAULT_IMAGE_PROVIDER = process.env.IRIS_IMAGE_PROVIDER || 'qwen2';
+const MAX_IDENTITY_REFERENCES = 3;
+const QWEN_NEGATIVE_PROMPT = 'oversized head, bobblehead proportions, chibi proportions, childlike body proportions, doll-like anatomy, distorted anatomy, short compressed torso, malformed limbs, duplicate person, multiple faces';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
@@ -38,6 +40,21 @@ function qwenImageSize(aspectRatio) {
 function imageTimeoutMs() {
   return Math.max(30000, Math.min(Number(process.env.IMAGE_GENERATION_TIMEOUT_MS || 240000), 300000));
 }
+function normalizeReferenceUrls(imageUrls, imageUrl) {
+  const candidates = Array.isArray(imageUrls) ? imageUrls : [];
+  if (imageUrl) candidates.unshift(imageUrl);
+  return [...new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, MAX_IDENTITY_REFERENCES);
+}
+function multiViewIdentityPrefix(count) {
+  if (count <= 1) return '';
+  return `Reference images 1-${count} show the SAME adult woman, Iris, from different face angles (front, three-quarter, side when available). Use them only as identity views of one person. Preserve one consistent face; never merge, duplicate, average, or create multiple people. `;
+}
+function klingReferencePrefix(count) {
+  if (count <= 0) return '';
+  const refs = Array.from({ length: count }, (_, index) => `@Image${index + 1}`).join(' ');
+  if (count === 1) return `${refs} Preserve this woman's facial identity exactly. `;
+  return `${refs} These ${count} references show the SAME adult woman from different face angles. Preserve one consistent facial identity from all views; do not duplicate or blend people. `;
+}
 async function callFal(url, body, label) {
   const response = await fetch(url, {
     method: 'POST',
@@ -60,32 +77,34 @@ async function persistFalResult(data, { userId, signedUrlSeconds, provider }) {
   return { ...persisted, provider };
 }
 
-export async function generateIrisImage({ prompt, imageUrl, provider = DEFAULT_IMAGE_PROVIDER, aspectRatio = 'auto', userId = 'shared', signedUrlSeconds = 86400 }) {
+export async function generateIrisImage({ prompt, imageUrl, imageUrls = [], provider = DEFAULT_IMAGE_PROVIDER, aspectRatio = 'auto', userId = 'shared', signedUrlSeconds = 86400 }) {
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
   const safePrompt = clampPrompt(prompt, provider === 'qwen2' ? 800 : 2500);
-  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length}`);
+  const safeImageUrls = normalizeReferenceUrls(imageUrls, imageUrl);
+  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length} reference_count=${safeImageUrls.length}`);
 
   if (provider === 'openai') return generateOpenAI({ prompt: safePrompt, userId, signedUrlSeconds });
-  if (provider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-  if (provider === 'kling' || provider === 'kling_o3') return generateKlingO3({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  if (!safeImageUrls.length) throw new Error('Reference image URL missing');
+  if (provider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  if (provider === 'kling' || provider === 'kling_o3') return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
 
   try {
-    return await generateQwenImage2({ prompt: safePrompt, imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+    return await generateQwenImage2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   } catch (qwenError) {
     console.log('[IMAGE_GEN] Qwen Image 2 failed, falling back to Kling O3:', qwenError?.message);
     try {
-      return await generateKlingO3({ prompt: clampPrompt(prompt), imageUrl, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+      return await generateKlingO3({ prompt: clampPrompt(prompt), imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
     } catch (klingError) {
       throw new Error(`Qwen failed: ${qwenError?.message}; Kling fallback failed: ${klingError?.message}`);
     }
   }
 }
 
-async function generateQwenImage2({ prompt, imageUrl, aspectRatio, userId, signedUrlSeconds }) {
-  if (!imageUrl) throw new Error('Reference image URL missing');
+async function generateQwenImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const body = {
-    prompt,
-    image_urls: [imageUrl],
+    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, 800),
+    negative_prompt: QWEN_NEGATIVE_PROMPT,
+    image_urls: imageUrls,
     enable_prompt_expansion: true,
     enable_safety_checker: true,
     num_images: 1,
@@ -97,11 +116,10 @@ async function generateQwenImage2({ prompt, imageUrl, aspectRatio, userId, signe
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'qwen_image_2' });
 }
 
-async function generateNanoBanana2({ prompt, imageUrl, aspectRatio, userId, signedUrlSeconds }) {
-  if (!imageUrl) throw new Error('Reference image URL missing');
+async function generateNanoBanana2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const data = await callFal(FAL_API_URL_NANO_BANANA_2, {
-    prompt,
-    image_urls: [imageUrl],
+    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`),
+    image_urls: imageUrls,
     resolution: '1K',
     num_images: 1,
     aspect_ratio: aspectRatio,
@@ -111,12 +129,11 @@ async function generateNanoBanana2({ prompt, imageUrl, aspectRatio, userId, sign
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'nano_banana_2' });
 }
 
-async function generateKlingO3({ prompt, imageUrl, aspectRatio, userId, signedUrlSeconds }) {
-  if (!imageUrl) throw new Error('Reference image URL missing');
-  const referencedPrompt = /@Image\d*/i.test(prompt) ? prompt : `@Image1 ${prompt}`;
+async function generateKlingO3({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
+  const referencedPrompt = clampPrompt(`${klingReferencePrefix(imageUrls.length)}${prompt}`);
   const data = await callFal(FAL_API_URL_KLING_O3, {
     prompt: referencedPrompt,
-    image_urls: [imageUrl],
+    image_urls: imageUrls,
     resolution: '1K',
     result_type: 'single',
     num_images: 1,

@@ -4,6 +4,12 @@ import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 
+const FACE_REFERENCE_FILES = [
+  { slot: 'front', name: 'face-front' },
+  { slot: 'three-quarter', name: 'face-three-quarter' },
+  { slot: 'side', name: 'face-side' },
+];
+
 export async function getIrisReferencePhoto(supabase, userId) {
   try {
     const { data, error } = await supabase
@@ -17,13 +23,41 @@ export async function getIrisReferencePhoto(supabase, userId) {
         url: await createSignedMediaUrl({ bucket: data.reference_image_bucket, path: data.reference_image_path, expiresIn: 900 }),
         bucket: data.reference_image_bucket,
         path: data.reference_image_path,
+        slot: 'legacy',
       };
     }
-    return data.reference_image_url ? { url: data.reference_image_url, bucket: null, path: null } : null;
+    return data.reference_image_url ? { url: data.reference_image_url, bucket: null, path: null, slot: 'legacy' } : null;
   } catch (error) {
     console.log('[REFERENCE_IMAGE] load error:', error?.message);
     return null;
   }
+}
+
+export async function getIrisReferencePhotos(supabase, userId) {
+  try {
+    const folder = `iris-ref/${userId}`;
+    const { data, error } = await getSupabaseAdmin().storage.from('iris-photos').list(folder, { limit: 100 });
+    if (!error && Array.isArray(data)) {
+      const names = new Set(data.map((item) => item?.name).filter(Boolean));
+      const references = [];
+      for (const item of FACE_REFERENCE_FILES) {
+        if (!names.has(item.name)) continue;
+        const path = `${folder}/${item.name}`;
+        references.push({
+          url: await createSignedMediaUrl({ bucket: 'iris-photos', path, expiresIn: 900 }),
+          bucket: 'iris-photos',
+          path,
+          slot: item.slot,
+        });
+      }
+      if (references.length) return references;
+    }
+  } catch (error) {
+    console.log('[REFERENCE_PACK] load error:', error?.message);
+  }
+
+  const legacy = await getIrisReferencePhoto(supabase, userId);
+  return legacy ? [legacy] : [];
 }
 
 export async function saveIrisReferencePhoto(userId, { bucket, path }) {
@@ -63,9 +97,9 @@ export async function handleImageRequest({
   });
   if (!intent) return { handled: false };
 
-  const reference = await getIrisReferencePhoto(supabase, userId);
-  if (!reference?.url) {
-    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: 'Ešte nemám svoju fotku ako základ. Nahraj mi ju cez menu 📸' };
+  const references = await getIrisReferencePhotos(supabase, userId);
+  if (!references.length) {
+    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: 'Ešte nemám svoju tvár ako základ. Pridaj mi face reference pack cez menu 📸' };
   }
 
   const usage = await consumeDailyUsage(supabase, userId, 'image');
@@ -78,13 +112,15 @@ export async function handleImageRequest({
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
     visualStateFields: Object.keys(visualState?.state || {}).length,
+    referenceCount: references.length,
+    referenceSlots: references.map((item) => item.slot),
     provider,
   });
 
   try {
     const result = await generateIrisImage({
       prompt: intent.prompt,
-      imageUrl: reference.url,
+      imageUrls: references.map((item) => item.url),
       provider,
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
@@ -111,7 +147,7 @@ export async function handleImageRequest({
 }
 
 export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = process.env.IRIS_IMAGE_PROVIDER || 'qwen2' }) {
-  const reference = await getIrisReferencePhoto(supabase, userId);
-  if (!reference?.url) return null;
-  return generateIrisImage({ prompt, imageUrl: reference.url, provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
+  const references = await getIrisReferencePhotos(supabase, userId);
+  if (!references.length) return null;
+  return generateIrisImage({ prompt, imageUrls: references.map((item) => item.url), provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
 }

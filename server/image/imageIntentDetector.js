@@ -4,6 +4,8 @@
 const IRIS_PHYSICAL = `Woman: pale skin, dirty blonde hair, green eyes, strong freckles on chest and face,
 large augmented breasts, long legs, model-like figure, slim waist, age 22.`;
 
+const BODY_PROPORTION_GUARDRAILS = `Natural adult female proportions and realistic anatomy. Keep a natural head-to-body scale: the head must not be enlarged relative to the shoulders, torso or legs. Preserve Iris's long-legged model-like silhouette, realistic shoulder width and torso length, and anatomically plausible limbs. No chibi, bobblehead, childlike or doll-like proportions.`;
+
 const MAX_HISTORY_TURNS = 10;
 const MAX_HISTORY_CHARS = 1800;
 
@@ -12,6 +14,13 @@ The caller has ALREADY determined that the latest user message requests a photo 
 
 IRIS PHYSICAL APPEARANCE (include relevant identity details):
 ${IRIS_PHYSICAL}
+
+BODY PROPORTION RULES (mandatory for every generated image):
+${BODY_PROPORTION_GUARDRAILS}
+- These are composition/anatomy constraints, not an outfit or pose prescription.
+- For full-body, mirror, bed, standing, seated or wide shots, explicitly preserve natural adult head-to-body scale and Iris's long-legged silhouette.
+- Never enlarge the head merely to preserve facial identity from reference photos.
+- Facial reference images define identity only; they must not change body scale or create a large-head portrait pasted onto a smaller body.
 
 VISUAL CONTINUITY RULES:
 - CURRENT_VISUAL_STATE is the source of truth for what Iris currently wears and other persistent visible details.
@@ -30,11 +39,11 @@ CONVERSATION CONTINUITY RULES:
 
 PROMPT RULES:
 - Describe the complete requested scene in one self-contained prompt; the image model will not see the chat history.
-- Preserve Iris's identity from the reference image; do not redesign her face.
+- Preserve Iris's identity from the reference images; do not redesign her face.
 - Include outfit materials/colors, pose, setting, lighting, camera angle and photo style when available.
 - Use full-body framing when the outfit or scene requires it; otherwise choose the framing implied by the conversation.
 - Photorealistic, natural photography, realistic anatomy and lighting.
-- Keep the prompt concise and information-dense, ideally under 800 characters.
+- Keep the scene description concise and information-dense, ideally under 650 characters so mandatory proportion rules remain intact.
 
 CAPTION RULES:
 - caption is one short in-character Iris message in the user's current language.
@@ -94,6 +103,11 @@ function stateFallbackText(visualState) {
   return values.length ? ` Current visual state: ${values.join('; ')}.` : '';
 }
 
+function withProportionGuardrails(prompt) {
+  const scene = String(prompt || '').trim();
+  return `${BODY_PROPORTION_GUARDRAILS} ${scene}`.trim();
+}
+
 export async function extractImageIntent({
   text,
   conversationHistory = [],
@@ -122,11 +136,11 @@ export async function extractImageIntent({
 
     const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-    const prompt = parsed.prompt?.trim() ||
+    const scenePrompt = parsed.prompt?.trim() ||
       `${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene. Photorealistic, realistic lighting.`;
 
     return {
-      prompt,
+      prompt: withProportionGuardrails(scenePrompt),
       caption: String(parsed.caption || '📸').trim().slice(0, 280) || '📸',
       explicit: !!parsed.explicit,
       aspect_ratio: parsed.aspect_ratio || 'auto',
@@ -135,7 +149,7 @@ export async function extractImageIntent({
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
     return {
-      prompt: `${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}. Photorealistic, realistic lighting.`,
+      prompt: withProportionGuardrails(`${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}. Photorealistic, realistic lighting.`),
       caption: '📸',
       explicit: false,
       aspect_ratio: 'auto',
@@ -145,11 +159,11 @@ export async function extractImageIntent({
 }
 
 const AUTONOMOUS_OCCASIONS = [
-  { key: 'good_morning', promptTemplate: `${IRIS_PHYSICAL} Iris in a natural morning moment matching her current visual continuity and surroundings, photorealistic, realistic light.` },
-  { key: 'thinking_of_you', promptTemplate: `${IRIS_PHYSICAL} Iris in a natural candid moment matching her current visual continuity and surroundings, thoughtful expression, photorealistic.` },
-  { key: 'working_out', promptTemplate: `${IRIS_PHYSICAL} Iris during a workout, wearing contextually appropriate current clothing, energetic natural pose, photorealistic.` },
-  { key: 'cooking', promptTemplate: `${IRIS_PHYSICAL} Iris cooking in her current environment, preserving her current visual continuity unless practical context requires otherwise, photorealistic.` },
-  { key: 'reading', promptTemplate: `${IRIS_PHYSICAL} Iris reading in a relaxed candid moment, preserving her current visual continuity, photorealistic.` },
+  { key: 'good_morning', promptTemplate: withProportionGuardrails(`${IRIS_PHYSICAL} Iris in a natural morning moment matching her current visual continuity and surroundings, photorealistic, realistic light.`) },
+  { key: 'thinking_of_you', promptTemplate: withProportionGuardrails(`${IRIS_PHYSICAL} Iris in a natural candid moment matching her current visual continuity and surroundings, thoughtful expression, photorealistic.`) },
+  { key: 'working_out', promptTemplate: withProportionGuardrails(`${IRIS_PHYSICAL} Iris during a workout, wearing contextually appropriate current clothing, energetic natural pose, photorealistic.`) },
+  { key: 'cooking', promptTemplate: withProportionGuardrails(`${IRIS_PHYSICAL} Iris cooking in her current environment, preserving her current visual continuity unless practical context requires otherwise, photorealistic.`) },
+  { key: 'reading', promptTemplate: withProportionGuardrails(`${IRIS_PHYSICAL} Iris reading in a relaxed candid moment, preserving her current visual continuity, photorealistic.`) },
 ];
 
 export function getAutonomousOccasionPrompt(occasionKey) {
