@@ -6,24 +6,33 @@
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
 **Consolidated:** 2026-08-19, Europe/Bratislava  
-**Latest consolidation merge:** `b391f6c0d90ce6c899876b83697f6e2ebad6b1cc`
+**Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts. In mixed chats keep explicit namespaces `PROJECT_IRIS` and `PROJECT_ANTAGONIST`.
 
-## 1. Product goal
+## 1. Product direction
 
-Iris is a persistent AI companion application, not a stateless chatbot. Core goals:
+Iris is a persistent AI companion application, not a stateless chatbot.
+
+Core goals:
 - continuous user/account identity;
 - long-term + recent memory;
-- temporal awareness and correct “time since previous conversation” behavior;
+- temporal awareness;
 - relationship/internal state;
 - shared roleplay-world continuity;
 - real-world assistance while staying in character;
 - persistent visual identity and generated photos;
 - multilingual behavior mirroring the user's language;
-- iPhone Safari/Home Screen PWA support plus Expo native support;
-- cost-aware routing across OpenAI, xAI, and image providers;
-- controlled romantic/intimate escalation instead of a binary normal→hard-erotic switch.
+- PWA-first distribution across iPhone, Android and desktop;
+- cost-aware routing across OpenAI, xAI and image providers;
+- controlled romantic/intimate escalation;
+- privacy-by-design because Iris may store highly intimate user data.
+
+Current distribution strategy:
+- do NOT make App Store or Google Play a blocker for beta or early monetization;
+- primary product is the installable web/PWA experience;
+- native Expo support remains available, but store release is optional/later;
+- one PWA code path should serve iPhone, Android and desktop as long as UX remains strong.
 
 ## 2. Production infrastructure
 
@@ -38,459 +47,414 @@ Production API: `https://iris-mobile.onrender.com`
 Host: Render
 
 ### Supabase
-Project URL: `https://glufbaseqhjkljhvdhmh.supabase.co`
+Project URL: `https://glufbaseqhjkljhvdhmh.supabase.co`  
+Region: EU / eu-west-1
 
-Frontend env names:
-- `EXPO_PUBLIC_API_URL`
-- `EXPO_PUBLIC_SUPABASE_URL`
-- `EXPO_PUBLIC_SUPABASE_ANON_KEY`
+Never expose Supabase `service_role` or provider secrets in frontend/public config or this master.
 
-Never expose a Supabase `service_role` key or provider secrets in frontend/public config or this master.
+## 3. Current model stack
 
-## 3. Stack / important files
-
-Stack: Expo 54, React Native 0.81, React 19, Expo Router, React Native Web, TypeScript, Supabase JS, Node/Express backend.
-
-Important frontend:
-- `app/(tabs)/index.tsx` main chat
-- `app/components/ChatInput.tsx`
-- `app/+html.tsx` PWA/iOS viewport
-- `app/_layout.tsx`
-- `app/auth/index.tsx`
-- `app/auth/callback.tsx`
-- `app/account/set-password.tsx`
-- `public/manifest.json`
-- `public/iris-icon.svg`
-- `vercel.json`
-
-Important backend:
-- `server/routes/chat.js`
-- `server/prompt/systemPrompt.js`
-- `server/helpers/promptAssembler.js`
-- `server/helpers/liveAssistance.js`
-- `server/behavior/intentJudge.js`
-- `server/behavior/heatRouting.js`
-- `server/master_iris_core.yaml`
-- `server/lib/llmModels.js`
-- `server/image/imageIntentDetector.js`
-- `server/image/imageHandler.js`
-- `server/image/imageGen.js`
-- `server/memory/*`
-
-## 4. Current LLM stack
+Canonical model config: `server/lib/llmModels.js`
 
 - Main OpenAI chat: `gpt-5.6-terra`
-- OpenAI utility/classifier/memory helper: `gpt-5.6-luna`
+- OpenAI utility/classifier/memory/image-prompt helper: `gpt-5.6-luna`
 - xAI intimate route: `grok-4.5-latest`
 - Embeddings: `text-embedding-3-small`
 
-Terra is reserved for main conversation and OpenAI-hosted live web assistance. Luna handles cheaper background/classifier/governance/image-prompt work. Grok uses low reasoning effort and is only selected by semantic heat routing (heat 2/3).
+Routing:
+- heat 0 → Terra
+- heat 1 → Terra
+- heat 2 → Grok 4.5
+- heat 3 → Grok 4.5
+- current factual/live web assistance → OpenAI/Terra
+- Luna handles cheaper semantic classification/governance/background helper work
 
-## 5. Language policy
+Product decision: main conversational model is working well; do not casually swap Terra before beta. Gather real tester baseline first, then optimize cost/quality.
 
-Old hardcoded Slovak / Slovak+English behavior was removed.
+## 4. Language and personality rules
 
-Current policy:
-- reply in the language of the latest substantive user message;
-- if latest message is language-neutral (`ok`, emoji, short acknowledgement), continue recent conversation language;
-- never default to Slovak or English;
-- code-switch only when user naturally does;
-- heat/nickname/intimacy classification is semantic and must work across languages/scripts.
+- mirror language of latest substantive user message;
+- language-neutral short replies continue recent language;
+- no hardcoded Slovak or English default;
+- semantic heat/preference/nickname logic must work in any language/script;
+- Iris speaks in first-person feminine;
+- stay in character;
+- learned preferences are soft priors, not permission to escalate.
 
-A runtime language override exists so legacy YAML text cannot force Slovak.
+## 5. Canonical behavior YAML
 
-## 6. IRIS_CORE YAML
+Repo file: `server/master_iris_core.yaml`  
+Current behavior version: `MASTER_1.10_VISUAL_CONTINUITY`
 
-Canonical repo file: `server/master_iris_core.yaml`  
-Current version: `MASTER_1.9_ADAPTIVE_HEAT`
-
-Major changes from `MASTER_1.8_EROTIC`:
-- removed hardcoded `kitty` / `little kitty`;
-- added learned Iris-only nickname memory;
-- removed cyber/cyberskin details;
-- mirror-user language policy;
-- adaptive heat 0–3 instead of automatic maximum escalation;
-- current heat separated from durable preference;
-- rough/vulgar style separated from explicitness;
-- post-climax cooldown retained;
-- uploaded reference image declared primary visual identity anchor.
-
-Render load order in `systemPrompt.js`:
+Render load order:
 1. `/etc/secrets/master_iris_core.yaml`
 2. env YAML
 3. internal fallback
 
-Therefore Render's Secret File must match the repo YAML. At consolidation the user had been given the complete 1.9 YAML to paste into Render; future sessions should verify the saved Render secret/logs instead of assuming.
+Render Secret File must match canonical repo behavior when behavior changes are intended for production.
 
-## 7. Nickname system
+Major behavior guarantees:
+- adaptive heat 0–3;
+- no fixed multi-turn Grok lock;
+- heat 2 must not automatically jump to heat 3;
+- rough/vulgar style is separate from explicitness;
+- post-climax cooldown;
+- Iris-only nickname directionality;
+- mirror-user language;
+- persistent visual continuity;
+- no hardcoded outfit-by-location/time/color/fabric mappings.
 
-The old `little kitty` alias caused directionality mistakes: user called Iris “kitty” and Iris sometimes called the user “kitty”.
-
-Current rules:
-- nickname assigned to Iris belongs to Iris only;
-- preserve exact user spelling, any language/script;
-- use naturally and sparingly;
-- never reuse Iris's nickname as an address for the user;
-- never invent a nickname for the user;
-- only call the user a nickname if user explicitly requests it.
-
-Persistence: `server/memory/companionPreferences.js` → `user_profile`, key `iris_nickname`.
-
-## 8. Adaptive heat routing
-
-The previous behavior routed too early to Grok and then used a multi-turn Grok lock + high-intensity override, causing pleasant chat or a kiss/grab to jump immediately into hard vulgar sex.
-
-Current semantic heat:
-
-### Heat 0 — normal
-Provider: OpenAI/Terra  
-Normal conversation, friendship, jokes, gaming/projects, non-physical flirt. No unsolicited romantic/sexual escalation.
-
-### Heat 1 — soft romance
-Provider: OpenAI/Terra  
-Hugs, cuddling, holding hands, stroking face/hair, gentle kissing, comforting touch, emotional closeness. No sexualized touching/foreplay/explicit anatomy/abrupt dirty talk.
-
-### Heat 2 — sensual / foreplay territory
-Provider: Grok 4.5  
-Thigh/hips/butt/breasts, sexualized touching, sensual undressing, grinding, strong tension/arousal, foreplay. Critical rule: heat 2 must NOT automatically become heat 3. Kiss + grabbing butt/thigh/breast = heat 2, not 3. Do not automatically introduce genital interaction, masturbation, oral, penetration, explicit sex, or maximal vulgarity.
-
-### Heat 3 — explicit sexual
-Provider: Grok 4.5  
-Explicit sexual activity/scenes. Explicit does NOT automatically mean rough. Gentle explicit stays gentle; rough/vulgar only when user requests or demonstrates it.
-
-Runtime:
-- 0 → OpenAI
-- 1 → OpenAI
-- 2 → Grok
-- 3 → Grok
-- live web assistance forces OpenAI
-- no fixed multi-turn Grok lock; `engine_lock_count` is currently written as 0
-- every substantive turn is reclassified
-- short “yes/continue/emoji” can preserve active heat only when context/classifier confirms continuation.
-
-## 9. Intimacy preference learning
-
-Separate dimensions:
-1. current heat;
-2. preferred style.
-
-Supported learned styles:
-- gentle
-- playful
-- sensual
-- rough
-
-Durable profile keys:
-- `preferred_intimacy_heat`
-- `preferred_intimacy_style`
-
-Store only when explicitly stated or repeated evidence strongly supports it. One isolated intimate message must not create a durable preference.
-
-Preference is a soft prior for wording/pacing only. It is never consent or permission to increase heat.
-
-## 10. Post-climax cooldown
-
-State: `post_climax_cooldown`
-
-Allowed:
-- aftercare
-- cuddling
-- gentle kissing
-- breathing together
-- soft touch
-- emotional warmth
-
-Forbidden until a new user sexual trigger:
-- proactive new escalation
-- initiating new explicit action
-- new explicit dirty talk escalation
-
-## 11. Current `/chat` orchestration
-
-`server/routes/chat.js` currently:
-1. validates message;
-2. authenticates user;
-3. receives timezone;
-4. begins/touches temporal session;
-5. checks idempotent `client_message_id`;
-6. consumes usage quota;
-7. loads/extracts scene context;
-8. applies subject lock;
-9. conditionally creates embedding;
-10. parallel-loads scene facts, core origin, summaries, user profile, shared experiences, episodic recall, factual/live classification, relationship, internal state, self model, personality evolution, recent chat;
-11. saves user message;
-12. assembles prompt;
-13. adds live-assistance directive when needed;
-14. runs multilingual semantic heat classifier every turn;
-15. chooses engine from heat;
-16. appends runtime heat directive;
-17. asynchronously persists nickname/preference signals;
-18. handles image requests if applicable;
-19. otherwise calls OpenAI or Grok;
-20. saves assistant response;
-21. event-gates episodic/shared/profile memory;
-22. patches scene engine/interaction mode;
-23. selectively updates relationship/internal/self-awareness/personality governance.
-
-## 12. Real-world assistance inside roleplay
-
-Goal: Iris can stay in character while actually searching current information.
-
-Example: scene says user + Iris are in a Jumeirah Beach apartment in Dubai; user says “find the best sushi near us”.
-
-Expected:
-- use scene context as real location anchor;
-- OpenAI hosted `web_search`;
-- return real current names/results;
-- remain Iris/in-character;
-- do not invent distance, hours, prices, ratings, availability;
-- if location too vague, ask one short clarification.
-
-Triggers cover search/find/check plus restaurants, bars, cafes, hotels, shops, places, menus, prices, booking, “nearby/current/today/now”, etc.
-
-## 13. Memory architecture
+## 6. Memory architecture
 
 ### Recent chat
-Loaded for immediate continuity, image context, short follow-ups, and intimate-scene continuation.
+Immediate conversation continuity and short follow-ups.
 
 ### User profile
-Durable user facts/preferences. During this work, the user's account was verified to include:
-- plays Elden Ring;
-- wants Iris as personal Elden Ring guide;
-- user can rage/be impatient during gaming.
-These are user-specific, not universal product defaults.
+Durable user facts and preferences.
 
 ### Episodic memory
 Table: `episodic_memory`  
-Semantic RPC: `match_episodic_memory_v2`  
-Code currently uses low candidate threshold (~0.15), top confidence threshold ~0.35, count 12, weighted similarity+importance. Writes are event-gated, then enriched with title/summary/tags/embedding.
+Semantic retrieval RPC: `match_episodic_memory_v2`
 
 ### Shared experiences
-Table: `shared_experiences`  
-Stores meaningful shared roleplay/emotional experiences with location, summary, actions, tone, intensity, Iris emotion/notes, embedding.
+Table: `shared_experiences`
 
 ### Scene context
-Includes city, country, place, room, time_of_day, interaction_mode, last_subject, last_engine, last_engine_reply, bridge buffer, legacy engine_lock_count.
+Tracks current place/room/time/subject/interaction state and recent engine information.
 
-### Relationship
-Tracks closeness, trust, attachment, emotional intensity, supportiveness, tension.
+### Relationship / internal state / self-awareness / personality evolution
+Loaded and updated selectively, not blindly every turn.
 
-### Internal state / self-awareness / personality evolution
-Loaded and updated selectively, not every turn.
+### Visual state
+Dedicated persistent visual continuity layer.
 
-### Cost optimization
-- deterministic policy gates;
-- semantic recall only when warranted;
-- Luna for helpers;
-- selective governance;
-- async background enrichment;
-- embeddings only when needed.
+Current authoritative tracked fields include:
+- outfit
+- footwear
+- nails
+- hair
+- makeup
+- accessories
+- other visible details
 
-## 14. Temporal awareness
+Priority:
+1. explicit current user instruction;
+2. current visual state;
+3. strongly justified context/activity transition;
+4. learned visual preferences as soft bias;
+5. fallback inference only if state is unknown.
 
-Major bug fixed: Iris previously updated “last interaction” with the current message and could answer “just now” when asked how long since the previous conversation.
+A photo request alone never changes a known outfit.
 
-`server/memory/timeContext.js` persists:
-- `last_interaction_at`
-- `relationship_started_at`
-- `last_photo_sent_at`
-- `user_timezone`
-- `current_session_started_at`
-- `previous_session_ended_at`
-- `session_gap_seconds`
+## 7. Visual preference learning
 
-Default session timeout: 30 minutes.
+Long-term visual preferences are separate from current appearance state.
 
-When a new session starts, the previous gap is frozen. Prompt rules explicitly say to answer “how long since we last spoke?” from the frozen previous-session gap, not the current active message timestamp.
+Examples:
+- preferred nail polish on Iris;
+- preferred colors/materials on Iris;
+- preferred sleepwear/style;
+- hair/makeup/accessory preferences.
 
-## 15. Image generation
+Important interpretation rule:
+- a narrow preference must not be expanded into a broad unsupported preference;
+- e.g. liking black nail polish does not automatically mean the user wants every Iris outfit black.
 
-Primary mode is image-to-image using Iris's uploaded reference.
+Verified user preference from current account work:
+- user likes black nail polish on Iris.
 
-Default:
+## 8. Image generation stack
+
+Primary provider:
 - Qwen Image 2 Edit via fal: `fal-ai/qwen-image-2/edit`
 
 Fallback:
-- Kling O3 image-to-image: `fal-ai/kling-image/o3/image-to-image`
+- Kling O3 image-to-image
 
-Optional higher-cost quality path:
-- Nano Banana 2 / Gemini 3.1 Flash Image edit: `fal-ai/gemini-3.1-flash-image-preview/edit`
+Optional quality path:
+- Nano Banana 2 / Gemini image edit
 
 Legacy optional path:
-- OpenAI `gpt-image-1`
+- OpenAI image generation
 
-Provider can be selected via `IRIS_IMAGE_PROVIDER`.
+Generated provider outputs are copied into Iris private storage instead of being trusted as permanent provider URLs.
 
-If Qwen fails, code automatically retries Kling before returning an error.
+## 9. Three-view face reference pack
 
-Generated provider URLs are persisted into Iris private media storage rather than being trusted as permanent output URLs.
+Current identity upgrade supports up to 3 face references in deterministic order:
+1. front;
+2. 3/4;
+3. side profile.
 
-## 16. Visual identity / reference image
+Menu must expose/manage this as a three-slot face reference pack.
 
-The user uploaded a newer reference face for Iris. It was verified stored in Supabase private storage under an Iris reference path pattern:
-`iris-photos / iris-ref/<user_id>/reference.png`
+Storage remains private under the per-user Iris reference area.
 
-The reference image is intended to be the primary face/identity anchor.
+Provider behavior:
+- Qwen receives up to 3 identity references;
+- Nano Banana receives up to 3;
+- Kling fallback receives up to 3;
+- legacy single reference remains a backward-compatible fallback until the pack is populated.
 
-Current textual image identity includes pale skin, dirty-blonde hair, green eyes, freckles, long/model-like body traits, age 22.
+The three images are identity views of the SAME Iris, not three different people/looks.
 
-Cyber/cyberskin was removed after generated images produced an obvious metallic neck implant. Removed from:
-- `server/image/imageIntentDetector.js`
-- canonical YAML
+## 10. Body proportion guardrails
 
-Green eyes were intentionally kept.
+A recurring image artifact was an occasionally oversized head.
 
-Future quality direction: reference-first. Avoid textual identity attributes overpowering the uploaded reference.
+Current generation prompts must preserve:
+- natural adult female head-to-body ratio;
+- realistic shoulder width;
+- realistic torso length;
+- Iris's long-legged model-like silhouette;
+- natural photographic anatomy.
 
-## 17. Image context continuity
+Avoid:
+- oversized head;
+- bobblehead/chibi/doll-like proportions;
+- shortened torso or compressed legs caused by identity over-weighting.
 
-Bug: after discussing an outfit/scene, “send me the photo” only passed the final sentence to image intent, causing a generic/unrelated outfit.
+These are generic anatomy/composition constraints, NOT hardcoded outfits or poses.
 
-Fix:
-- image prompt builder receives recent conversation + latest request + scene context;
-- up to 10 recent turns;
-- resolves “that scene/outfit/show me/send photo” references;
-- preserves latest outfit, pose, location, lighting, framing, mood;
-- newer details override conflicting old details;
-- short final request must not erase previously defined outfit.
+## 11. Visual identity
 
-Regression test exists for this class of bug.
+Textual identity remains secondary to visual reference:
+- pale skin;
+- dirty-blonde hair;
+- green eyes;
+- strong freckles on face/chest;
+- large augmented breasts;
+- slim waist;
+- long legs;
+- model-like figure;
+- age 22.
 
-## 18. Authentication
+Cyber/cyberskin was removed and must not reappear.
 
-Old: magic-link-only PKCE. Cross-browser opening was painful because verifier/session context could be browser-local.
+Reference-first principle:
+- uploaded face references are the primary identity anchor;
+- textual descriptors should not overpower a valid reference pack.
 
-Current auth UI:
-### Login
-Email + password → `signInWithPassword`.
+## 12. UI / PWA state
 
-### Register
-Name + email + password + confirmation → `signUp`; name saved to metadata (`display_name`, `name`).
+Current UI includes:
+- Dark theme;
+- Light theme;
+- white/grey light palette with glass/translucent treatment;
+- theme persistence per device;
+- iOS/PWA keyboard/viewport handling;
+- PWA standalone behavior;
+- push notifications/background reply reconciliation;
+- custom Iris header avatar separate from image-generation reference identity.
 
-### Existing-user migration
-`/account/set-password` calls `supabase.auth.updateUser({ password })` while logged into the original account.
+Avatar rule:
+- UI avatar is only the small profile image in the app header;
+- changing it must never change image-generation face references.
 
-Critical result:
-same Supabase `user_id`, therefore same history, memories, relationship state, etc.
+## 13. Authentication
 
-The user's original Iris account was migrated this way and password login was reported working.
+Current primary auth:
+- email + password login;
+- email + password registration;
+- existing account migration preserved same Supabase user ID and therefore existing memories/history.
 
-Magic link remains only as a backward-compatible fallback in login UI. Recommended: remove after password flow acceptance testing; use a dedicated password-reset/OTP recovery flow if needed.
+Magic link remains only as legacy fallback until deliberately removed/replaced by clean password recovery.
 
-## 19. Supabase auth URL config
+## 14. Usage limiting foundation
 
-Production Site URL:
-`https://iris-mobile.vercel.app`
+Current backend has `user_entitlements` and usage accounting.
 
-Redirect:
-`https://iris-mobile.vercel.app/auth/callback`
+Supported entitlement fields include:
+- tier;
+- status;
+- chat daily limit;
+- image daily limit;
+- expiry timestamp.
 
-Kept for mobile/dev:
-- `iris://auth/callback`
-- `iris://auth`
-- `http://localhost:8081/auth/callback`
+Current generic defaults are intentionally too generous for public free testing and must not be treated as the future trial plan.
 
-## 20. Web/PWA/iPhone
+## 15. Closed-beta trial product decision
 
-Manifest: `public/manifest.json`
-- name/short_name: Iris
-- standalone
-- portrait
-- dark theme
-- icon `/iris-icon.svg`
+Target first public/closed-beta experience:
+- one free trial period per new user;
+- duration: rolling 24 hours from trial activation, not “until midnight”;
+- after trial: questionnaire → lock;
+- later unlock only through explicit tester extension or paid entitlement.
 
-PWA icon comes from `public/iris-icon.svg`, not automatically from the uploaded Iris face.
+Initial trial budget target:
+- total real cost ceiling approximately €1 per active trial user/day;
+- 10 active trial users should therefore stay at or below approximately €10/day total variable spend.
 
-`app/+html.tsx` includes:
-- viewport-fit cover;
-- `interactive-widget=resizes-content`;
-- Apple mobile web app metadata;
-- visualViewport synchronization;
-- 16px minimum input/textarea font to stop Safari focus zoom.
+Initial guardrail proposal:
+- about 30 user chat turns during trial;
+- maximum 5 generated photos during trial;
+- limit expensive live-web/tool use if necessary;
+- global/cohort emergency spend kill switch before public testing.
 
-iPhone bugs addressed:
-1. giant black gap between composer and keyboard;
-2. focus auto-zoom / clipped UI.
+Do not rely only on request counts long-term. Add actual provider/token/image cost telemetry per user so the €1/day target can be enforced from observed production usage.
 
-Fixes use VisualViewport-based root height/top and avoid double keyboard compensation. Keep this in regression testing because iOS PWA behavior is fragile.
+## 16. Beta readiness
 
-## 21. CI / tests
+Current rough internal estimate:
+- closed beta readiness: ~80%;
+- first responsible monetization readiness: ~60–70%.
 
-Current scripts:
-- `npm run typecheck`
-- `npm run lint`
-- `npm run check:server`
-- `npm run test:image-context`
-- `npm run test:live-assistance`
-- `npm run test:heat-routing`
-- `npm run build:web`
+These percentages are planning estimates, not formal metrics.
 
-Important regression suites:
+Before Closed Beta, prioritize:
+1. 24h trial gate + questionnaire + lock;
+2. 18+ age gate;
+3. privacy/data controls;
+4. provider/privacy hardening for image generation;
+5. real per-user cost telemetry + kill switch;
+6. acceptance testing of memory/image/auth/visual continuity;
+7. clear Terms + Privacy Policy + data deletion path.
+
+## 17. Monetization strategy
+
+Current direction:
+- PWA/web-first monetization;
+- do not block on App Store or Google Play;
+- credits can be a valid product/billing mechanism;
+- credits must NOT be used to disguise the actual service from a payment processor.
+
+Important payment rule:
+- payment provider onboarding must truthfully describe Iris and the real services credits/subscriptions unlock;
+- do not attempt to bypass processor adult-content rules by labeling the transaction only as “credits”.
+
+Potential product billing model:
+- Iris Credits for variable-cost features such as generated photos and premium usage;
+- subscription may include a monthly credit allocation;
+- exact tiers/pricing should follow real beta retention and cost data, not guesses.
+
+Payment-provider constraint:
+- mainstream processors may reject or restrict adult/explicit AI companion use cases;
+- evaluate a processor that explicitly accepts the actual Iris 18+ use case;
+- obtain approval before building the production billing dependency around one provider.
+
+## 18. User privacy / data-protection product requirements
+
+This is a core product requirement, not a later legal checkbox.
+
+Iris may process very sensitive information, including intimate/sexual preferences and relationship-style memories. Therefore implement privacy by design.
+
+Required beta privacy controls:
+- clear 18+ age gate;
+- clear privacy disclosure/consent before sensitive memory use;
+- memory on/off control;
+- future “private session” mode that does not create durable memories;
+- “What Iris remembers about me” UI;
+- delete individual memories;
+- export user data;
+- delete account and all Iris user data;
+- documented retention policy for chat, memories and generated media;
+- least-data-necessary prompting to external providers;
+- secure private media storage;
+- RLS/security review before broader beta.
+
+Data classes should be separated conceptually:
+1. account/auth data;
+2. chat transcript/history;
+3. durable long-term memory/profile;
+4. relationship/internal state;
+5. generated media/reference media;
+6. billing/entitlements;
+7. analytics/cost telemetry.
+
+Do not retain raw intimate conversations indefinitely merely because storage is available. Long-term memory should keep useful distilled facts where possible instead of copying every transcript forever.
+
+## 19. External-provider privacy direction
+
+OpenAI/xAI/fal should receive only the context necessary for the current operation.
+
+For image generation:
+- treat provider-hosted input/output URLs as temporary processing artifacts;
+- copy final generated media to Iris private Supabase storage;
+- minimize provider retention where API/provider options allow it;
+- enable/store-no-input-output or shortest practical media expiration options where supported;
+- document provider subprocessors/retention in Privacy Policy/DPIA work.
+
+Before broad scale, complete a formal DPIA-style review because the product combines new AI technology with potentially highly sensitive user data.
+
+## 20. Legal/business setup direction
+
+Do not wait for large revenue before considering proper business/legal setup.
+
+Before meaningful paid launch:
+- confirm appropriate Slovak business form / trade activity with an accountant or lawyer;
+- understand EU consumer/VAT/OSS treatment for digital services;
+- have Terms, Privacy Policy, refund/credit rules and billing disclosures;
+- use a payment processor that explicitly approves the real product category.
+
+## 21. Founder financial goals
+
+Current founder goal/reference:
+- if Iris can average roughly €2,000/month net for ~6 consecutive months, that would already be a major success milestone;
+- roughly €4,000/month net would be a more meaningful threshold for considering full business/company focus.
+
+These are founder planning goals, not user-facing promises and not product defaults.
+
+Early optimization priority is NOT maximum profit. Measure:
+- trial → paid conversion;
+- day-1/day-7/day-30 retention;
+- average active-user cost;
+- image usage;
+- heat 2/3 usage share;
+- support/refund burden;
+- willingness to pay;
+- which feature creates the strongest “wow” moment.
+
+## 22. CI / engineering rules
+
+Important regression checks:
+- typecheck;
+- lint;
+- server syntax;
 - image context continuity;
 - live assistance;
-- adaptive heat routing.
+- heat routing;
+- visual state;
+- web build.
 
-Future routing/memory/image merges should pass CI before merge and then verify Render/Vercel deployment status.
+Future rules:
+- inspect current GitHub before claiming code state;
+- run CI before merge;
+- verify Render/Vercel after merge;
+- never expose secrets;
+- preserve Supabase user ID/memory continuity;
+- do not regress language mirroring;
+- do not regress heat 2 into heat 3;
+- do not regress nickname directionality;
+- do not send image model only a short final request when prior context defines the scene;
+- do not randomize outfit between image requests;
+- do not hardcode wardrobe by scene/location/time;
+- never mix Iris with Project Antagonist.
 
-## 22. Key project-change landmarks
+## 23. Important current functional landmarks
 
-Important functional commits/merges from this work:
-- `17df88835866f567353c690f033f58b1b04b85fc` — image context continuity
-- `834cb5b7f1926cc103b0db0852aaf4875d781b8c` — language mirror-user fix
-- `c937dc3d31d6a2d8fd87763bd99c0f46ce44a0b7` — Terra/Luna/Grok + live assistance + image stack upgrade
-- `c4fcb9aa7c9d397a42202e202c5cf5d475ed2e5a` — login/register password auth
-- `5a9a8b466c0038c6142f85ff14feb79ba5c9ac09` — iPhone keyboard/viewport work
-- `34b54a3c59d70092be4d68b48aab6900d414cbe4` — Qwen→Kling fallback + further keyboard correction
-- `7fd86241990ff5333aea44f159cb3428ec702b9e` — remove cyber image identity
-- `b391f6c0d90ce6c899876b83697f6e2ebad6b1cc` — adaptive multilingual heat routing + nickname memory
+Recent major merges include:
+- visual continuity / `MASTER_1.10_VISUAL_CONTINUITY`;
+- Dark/Light theme and iOS/PWA visual pass;
+- persistent custom header avatar;
+- three-view face reference pack + body proportion guardrails;
+- adaptive Terra/Luna/Grok routing and persistent memory architecture.
 
-This is a functional landmark list, not necessarily every repository commit.
+Most recent image-reference/body-proportion merge before this consolidation:
+`b17019e98facc5e4f237d66ccffaaceacda8f84a`
 
-## 23. Next recommended acceptance tests
+## 24. Recommended immediate engineering order
 
-Before more features:
-1. Heat 0 normal chat → OpenAI, no unsolicited escalation.
-2. Heat 1 hug/soft kiss → OpenAI, stays soft.
-3. Heat 2 thigh/hip/butt/breast touch → Grok, sensual but no auto heat-3 jump.
-4. Heat 3 explicit initiation → Grok, style mirrors user; explicit ≠ automatically rough.
-5. De-escalate/change topic → next turn returns to normal, no stale Grok lock.
-6. Give Iris a nickname → stored for Iris only, never used on user.
-7. Repeat tests in another language.
-8. Jumeirah Beach Dubai + “find 3 sushi nearby” → live real results, in character.
-9. Discuss outfit/scene then “send photo” → photo uses prior scene.
-10. New temporal session + “how long since we spoke?” → frozen session gap.
-11. iPhone Home Screen input focus → no zoom/no giant black gap.
-12. Verify Render logs actually load `MASTER_1.9_ADAPTIVE_HEAT`.
+1. Validate the 3-view face reference pack in production.
+2. Build the 24-hour trial entitlement lifecycle.
+3. Add questionnaire + post-trial lock screen.
+4. Add per-user provider cost telemetry and cohort/global budget kill switch.
+5. Add 18+ gate.
+6. Add privacy/memory controls + export/delete account/data.
+7. Harden fal/media retention behavior.
+8. Prepare Terms/Privacy/DPIA documentation.
+9. Contact/payment-provider due diligence for the actual 18+ AI companion use case.
+10. Start Closed Beta with a small cohort, then decide paid-beta pricing from observed data.
 
-## 24. Recommended next engineering order
+## 25. One-sentence current state
 
-1. Run acceptance matrix above.
-2. Verify Render secret YAML is 1.9.
-3. Remove magic-link fallback after password auth proven.
-4. Eliminate repo-YAML vs Render-secret drift with one canonical deploy source/check.
-5. Make image identity more reference-first and reduce redundant hardcoded visual pressure.
-6. A/B Qwen vs Kling (optionally Nano Banana) on identical reference/prompts for identity, garment fidelity, artifacts, latency, and cost.
-7. Continue measuring memory/background-call cost.
-8. Only remove legacy schema fields like `engine_lock_count` via deliberate migration.
-
-## 25. Rules for future chats / agents
-
-- This is the canonical Iris handoff unless superseded by a newer file.
-- Inspect GitHub before claiming current code/deploy state.
-- For current provider/model/pricing claims, verify current docs when freshness matters.
-- Never modify repo without explicit user authorization for the requested change.
-- Prefer one scoped fix/feature at a time.
-- Run CI before merge.
-- Verify Render and Vercel after merge.
-- Never expose secrets.
-- Preserve Supabase `user_id` and memory continuity during auth work.
-- Never regress mirror-user language behavior.
-- Never regress heat 2 into automatic heat 3.
-- Never regress Iris nickname directionality.
-- Never send image generator only the final short request if prior chat defines scene/outfit.
-- Never calculate previous-conversation gap from the current message.
-- Never mix this project with Project Antagonist.
-
-## 26. One-sentence current state
-
-Iris is a production Expo/Vercel + Render + Supabase companion app using Terra for normal/soft-romantic chat and live web assistance, Luna for utility/memory work, Grok 4.5 for semantically classified heat 2/3, a multi-layer persistent memory/time system, password-based auth with legacy magic-link fallback, and a reference-driven Qwen Image 2 → Kling O3 image pipeline, with `MASTER_1.9_ADAPTIVE_HEAT` as the canonical behavior configuration and a hard boundary from Project Antagonist.
+Iris is an Early Alpha / near-Closed-Beta PWA-first persistent AI companion using GPT-5.6 Terra for normal/soft chat, GPT-5.6 Luna for utility work, Grok 4.5 for semantic heat 2/3, Supabase-backed memory/visual state, Qwen-first generated imagery with a three-view face reference pack and body-proportion guardrails, with the next product milestone being a budget-capped 24-hour trial plus privacy/18+/feedback infrastructure before first monetization.
