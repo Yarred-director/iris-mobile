@@ -11,6 +11,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
 import ChatInput from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
+import RichText from '../components/RichText';
 import TypingIndicator from '../components/TypingIndicator';
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com').trim().replace(/\/+$/, '').replace(/\/chat$/, '');
@@ -70,7 +71,7 @@ function Bubble({ message }: { message: Message }) {
   return (
     <LinearGradient colors={user ? ['rgba(91,108,255,0.32)', 'rgba(91,108,255,0.12)'] : ['rgba(255,255,255,0.10)', 'rgba(255,255,255,0.04)']} style={[styles.bubble, user ? styles.userBubble : styles.irisBubble]}>
       <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={14} /></View>
-      <Text style={styles.text}>{message.text}</Text>
+      <RichText text={message.text} style={styles.text} />
     </LinearGradient>
   );
 }
@@ -94,7 +95,7 @@ function ImageBubble({ message, refreshUrl }: { message: Message; refreshUrl: ()
           <Image source={{ uri: url }} style={styles.generatedImage} contentFit="cover" onError={() => void refresh()} />
           <Text style={styles.imageHint}>klikni pre celú veľkosť 🔍</Text>
         </Pressable>
-        {!!message.text && <Text style={[styles.text, styles.imageCaption]}>{message.text}</Text>}
+        {!!message.text && <RichText text={message.text} style={[styles.text, styles.imageCaption]} />}
       </LinearGradient>
       <Modal visible={open} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.fullscreen} onPress={() => setOpen(false)}>
