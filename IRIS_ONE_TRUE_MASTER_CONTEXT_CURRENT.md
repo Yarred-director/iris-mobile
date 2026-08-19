@@ -116,6 +116,28 @@ Durable user facts and preferences.
 Table: `episodic_memory`  
 Semantic retrieval RPC: `match_episodic_memory_v2`
 
+Current episodic-memory quality loop is complete end-to-end:
+- event-gated persistence avoids storing routine chat;
+- every newly stored episodic memory is semantically assessed by Luna for `importance` and `emotional_weight`;
+- importance is long-term recall value, not message length, explicitness or drama;
+- explicit/intimate content is NOT automatically high-importance;
+- importance rubric ranges 0.1–1.0;
+- emotional weight ranges 0–100;
+- recall ranking remains 75% semantic similarity + 25% importance;
+- memories with `decay_score < 10` are excluded from episodic recall;
+- confident recall threshold is similarity >= 0.35;
+- up to four unique confidently recalled memories are reinforced per recall;
+- reinforcement increments `reinforcement_count` and updates `last_recalled_at` atomically through `reinforce_episodic_memories`;
+- a 24-hour per-memory reinforcement cooldown prevents one conversation from inflating reinforcement;
+- reinforcement writes are fire-and-forget so they do not add response latency.
+
+Memory fading/decay:
+- `memoryDecay.js` calculates half-life from importance, emotional weight and reinforcement count;
+- higher importance/emotion/reinforcement increases memory half-life;
+- CORE_ORIGIN, very high-importance/high-emotion memories, and sufficiently reinforced memories are protected;
+- lower-value memories progressively compress into fading/echo form and can eventually be deleted;
+- decay runs lazily and is throttled per process/user.
+
 ### Shared experiences
 Table: `shared_experiences`
 
@@ -414,6 +436,7 @@ Important regression checks:
 - live assistance;
 - heat routing;
 - visual state;
+- memory importance/reinforcement;
 - web build.
 
 Future rules:
@@ -437,14 +460,16 @@ Recent major merges include:
 - Dark/Light theme and iOS/PWA visual pass;
 - persistent custom header avatar;
 - three-view face reference pack + body proportion guardrails;
-- adaptive Terra/Luna/Grok routing and persistent memory architecture.
+- adaptive Terra/Luna/Grok routing and persistent memory architecture;
+- completed episodic memory importance + emotional-weight scoring + recall reinforcement loop.
 
-Most recent image-reference/body-proportion merge before this consolidation:
-`b17019e98facc5e4f237d66ccffaaceacda8f84a`
+Important recent merges:
+- `b17019e98facc5e4f237d66ccffaaceacda8f84a` — three-view face reference pack + body proportion guardrails
+- `6376ca02bccf83e16d2d92f484e27ab1053af725` — memory importance/emotional-weight scoring + reinforcement loop
 
 ## 24. Recommended immediate engineering order
 
-1. Validate the 3-view face reference pack in production.
+1. Validate the 3-view face reference pack and memory reinforcement naturally in production.
 2. Build the 24-hour trial entitlement lifecycle.
 3. Add questionnaire + post-trial lock screen.
 4. Add per-user provider cost telemetry and cohort/global budget kill switch.
@@ -457,4 +482,4 @@ Most recent image-reference/body-proportion merge before this consolidation:
 
 ## 25. One-sentence current state
 
-Iris is an Early Alpha / near-Closed-Beta PWA-first persistent AI companion using GPT-5.6 Terra for normal/soft chat, GPT-5.6 Luna for utility work, Grok 4.5 for semantic heat 2/3, Supabase-backed memory/visual state, Qwen-first generated imagery with a three-view face reference pack and body-proportion guardrails, with the next product milestone being a budget-capped 24-hour trial plus privacy/18+/feedback infrastructure before first monetization.
+Iris is an Early Alpha / near-Closed-Beta PWA-first persistent AI companion using GPT-5.6 Terra for normal/soft chat, GPT-5.6 Luna for utility work, Grok 4.5 for semantic heat 2/3, Supabase-backed memory/visual state with importance-aware fading and recall reinforcement, and Qwen-first generated imagery with a three-view face reference pack and body-proportion guardrails; the next product milestone is a budget-capped 24-hour trial plus privacy/18+/feedback infrastructure before first monetization.
