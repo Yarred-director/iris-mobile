@@ -15,7 +15,8 @@
     "test:image-context": "node tools/check-image-context.mjs",
     "test:live-assistance": "node tools/check-live-assistance.mjs",
     "test:heat-routing": "node tools/check-heat-routing.mjs",
-    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing"
+    "test:visual-state": "node tools/check-visual-state.mjs",
+    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing && npm run test:visual-state"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
