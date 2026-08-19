@@ -49,11 +49,15 @@ export async function handleImageRequest({
   model,
   conversationHistory = [],
   sceneContext = null,
+  visualState = null,
+  visualPreferences = [],
 }) {
   const intent = await extractImageIntent({
     text: message,
     conversationHistory,
     sceneContext,
+    visualState,
+    visualPreferences,
     llmClient,
     model,
   });
@@ -73,6 +77,7 @@ export async function handleImageRequest({
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
+    visualStateFields: Object.keys(visualState?.state || {}).length,
     provider,
   });
 
@@ -89,7 +94,7 @@ export async function handleImageRequest({
       imageUrl: result.imageUrl || null,
       imageBucket: result.imageBucket || null,
       imagePath: result.imagePath || null,
-      irisMessage: '📸',
+      irisMessage: intent.caption || '📸',
       usage,
     };
   } catch (error) {

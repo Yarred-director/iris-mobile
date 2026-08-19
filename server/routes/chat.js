@@ -28,12 +28,39 @@ import { getSceneContext, patchSceneContext } from '../memory/sceneContext.js';
 import { getSceneFacts } from '../memory/sceneFacts.js';
 import { runSelfAwareness, loadSelfModel } from '../memory/selfAwareness.js';
 import { beginOrTouchTemporalSession, touchLastPhotoSent } from '../memory/timeContext.js';
+import { loadVisualState, persistVisualSignals, selectPotentialVisualPreferences } from '../memory/visualState.js';
 
 const router = Router();
 const MAX_USER_MESSAGE_CHARS = 8000;
 
 function quotaResponse(res, usage, kind) {
   return res.status(429).json({ error: `${kind}_daily_limit_reached`, used: usage.used, limit: usage.limit, resets_at: usage.resetsAt });
+}
+
+function buildVisualMemoryHints(sharedExperiences, episodicRecall) {
+  const hints = [];
+  for (const memory of episodicRecall?.memories || []) {
+    if (memory?.narrative) hints.push(memory.narrative);
+  }
+  for (const experience of sharedExperiences || []) {
+    if (experience?.summary) hints.push(experience.summary);
+    else if (experience?.full_narrative) hints.push(experience.full_narrative);
+  }
+  return hints.slice(0, 6);
+}
+
+function imageVisualPreferences(intent) {
+  const values = [];
+  for (const item of intent?.relevant_visual_preferences || []) {
+    const value = String(item || '').trim();
+    if (value) values.push(value);
+  }
+  for (const item of intent?.visual_preference_updates || []) {
+    if (Number(item?.confidence || 0) < 0.75) continue;
+    const value = String(item?.fact_value || '').trim();
+    if (value) values.push(value);
+  }
+  return [...new Set(values)].slice(0, 8);
 }
 
 router.post('/chat', async (req, res) => {
@@ -93,15 +120,17 @@ router.post('/chat', async (req, res) => {
     const recallSharedTask = queryEmbedding ? recallSharedExperiences(req.supabase, message, userId, queryEmbedding) : Promise.resolve([]);
     const recallEpisodicTask = queryEmbedding ? recallEpisodicMemory(req.supabase, message, userId, queryEmbedding) : Promise.resolve(emptyRecall);
     const liveAssistanceRequested = looksLikeLiveAssistanceRequest(message);
+    const imageRequested = looksLikeImageRequest(message);
     const factualTask = (couldBeFactualQuestion(message) || liveAssistanceRequested)
       ? looksLikeFactualQuestion(message, openaiClient, utilityModel)
       : Promise.resolve(false);
 
-    const [sceneFacts, coreOrigin, summaries, userProfile, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, recentChatRaw] = await Promise.allSettled([
+    const [sceneFacts, coreOrigin, summaries, userProfile, currentVisualState, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, recentChatRaw] = await Promise.allSettled([
       getSceneFacts(req.supabase, userId, sceneKey, 'global'),
       loadCoreOrigin(req.supabase),
       loadSummaries(req.supabase),
       loadUserProfile(req.supabase, userId),
+      loadVisualState(req.supabase, userId, sceneKey),
       recallSharedTask,
       recallEpisodicTask,
       factualTask,
@@ -115,10 +144,40 @@ router.post('/chat', async (req, res) => {
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
     await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
 
+    // One multilingual utility classification already runs every turn. It also resolves visual continuity,
+    // so outfit/preference memory does not require a second LLM call per message.
+    const state = detectState(message);
+    const visualPreferenceFacts = selectPotentialVisualPreferences(userProfile || []);
+    const visualMemoryHints = buildVisualMemoryHints(sharedExperiences, episodicRecall);
+    const intent = await intentJudgeLLM({
+      text: message,
+      sceneContext: sceneContext || {},
+      conversationHistory: recentChat,
+      currentVisualState,
+      visualPreferenceFacts,
+      memoryHints: visualMemoryHints,
+      isImageRequest: imageRequested,
+    });
+
+    const visualState = await persistVisualSignals({
+      supabase: req.supabase,
+      userId,
+      sceneKey,
+      intent,
+      currentVisualState,
+    });
+
+    persistCompanionSignals({ supabase: req.supabase, userId, intent })
+      .catch((error) => console.log('[COMPANION_PREF_ERROR]', error?.message));
+
     const useWebSearch = Boolean(liveAssistanceRequested || isFactual);
+    const heatLevel = Number.isInteger(intent?.heat_level) ? intent.heat_level : 0;
+    const engine = engineForHeat(heatLevel, { useWebSearch });
+
     let systemPrompt = assemblePrompt({
       sceneFacts,
       sceneContext,
+      visualState,
       userProfile,
       coreOrigin,
       summaries,
@@ -132,18 +191,9 @@ router.post('/chat', async (req, res) => {
       isFactual: Boolean(isFactual && !useWebSearch),
     });
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
-
-    // Multilingual semantic classification runs on every turn so heat routing is not limited to Slovak/English keywords.
-    const state = detectState(message);
-    const intent = await intentJudgeLLM({ text: message, sceneContext: sceneContext || {}, conversationHistory: recentChat });
-    const heatLevel = Number.isInteger(intent?.heat_level) ? intent.heat_level : 0;
-    const engine = engineForHeat(heatLevel, { useWebSearch });
     systemPrompt = `${systemPrompt}\n\n${buildHeatDirective({ heatLevel, intensityStyle: intent?.intensity_style })}`;
 
-    persistCompanionSignals({ supabase: req.supabase, userId, intent })
-      .catch((error) => console.log('[COMPANION_PREF_ERROR]', error?.message));
-
-    if (looksLikeImageRequest(message)) {
+    if (imageRequested) {
       const imageResult = await handleImageRequest({
         message,
         userId,
@@ -152,6 +202,8 @@ router.post('/chat', async (req, res) => {
         model: utilityModel,
         conversationHistory: recentChat,
         sceneContext,
+        visualState,
+        visualPreferences: imageVisualPreferences(intent),
       });
       if (imageResult.handled) {
         const reply = imageResult.irisMessage || '';
