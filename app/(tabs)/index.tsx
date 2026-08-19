@@ -317,27 +317,54 @@ export default function ChatScreen() {
 
   const uploadReference = async () => {
     setMenuOpen(false);
+    if (!user?.id) return;
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
-    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.85 });
-    if (result.canceled || !result.assets?.[0] || !user?.id) return;
+
+    Alert.alert(
+      'Face reference pack',
+      'Vyber postupne 3 fotky tej istej tváre: 1) spredu, 2) 3/4 uhol, 3) profil zboku. Ideálne čistá tvár a časť ramien, bez filtrov.'
+    );
+
+    const steps = [
+      { slot: 'front', label: 'spredu' },
+      { slot: 'three-quarter', label: '3/4' },
+      { slot: 'side', label: 'profil' },
+    ];
     setUploading(true);
+    let uploaded = 0;
     try {
-      const asset = result.assets[0];
       const token = await getToken();
       if (!token) throw new Error('Nie si prihlásený.');
-      const contentType = asset.mimeType || 'image/jpeg';
-      const extension = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
-      const bucket = 'iris-photos';
-      const path = `iris-ref/${user.id}/reference.${extension}`;
-      const blob = await (await fetch(asset.uri)).blob();
-      const { error } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true, contentType });
-      if (error) throw new Error(error.message);
-      const response = await fetchTimed(API_REF_PHOTO, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ bucket, path }) });
-      if (!response.ok) throw new Error((await response.text()).slice(0, 180));
-      setMessages((old) => [...old, { role: 'iris', text: 'Skvelé! Teraz viem ako vyzerám. Môžeš mi povedať, aby som ti poslala fotku 📸' }]);
-    } catch (error: any) { Alert.alert('Iris', `Nepodarilo sa nahrať fotku: ${error?.message || 'neznáma chyba'}`); }
-    finally { setUploading(false); }
+      for (const step of steps) {
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
+        if (result.canceled || !result.assets?.[0]) break;
+        const asset = result.assets[0];
+        const contentType = asset.mimeType || 'image/jpeg';
+        const bucket = 'iris-photos';
+        const path = `iris-ref/${user.id}/face-${step.slot}`;
+        const blob = await (await fetch(asset.uri)).blob();
+        const { error } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true, contentType, cacheControl: '3600' });
+        if (error) throw new Error(`${step.label}: ${error.message}`);
+        uploaded += 1;
+
+        // Keep the front view as the legacy single-reference fallback for older code paths.
+        if (step.slot === 'front') {
+          const response = await fetchTimed(API_REF_PHOTO, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ bucket, path }) });
+          if (!response.ok) throw new Error((await response.text()).slice(0, 180));
+        }
+      }
+
+      if (uploaded === 3) {
+        setMessages((old) => [...old, { role: 'iris', text: 'Face reference pack je hotový — spredu, 3/4 aj profil. 📸' }]);
+      } else if (uploaded > 0) {
+        Alert.alert('Iris', `Uložené ${uploaded}/3 referenčných fotiek. Spusti nastavenie znova, keď budeš chcieť pack dokončiť alebo nahradiť.`);
+      }
+    } catch (error: any) {
+      Alert.alert('Iris', `Referenčné fotky sa nepodarilo uložiť: ${error?.message || 'neznáma chyba'}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const clearHistory = async () => {
@@ -421,7 +448,7 @@ export default function ChatScreen() {
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
-            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🧬 Zmeniť referenčnú fotku</Text>}</Pressable>
+            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🧬 Face reference pack (3)</Text>}</Pressable>
             <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Vymazať históriu</Text></Pressable>
             <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Odhlásiť sa</Text></Pressable>
           </View>}
