@@ -1,7 +1,7 @@
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 
-const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing and intimacy intensity.
+const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing, intimacy intensity, and visual-continuity signals.
 
 GLOBAL RULES:
 - The user can write in ANY language. Classify by semantic meaning, never by language-specific keywords.
@@ -16,7 +16,7 @@ HEAT LEVELS:
 2 = sensual / foreplay territory: sexualized touching such as thigh, hips, butt, breasts, grinding, sensual undressing, clear arousal, making out that becomes sexual, foreplay. This is NOT explicit sex yet.
 3 = explicit sexual activity: masturbation, oral sex, genital touching, penetration, explicit sex acts, orgasm-focused sexual scene.
 
-IMPORTANT EXAMPLES:
+IMPORTANT HEAT RULES:
 - A kiss + hug => heat 1.
 - A kiss + grabbing butt/thigh/breast => heat 2, NOT heat 3.
 - Heat 2 must not automatically become heat 3.
@@ -40,13 +40,34 @@ PREFERENCE LEARNING:
 - Set a preference only if the user explicitly states it OR at least two separate recent user turns clearly support the same preference.
 - Do not derive a durable preference from one isolated intimate message.
 
+VISUAL CONTINUITY:
+- CURRENT_VISUAL_STATE is what Iris is presently wearing/visibly presenting. Preserve it by default.
+- Never change Iris's outfit, nails, hair, makeup, footwear or accessories merely for novelty.
+- visual_change="explicit" only when the user directly describes, requests or clearly establishes a visible change for Iris now.
+- visual_change="contextual" only when a meaningful activity/scene transition makes a change strongly natural, or when an image is requested and the current outfit is genuinely unknown. Use ordinary real-world reasoning; there is NO fixed outfit mapping.
+- An image request by itself is NOT a reason to change an already-known outfit.
+- For a contextual change, choose a plausible visible state from the actual scene/activity/time and current continuity. Stored user preferences may softly influence a choice among plausible options, but never override the situation and never become a permanent uniform.
+- If the latest user message only praises a look/style, learn the preference but do not automatically alter CURRENT_VISUAL_STATE unless the message also establishes a current change.
+- Resolve references like "those shorts", "the dress we bought", or equivalents using recent conversation and MEMORY_HINTS. Do not invent a remembered item when the hints do not support it.
+- appearance_patch contains only fields that actually change or need initialization. Allowed conceptual fields are outfit, footwear, nails, hair, makeup, accessories, other_details. Values are concise natural-language visual descriptions, not codes.
+- clear_appearance_fields contains fields that should genuinely become unknown/not applicable; otherwise leave it empty.
+- If is_image_request=true and CURRENT_VISUAL_STATE already has an outfit, preserve it unless the user explicitly changes it or a strong contextual transition requires a change.
+- If is_image_request=true and CURRENT_VISUAL_STATE has no outfit, infer one plausible complete outfit from context and mark visual_change="contextual" so the same outfit persists into later photos.
+
+VISUAL PREFERENCE MEMORY:
+- visual_preference_updates stores durable USER preferences about how Iris looks: clothing, colors, materials, grooming, nails, hair, makeup, accessories, or visual style.
+- Extract a visual preference only when explicitly stated or strongly supported; do not infer it from a single generated outfit alone.
+- A preference is about what the USER likes/dislikes ON IRIS, not what the user personally wears.
+- fact_key must be a short language-neutral snake_case concept. fact_value should preserve the actual preference meaning in natural language. confidence is 0..1.
+- relevant_visual_preferences contains only stored preference facts from the supplied profile that are actually useful for this turn. Never fabricate entries.
+
 Keep the legacy routing fields too:
 physicality: none | playful | intimate | explicit
 intent: neutral | joke | flirt | romance | erotic | uncertain
 safety_level: safe | borderline | explicit
 
 Return JSON with exactly these keys:
-physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence`;
+physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence, visual_change, appearance_patch, clear_appearance_fields, visual_preference_updates, relevant_visual_preferences, appearance_confidence`;
 
 function safeJsonExtract(text) {
   if (!text) return null;
@@ -60,6 +81,19 @@ function safeJsonExtract(text) {
 
 function validNullableEnum(value, list) {
   return value === null || (typeof value === 'string' && list.includes(value));
+}
+
+function validAppearancePatch(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value).every((item) => item === null || typeof item === 'string');
+}
+
+function validVisualPreferences(value) {
+  if (!Array.isArray(value) || value.length > 4) return false;
+  return value.every((item) => item && typeof item === 'object' &&
+    typeof item.fact_key === 'string' &&
+    typeof item.fact_value === 'string' &&
+    typeof item.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1);
 }
 
 function validateIntentResult(obj) {
@@ -76,7 +110,13 @@ function validateIntentResult(obj) {
     okHeat(obj.heat_level) && okEnum(obj.intensity_style, ['neutral', 'gentle', 'playful', 'sensual', 'rough']) &&
     okBool(obj.continues_intimate_scene) &&
     (obj.iris_nickname === null || typeof obj.iris_nickname === 'string') && okNum(obj.nickname_confidence) &&
-    okPreferredHeat(obj.preferred_heat_level) && validNullableEnum(obj.preferred_style, ['gentle', 'playful', 'sensual', 'rough']) && okNum(obj.preference_confidence);
+    okPreferredHeat(obj.preferred_heat_level) && validNullableEnum(obj.preferred_style, ['gentle', 'playful', 'sensual', 'rough']) && okNum(obj.preference_confidence) &&
+    okEnum(obj.visual_change, ['none', 'explicit', 'contextual']) &&
+    validAppearancePatch(obj.appearance_patch) &&
+    Array.isArray(obj.clear_appearance_fields) && obj.clear_appearance_fields.every((item) => typeof item === 'string') &&
+    validVisualPreferences(obj.visual_preference_updates) &&
+    Array.isArray(obj.relevant_visual_preferences) && obj.relevant_visual_preferences.every((item) => typeof item === 'string') &&
+    okNum(obj.appearance_confidence);
 }
 
 function fallbackIntent() {
@@ -96,6 +136,12 @@ function fallbackIntent() {
     preferred_heat_level: null,
     preferred_style: null,
     preference_confidence: 0,
+    visual_change: 'none',
+    appearance_patch: {},
+    clear_appearance_fields: [],
+    visual_preference_updates: [],
+    relevant_visual_preferences: [],
+    appearance_confidence: 0.2,
   };
 }
 
@@ -109,24 +155,61 @@ function compactHistory(history = []) {
     .filter((item) => item.content);
 }
 
+function compactProfilePreferences(profile = []) {
+  return (Array.isArray(profile) ? profile : [])
+    .slice(0, 24)
+    .map((fact) => ({
+      category: String(fact?.category || ''),
+      fact_key: String(fact?.fact_key || '').slice(0, 120),
+      fact_value: String(fact?.fact_value || '').slice(0, 300),
+      confidence: Number(fact?.confidence || 0),
+    }));
+}
+
+function compactMemoryHints(hints = []) {
+  return (Array.isArray(hints) ? hints : [])
+    .map((item) => String(item || '').trim().slice(0, 500))
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
 function previousHeat(sceneContext = {}) {
   const match = String(sceneContext?.interaction_mode || '').match(/^heat_([123])$/);
   return match ? Number(match[1]) : 0;
 }
 
-export async function intentJudgeLLM({ text, sceneContext = {}, conversationHistory = [] }) {
+export async function intentJudgeLLM({
+  text,
+  sceneContext = {},
+  conversationHistory = [],
+  currentVisualState = null,
+  visualPreferenceFacts = [],
+  memoryHints = [],
+  isImageRequest = false,
+}) {
   const client = getLLMClient('openai');
   const model = MODELS.openaiUtility || MODELS.openai;
   const contextHint = {
     last_engine: sceneContext?.last_engine ?? null,
     previous_heat_level: previousHeat(sceneContext),
     last_subject: sceneContext?.last_subject ?? null,
+    scene: {
+      city: sceneContext?.location_city || sceneContext?._resolved?.city || null,
+      country: sceneContext?.location_country || sceneContext?._resolved?.country || null,
+      place: sceneContext?.place || null,
+      room: sceneContext?.room || null,
+      time_of_day: sceneContext?.time_of_day || null,
+    },
+    is_image_request: Boolean(isImageRequest),
+    CURRENT_VISUAL_STATE: currentVisualState?.state || {},
+    STORED_PREFERENCE_FACTS: compactProfilePreferences(visualPreferenceFacts),
+    MEMORY_HINTS: compactMemoryHints(memoryHints),
   };
 
   const r = await client.responses.create({
     model,
     reasoning: { effort: 'none' },
-    max_output_tokens: 320,
+    max_output_tokens: 700,
     input: [
       { role: 'system', content: SYSTEM_PROMPT },
       ...compactHistory(conversationHistory),
