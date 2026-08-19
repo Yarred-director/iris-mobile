@@ -1,3 +1,4 @@
+import { notifyWebPushReply } from '../lib/webPush.js';
 import { createSignedMediaUrl, isUserOwnedMediaPath } from '../media/privateMedia.js';
 
 const DEFAULT_MODEL_HISTORY_LIMIT = 14;
@@ -41,9 +42,10 @@ export function toModelHistory(messages) {
 }
 
 export async function saveChatMessage(supabase, { userId, role, content, imageBucket = null, imagePath = null, clientMessageId = null }) {
+  const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
   const row = {
     user_id: userId,
-    role: role === 'assistant' ? 'assistant' : 'user',
+    role: normalizedRole,
     content: cleanContent(content),
     image_bucket: imageBucket || null,
     image_path: imagePath || null,
@@ -58,6 +60,9 @@ export async function saveChatMessage(supabase, { userId, role, content, imageBu
     if (error.code === '23505' && clientMessageId) return null;
     console.log('[CHAT_HISTORY] save error:', error.message);
     return null;
+  }
+  if (data && normalizedRole === 'assistant') {
+    notifyWebPushReply(userId).catch((pushError) => console.log('[WEB_PUSH_AFTER_REPLY_ERROR]', pushError?.message || pushError));
   }
   return data || null;
 }

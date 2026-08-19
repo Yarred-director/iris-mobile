@@ -13,6 +13,7 @@ import ChatInput from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
 import RichText from '../components/RichText';
 import TypingIndicator from '../components/TypingIndicator';
+import { enableWebPush, getWebPushStatus, listenForWebPushReply, type WebPushStatus } from '../lib/webPush';
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com').trim().replace(/\/+$/, '').replace(/\/chat$/, '');
 const API_CHAT = `${API_BASE}/chat`;
@@ -22,10 +23,10 @@ const API_REF_PHOTO = `${API_BASE}/iris/reference-photo`;
 const MAX_MESSAGES = 50;
 const REQUEST_TIMEOUT_MS = 300000;
 
-type Message = { id?: string; role: 'user' | 'iris'; text: string; imageUrl?: string | null; imageBucket?: string | null; imagePath?: string | null; createdAt?: string | null };
+type Message = { id?: string; role: 'user' | 'iris'; text: string; imageUrl?: string | null; imageBucket?: string | null; imagePath?: string | null; createdAt?: string | null; clientMessageId?: string | null };
 type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
 type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
-type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null };
+type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null; client_message_id?: string | null };
 
 function storageKey(userId: string) { return `iris.chat.history.v3:${userId}`; }
 async function storageGet(key: string) {
@@ -63,7 +64,7 @@ function localMessages(value: unknown, userId: string): Message[] {
   });
 }
 function mapServer(item: ServerMessage): Message {
-  return { id: item.id, role: item.role === 'assistant' ? 'iris' : 'user', text: item.content || '', imageUrl: item.image_url || null, imageBucket: item.image_bucket || null, imagePath: item.image_path || null, createdAt: item.created_at || null };
+  return { id: item.id, role: item.role === 'assistant' ? 'iris' : 'user', text: item.content || '', imageUrl: item.image_url || null, imageBucket: item.image_bucket || null, imagePath: item.image_path || null, createdAt: item.created_at || null, clientMessageId: item.client_message_id || null };
 }
 
 function Bubble({ message }: { message: Message }) {
@@ -119,33 +120,82 @@ export default function ChatScreen() {
   const [uploading, setUploading] = useState(false);
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
+  const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
+  const activeRequestRef = useRef(false);
+  const requestBackgroundedRef = useRef(false);
+  const pendingAssistantIdRef = useRef<string | null>(null);
 
   const getToken = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token || accessToken, [accessToken]);
   useEffect(() => { if (!loading && !user) router.replace('/auth'); }, [loading, user, router]);
+
+  const refreshServerHistory = useCallback(async () => {
+    const token = await getToken();
+    if (!token) return [] as Message[];
+    try {
+      const response = await fetchTimed(`${API_HISTORY}?limit=${MAX_MESSAGES}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) return [] as Message[];
+      const payload = await response.json();
+      const server: Message[] = Array.isArray(payload?.messages) ? payload.messages.map(mapServer) : [];
+      if (server.length) setMessages(server);
+      return server;
+    } catch {
+      return [] as Message[];
+    }
+  }, [getToken]);
+
+  const reconcilePendingReply = useCallback(async () => {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const server = await refreshServerHistory();
+      const pendingId = pendingAssistantIdRef.current;
+      if (!pendingId || server.some((item) => item.clientMessageId === pendingId)) {
+        pendingAssistantIdRef.current = null;
+        setIsTyping(false);
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    setIsTyping(false);
+    return false;
+  }, [refreshServerHistory]);
 
   useEffect(() => {
     if (!user?.id) { setHistoryReady(false); return; }
     let cancelled = false;
     setHistoryReady(false);
     (async () => {
-      const token = await getToken();
-      if (token) {
-        try {
-          const response = await fetchTimed(`${API_HISTORY}?limit=${MAX_MESSAGES}`, { headers: { Authorization: `Bearer ${token}` } });
-          if (response.ok) {
-            const payload = await response.json();
-            const server = Array.isArray(payload?.messages) ? payload.messages.map(mapServer) : [];
-            if (server.length) { if (!cancelled) { setMessages(server); setHistoryReady(true); } return; }
-          }
-        } catch {}
-      }
+      const server = await refreshServerHistory();
+      if (cancelled) return;
+      if (server.length) { setHistoryReady(true); return; }
       const raw = await storageGet(storageKey(user.id));
       if (cancelled) return;
       if (raw) { try { const parsed = localMessages(JSON.parse(raw), user.id); if (parsed.length) setMessages(parsed); } catch {} }
       setHistoryReady(true);
     })();
     return () => { cancelled = true; };
-  }, [getToken, user?.id]);
+  }, [refreshServerHistory, user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    void getWebPushStatus().then(setPushStatus).catch(() => setPushStatus('disabled'));
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden' && activeRequestRef.current) requestBackgroundedRef.current = true;
+      if (document.visibilityState === 'visible') {
+        setTimeout(() => {
+          if (pendingAssistantIdRef.current) void reconcilePendingReply();
+          else void refreshServerHistory();
+        }, 350);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    const stopPushListener = listenForWebPushReply(() => {
+      if (pendingAssistantIdRef.current) void reconcilePendingReply();
+      else void refreshServerHistory();
+    });
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      stopPushListener();
+    };
+  }, [reconcilePendingReply, refreshServerHistory]);
 
   useEffect(() => { if (historyReady && user?.id) void storageSet(storageKey(user.id), JSON.stringify(messages.slice(-MAX_MESSAGES))); }, [historyReady, messages, user?.id]);
   useEffect(() => {
@@ -164,6 +214,22 @@ export default function ChatScreen() {
     if (!response.ok) return null;
     return (await response.json())?.image_url || null;
   }, [getToken]);
+
+  const enableNotifications = async () => {
+    setMenuOpen(false);
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const status = await enableWebPush(token);
+      setPushStatus(status);
+      if (status === 'enabled') Alert.alert('Iris', 'Notifikácie sú zapnuté. Keď odpíšem na pozadí, iPhone ťa upozorní.');
+      else if (status === 'needs_home_screen') Alert.alert('Iris', 'Na iPhone fungujú web push notifikácie pre Iris pridanú na plochu ako web appku.');
+      else if (status === 'blocked') Alert.alert('Iris', 'Notifikácie sú v iOS zablokované. Povoľ ich v Nastavenia → Notifikácie → Iris.');
+      else if (status === 'unsupported') Alert.alert('Iris', 'Tento prehliadač nepodporuje web push pre Iris.');
+    } catch (error: any) {
+      Alert.alert('Iris', `Notifikácie sa nepodarilo zapnúť: ${error?.message || 'neznáma chyba'}`);
+    }
+  };
 
   const uploadReference = async () => {
     setMenuOpen(false);
@@ -201,9 +267,13 @@ export default function ChatScreen() {
     const text = value.trim();
     if (!text || isTyping) return;
     const clientId = Crypto.randomUUID();
+    const assistantClientId = `${clientId}:assistant`;
     setMenuOpen(false);
     Keyboard.dismiss();
-    setMessages((old) => [...old, { id: clientId, role: 'user', text, createdAt: new Date().toISOString() }]);
+    setMessages((old) => [...old, { id: clientId, role: 'user', text, createdAt: new Date().toISOString(), clientMessageId: clientId }]);
+    pendingAssistantIdRef.current = assistantClientId;
+    requestBackgroundedRef.current = false;
+    activeRequestRef.current = true;
     setIsTyping(true);
     try {
       const token = await getToken();
@@ -221,16 +291,27 @@ export default function ChatScreen() {
         if (response.status === 429) throw new Error(`LIMIT:${payload?.used ?? '?'}:${payload?.limit ?? '?'}`);
         throw new Error(`HTTP ${response.status}: ${raw.slice(0, 180)}`);
       }
-      setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString() }]);
+      pendingAssistantIdRef.current = null;
+      setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString(), clientMessageId: assistantClientId }]);
     } catch (error: any) {
+      const backgroundInterrupted = requestBackgroundedRef.current || (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState !== 'visible');
+      if (backgroundInterrupted) {
+        if (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState === 'visible') void reconcilePendingReply();
+        return;
+      }
+
+      pendingAssistantIdRef.current = null;
       const message = String(error?.message || '');
-      let text = 'Nastala chyba pri spojení s Iris.';
-      if (message.startsWith('LIMIT:')) { const [, used, limit] = message.split(':'); text = `Dnešný limit je vyčerpaný (${used}/${limit}).`; }
-      else if (message.includes('401')) text = 'Prihlásenie neprešlo (401).';
-      else if (message.includes('HTTP 5')) text = 'Backend je dočasne nedostupný.';
-      else if (error?.name === 'AbortError') text = 'Odpoveď trvala príliš dlho. Skús to znova.';
-      setMessages((old) => [...old, { role: 'iris', text }]);
-    } finally { setIsTyping(false); }
+      let errorText = 'Nastala chyba pri spojení s Iris.';
+      if (message.startsWith('LIMIT:')) { const [, used, limit] = message.split(':'); errorText = `Dnešný limit je vyčerpaný (${used}/${limit}).`; }
+      else if (message.includes('401')) errorText = 'Prihlásenie neprešlo (401).';
+      else if (message.includes('HTTP 5')) errorText = 'Backend je dočasne nedostupný.';
+      else if (error?.name === 'AbortError') errorText = 'Odpoveď trvala príliš dlho. Skús to znova.';
+      setMessages((old) => [...old, { role: 'iris', text: errorText }]);
+    } finally {
+      activeRequestRef.current = false;
+      if (!pendingAssistantIdRef.current) setIsTyping(false);
+    }
   };
 
   const lastIris = useMemo(() => messages.map((m) => m.role).lastIndexOf('iris'), [messages]);
@@ -242,6 +323,7 @@ export default function ChatScreen() {
         <View style={styles.menuWrap}>
           <Pressable onPress={() => setMenuOpen((open) => !open)} style={styles.menuBtn}><Text style={styles.menuDots}>⋯</Text></Pressable>
           {menuOpen && <View style={styles.menu}>
+            {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={styles.menuText}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.menuText}>📸 Nahrať fotku Iris</Text>}</Pressable>
             <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={styles.menuText}>Vymazať históriu</Text></Pressable>
             <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={styles.menuText}>Odhlásiť sa</Text></Pressable>
@@ -278,7 +360,7 @@ const styles = StyleSheet.create({
   menuWrap: { marginLeft: 'auto' },
   menuBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
   menuDots: { color: '#fff', fontSize: 18 },
-  menu: { position: 'absolute', right: 0, top: 42, minWidth: 190, padding: 8, borderRadius: 12, backgroundColor: 'rgba(20,20,26,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', zIndex: 6 },
+  menu: { position: 'absolute', right: 0, top: 42, minWidth: 210, padding: 8, borderRadius: 12, backgroundColor: 'rgba(20,20,26,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', zIndex: 6 },
   menuItem: { paddingVertical: 10, paddingHorizontal: 10 },
   menuText: { color: '#fff', fontSize: 14 },
   menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 4 },
