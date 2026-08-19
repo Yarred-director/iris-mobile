@@ -11,7 +11,6 @@ const APPEARANCE_FIELDS = new Set([
 const PREFERENCE_CATEGORIES = new Set([
   'preferences',
   'visual_preferences',
-  'appearance',
   'dislikes',
 ]);
 
