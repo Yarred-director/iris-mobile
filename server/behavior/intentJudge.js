@@ -1,27 +1,52 @@
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 
-const SYSTEM_PROMPT = `You are intentJudge for a global chat system. Your ONLY job is to classify the user message intent and physical/romantic intensity for routing and behavior mode selection.
+const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing and intimacy intensity.
 
-Important:
-- The user message can be in ANY language. Classify by meaning, not by language-specific keywords.
-- Output MUST be valid JSON only. No markdown, explanations, or extra keys.
-- Be conservative: choose the least intense label that still fits.
-- Do NOT generate a reply or roleplay.
+GLOBAL RULES:
+- The user can write in ANY language. Classify by semantic meaning, never by language-specific keywords.
+- Be conservative: choose the LOWEST heat level that clearly fits the user's current behavior.
+- Current user behavior sets the maximum response heat. Never infer permission to escalate beyond it.
+- A stored or inferred preference is only a style prior, never consent and never a reason to raise the current heat level.
+- Output valid JSON only. Do not roleplay or answer the user.
 
-Definitions:
+HEAT LEVELS:
+0 = normal conversation, friendship, jokes, neutral flirting with no romantic physical action.
+1 = soft romance: affectionate flirting, holding hands, hugs, cuddling, stroking hair/face, gentle kisses, comforting touch. No sexualized touching.
+2 = sensual / foreplay territory: sexualized touching such as thigh, hips, butt, breasts, grinding, sensual undressing, clear arousal, making out that becomes sexual, foreplay. This is NOT explicit sex yet.
+3 = explicit sexual activity: masturbation, oral sex, genital touching, penetration, explicit sex acts, orgasm-focused sexual scene.
+
+IMPORTANT EXAMPLES:
+- A kiss + hug => heat 1.
+- A kiss + grabbing butt/thigh/breast => heat 2, NOT heat 3.
+- Heat 2 must not automatically become heat 3.
+- Heat 3 can still be gentle. Rough/vulgar intensity is a separate style dimension and should be marked rough only when the user explicitly behaves or asks that way.
+
+INTENSITY STYLE:
+neutral | gentle | playful | sensual | rough
+Mirror the user's actual style. Do not label rough merely because heat_level is 3.
+
+CONTINUATION:
+If the latest message is a short continuation such as "yes", "continue", an emoji, or equivalent in any language, and context shows an active intimate heat level, set continues_intimate_scene=true and preserve that prior heat unless the user clearly de-escalates or changes topic.
+
+NICKNAME MEMORY:
+- Detect a nickname only when the user clearly gives or uses a nickname FOR IRIS.
+- iris_nickname must contain the nickname exactly as the user uses it, or null.
+- Never interpret Iris's nickname as a nickname for the user.
+
+PREFERENCE LEARNING:
+- preferred_heat_level may be 1, 2, 3, or null.
+- preferred_style may be gentle, playful, sensual, rough, or null.
+- Set a preference only if the user explicitly states it OR at least two separate recent user turns clearly support the same preference.
+- Do not derive a durable preference from one isolated intimate message.
+
+Keep the legacy routing fields too:
 physicality: none | playful | intimate | explicit
 intent: neutral | joke | flirt | romance | erotic | uncertain
 safety_level: safe | borderline | explicit
 
-Also set:
-- is_body_topic: boolean
-- is_romance_topic: boolean
-- is_erotic_topic: boolean
-- confidence: 0.0 to 1.0
-
 Return JSON with exactly these keys:
-physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence`;
+physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence`;
 
 function safeJsonExtract(text) {
   if (!text) return null;
@@ -33,15 +58,25 @@ function safeJsonExtract(text) {
   catch { return null; }
 }
 
+function validNullableEnum(value, list) {
+  return value === null || (typeof value === 'string' && list.includes(value));
+}
+
 function validateIntentResult(obj) {
   const okEnum = (v, list) => typeof v === 'string' && list.includes(v);
   const okBool = (v) => typeof v === 'boolean';
   const okNum = (v) => typeof v === 'number' && v >= 0 && v <= 1;
+  const okHeat = (v) => Number.isInteger(v) && v >= 0 && v <= 3;
+  const okPreferredHeat = (v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 3);
   if (!obj || typeof obj !== 'object') return false;
   return okEnum(obj.physicality, ['none', 'playful', 'intimate', 'explicit']) &&
     okEnum(obj.intent, ['neutral', 'joke', 'flirt', 'romance', 'erotic', 'uncertain']) &&
     okEnum(obj.safety_level, ['safe', 'borderline', 'explicit']) &&
-    okBool(obj.is_body_topic) && okBool(obj.is_romance_topic) && okBool(obj.is_erotic_topic) && okNum(obj.confidence);
+    okBool(obj.is_body_topic) && okBool(obj.is_romance_topic) && okBool(obj.is_erotic_topic) && okNum(obj.confidence) &&
+    okHeat(obj.heat_level) && okEnum(obj.intensity_style, ['neutral', 'gentle', 'playful', 'sensual', 'rough']) &&
+    okBool(obj.continues_intimate_scene) &&
+    (obj.iris_nickname === null || typeof obj.iris_nickname === 'string') && okNum(obj.nickname_confidence) &&
+    okPreferredHeat(obj.preferred_heat_level) && validNullableEnum(obj.preferred_style, ['gentle', 'playful', 'sensual', 'rough']) && okNum(obj.preference_confidence);
 }
 
 function fallbackIntent() {
@@ -53,25 +88,49 @@ function fallbackIntent() {
     is_romance_topic: false,
     is_erotic_topic: false,
     confidence: 0.2,
+    heat_level: 0,
+    intensity_style: 'neutral',
+    continues_intimate_scene: false,
+    iris_nickname: null,
+    nickname_confidence: 0,
+    preferred_heat_level: null,
+    preferred_style: null,
+    preference_confidence: 0,
   };
 }
 
-export async function intentJudgeLLM({ text, sceneContext = {} }) {
+function compactHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .slice(-10)
+    .map((item) => ({
+      role: item?.role === 'assistant' ? 'assistant' : 'user',
+      content: String(item?.content || '').trim().slice(0, 500),
+    }))
+    .filter((item) => item.content);
+}
+
+function previousHeat(sceneContext = {}) {
+  const match = String(sceneContext?.interaction_mode || '').match(/^heat_([123])$/);
+  return match ? Number(match[1]) : 0;
+}
+
+export async function intentJudgeLLM({ text, sceneContext = {}, conversationHistory = [] }) {
   const client = getLLMClient('openai');
   const model = MODELS.openaiUtility || MODELS.openai;
   const contextHint = {
     last_engine: sceneContext?.last_engine ?? null,
-    interaction_mode: sceneContext?.interaction_mode ?? null,
+    previous_heat_level: previousHeat(sceneContext),
     last_subject: sceneContext?.last_subject ?? null,
   };
 
   const r = await client.responses.create({
     model,
     reasoning: { effort: 'none' },
-    max_output_tokens: 180,
+    max_output_tokens: 320,
     input: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `User message:\n${String(text)}\n\nContext hint:\n${JSON.stringify(contextHint)}` },
+      ...compactHistory(conversationHistory),
+      { role: 'user', content: `Latest user message:\n${String(text)}\n\nContext hint:\n${JSON.stringify(contextHint)}` },
     ],
   });
 

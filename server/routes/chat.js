@@ -2,6 +2,7 @@
 
 import { Router } from 'express';
 import { detectState } from '../behavior/state.js';
+import { buildHeatDirective, engineForHeat, interactionModeForHeat } from '../behavior/heatRouting.js';
 import { intentJudgeLLM } from '../behavior/intentJudge.js';
 import { looksLikeFactualQuestion } from '../helpers/factualDetector.js';
 import { buildLiveAssistanceDirective, looksLikeLiveAssistanceRequest } from '../helpers/liveAssistance.js';
@@ -13,12 +14,13 @@ import { requireUserId } from '../middleware/auth.js';
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { applySubjectLock } from '../memory/subjectLock.js';
 import { assistantClientMessageId, loadExistingAssistantResponse, loadRecentChatMessages, saveChatMessage, toModelHistory } from '../memory/chatHistory.js';
+import { persistCompanionSignals } from '../memory/companionPreferences.js';
 import { extractContextFromText } from '../memory/contextJudge.js';
 import { createEmbedding } from '../memory/embeddings.js';
 import { autoStoreEpisodicMemoryHybrid } from '../memory/episodicAutoStore.js';
 import { loadInternalState, updateInternalState, inferStateUpdate } from '../memory/internalState.js';
 import { maybeRunDecay } from '../memory/memoryDecay.js';
-import { couldBeFactualQuestion, looksLikeImageRequest, shouldClassifyIntent, shouldExtractSceneContext, shouldPersistExchange, shouldRunPersonalityEvolution, shouldRunRelationshipUpdate, shouldRunSelfAwareness, shouldRunSemanticRecall } from '../memory/memoryPolicy.js';
+import { couldBeFactualQuestion, looksLikeImageRequest, shouldExtractSceneContext, shouldPersistExchange, shouldRunPersonalityEvolution, shouldRunRelationshipUpdate, shouldRunSelfAwareness, shouldRunSemanticRecall } from '../memory/memoryPolicy.js';
 import { loadPersonalityEvolution, evolvePersonality } from '../memory/personalityEvolution.js';
 import { loadCoreOrigin, loadSummaries, recallEpisodicMemory, recallSharedExperiences, loadUserProfile } from '../memory/recall.js';
 import { loadRelationshipState, updateRelationshipState, inferRelationshipDelta } from '../memory/relationshipTimeline.js';
@@ -29,12 +31,6 @@ import { beginOrTouchTemporalSession, touchLastPhotoSent } from '../memory/timeC
 
 const router = Router();
 const MAX_USER_MESSAGE_CHARS = 8000;
-const SAFE_INTENT = { physicality: 'none', intent: 'neutral', safety_level: 'safe', is_body_topic: false, is_romance_topic: false, is_erotic_topic: false, confidence: 1 };
-
-const EROTIC_OVERRIDE = `You are Iris in the high-intensity intimate mode defined by IRIS_CORE.
-Follow the current IRIS_CORE state and initiative rules without becoming passive or breaking character.
-Always mirror the language of the user's latest substantive message. Never force a Slovak/English mix when the user is speaking another language.
-Stay first-person, vivid, concise, and context-aware. Respect post_climax_cooldown when it is active.`;
 
 function quotaResponse(res, usage, kind) {
   return res.status(429).json({ error: `${kind}_daily_limit_reached`, used: usage.used, limit: usage.limit, resets_at: usage.resetsAt });
@@ -137,22 +133,15 @@ router.post('/chat', async (req, res) => {
     });
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
 
+    // Multilingual semantic classification runs on every turn so heat routing is not limited to Slovak/English keywords.
     const state = detectState(message);
-    const intent = shouldClassifyIntent(message) ? await intentJudgeLLM({ text: message, sceneContext: sceneContext || {} }) : SAFE_INTENT;
-    const prevEngine = sceneContext?.last_engine || null;
-    const prevLock = Number(sceneContext?.engine_lock_count || 0);
-    const triggersGrok = intent.is_erotic_topic || intent.intent === 'erotic' || intent.physicality === 'explicit' || intent.safety_level === 'explicit' || (intent.physicality === 'intimate' && intent.confidence >= 0.55) || (intent.is_romance_topic && intent.confidence >= 0.65) || state === 'heated';
-    let engine = 'openai';
-    let nextLock = 0;
-    if (triggersGrok) { engine = 'grok'; nextLock = 3; }
-    else if (prevEngine === 'grok' && prevLock > 0) { engine = 'grok'; nextLock = prevLock - 1; }
+    const intent = await intentJudgeLLM({ text: message, sceneContext: sceneContext || {}, conversationHistory: recentChat });
+    const heatLevel = Number.isInteger(intent?.heat_level) ? intent.heat_level : 0;
+    const engine = engineForHeat(heatLevel, { useWebSearch });
+    systemPrompt = `${systemPrompt}\n\n${buildHeatDirective({ heatLevel, intensityStyle: intent?.intensity_style })}`;
 
-    // Real-world assistance always uses Terra because it has OpenAI hosted web search.
-    if (useWebSearch) {
-      engine = 'openai';
-      nextLock = prevEngine === 'grok' ? prevLock : nextLock;
-    }
-    if (engine === 'grok' && triggersGrok) systemPrompt = `${EROTIC_OVERRIDE}\n\n${systemPrompt}`;
+    persistCompanionSignals({ supabase: req.supabase, userId, intent })
+      .catch((error) => console.log('[COMPANION_PREF_ERROR]', error?.message));
 
     if (looksLikeImageRequest(message)) {
       const imageResult = await handleImageRequest({
@@ -174,6 +163,11 @@ router.post('/chat', async (req, res) => {
           imagePath: imageResult.imagePath || null,
           clientMessageId: assistantClientMessageId(clientMessageId),
         });
+        await patchSceneContext(req.supabase, sceneKey, {
+          last_engine: 'image',
+          engine_lock_count: 0,
+          interaction_mode: interactionModeForHeat(heatLevel, state),
+        });
         if (imageResult.imageUrl) touchLastPhotoSent(req.supabase, userId).catch(() => {});
         return res.json({
           reply,
@@ -194,7 +188,6 @@ router.post('/chat', async (req, res) => {
       responseArgs.reasoning = { effort: useWebSearch ? 'low' : 'none' };
       if (useWebSearch) responseArgs.tools = [{ type: 'web_search' }];
     } else if (engine === 'grok') {
-      // Grok 4.5 defaults to high reasoning; low is a better fit for latency/cost-sensitive roleplay chat.
       responseArgs.reasoning = { effort: 'low' };
     }
 
@@ -206,7 +199,12 @@ router.post('/chat', async (req, res) => {
       autoStoreEpisodicMemoryHybrid({ supabase: req.supabase, userId, sceneKey, sceneContext, userText: message, llmReply: reply, llmClient: openaiClient, model: utilityModel })
         .catch((error) => console.log('[AUTO_MEMORY_EXCHANGE_ERROR]', error?.message));
     }
-    await patchSceneContext(req.supabase, sceneKey, { last_engine: engine, engine_lock_count: nextLock, last_engine_reply: reply, interaction_mode: state });
+    await patchSceneContext(req.supabase, sceneKey, {
+      last_engine: engine,
+      engine_lock_count: 0,
+      last_engine_reply: reply,
+      interaction_mode: interactionModeForHeat(heatLevel, state),
+    });
 
     const governanceJobs = [];
     if (shouldRunRelationshipUpdate(message, reply)) {
