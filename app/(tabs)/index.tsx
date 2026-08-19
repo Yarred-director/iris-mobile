@@ -30,9 +30,17 @@ type Message = { id?: string; role: 'user' | 'iris'; text: string; imageUrl?: st
 type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
 type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
 type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null; client_message_id?: string | null };
+type FaceReferenceSlot = 'front' | 'three-quarter' | 'side';
+
+const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; label: string; hint: string }[] = [
+  { slot: 'front', label: 'Spredu', hint: 'Tvár rovno ku kamere' },
+  { slot: 'three-quarter', label: '3/4 uhol', hint: 'Tvár jemne otočená' },
+  { slot: 'side', label: 'Profil', hint: 'Čistý pohľad zboku' },
+];
 
 function storageKey(userId: string) { return `iris.chat.history.v3:${userId}`; }
 function irisAvatarPath(userId: string) { return `ui-avatar/${userId}/avatar`; }
+function faceReferencePath(userId: string, slot: FaceReferenceSlot) { return `iris-ref/${userId}/face-${slot}`; }
 async function storageGet(key: string) {
   if (Platform.OS === 'web') { try { return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null; } catch { return null; } }
   return (await import('@react-native-async-storage/async-storage')).default.getItem(key);
@@ -131,8 +139,10 @@ export default function ChatScreen() {
   const [historyReady, setHistoryReady] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
+  const [facePackOpen, setFacePackOpen] = useState(false);
+  const [facePackUploading, setFacePackUploading] = useState<FaceReferenceSlot | null>(null);
+  const [facePackSaved, setFacePackSaved] = useState<Record<FaceReferenceSlot, boolean>>({ front: false, 'three-quarter': false, side: false });
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
@@ -275,6 +285,23 @@ export default function ChatScreen() {
     return (await response.json())?.image_url || null;
   }, [getToken]);
 
+  const refreshFacePackStatus = useCallback(async () => {
+    if (!user?.id) return;
+    const checks = await Promise.all(FACE_REFERENCE_STEPS.map(async (step) => {
+      const { data, error } = await supabase.storage.from(IRIS_AVATAR_BUCKET).createSignedUrl(faceReferencePath(user.id, step.slot), 60);
+      return [step.slot, !error && !!data?.signedUrl] as const;
+    }));
+    const next = { front: false, 'three-quarter': false, side: false } as Record<FaceReferenceSlot, boolean>;
+    checks.forEach(([slot, saved]) => { next[slot] = saved; });
+    setFacePackSaved(next);
+  }, [user?.id]);
+
+  const openFacePack = () => {
+    setMenuOpen(false);
+    setFacePackOpen(true);
+    void refreshFacePackStatus();
+  };
+
   const enableNotifications = async () => {
     setMenuOpen(false);
     const token = await getToken();
@@ -315,55 +342,43 @@ export default function ChatScreen() {
     }
   };
 
-  const uploadReference = async () => {
-    setMenuOpen(false);
-    if (!user?.id) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
-
-    Alert.alert(
-      'Face reference pack',
-      'Vyber postupne 3 fotky tej istej tváre: 1) spredu, 2) 3/4 uhol, 3) profil zboku. Ideálne čistá tvár a časť ramien, bez filtrov.'
-    );
-
-    const steps = [
-      { slot: 'front', label: 'spredu' },
-      { slot: 'three-quarter', label: '3/4' },
-      { slot: 'side', label: 'profil' },
-    ];
-    setUploading(true);
-    let uploaded = 0;
+  const uploadFaceReference = async (slot: FaceReferenceSlot, label: string) => {
+    if (!user?.id || facePackUploading) return;
     try {
-      const token = await getToken();
-      if (!token) throw new Error('Nie si prihlásený.');
-      for (const step of steps) {
-        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
-        if (result.canceled || !result.assets?.[0]) break;
-        const asset = result.assets[0];
-        const contentType = asset.mimeType || 'image/jpeg';
-        const bucket = 'iris-photos';
-        const path = `iris-ref/${user.id}/face-${step.slot}`;
-        const blob = await (await fetch(asset.uri)).blob();
-        const { error } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true, contentType, cacheControl: '3600' });
-        if (error) throw new Error(`${step.label}: ${error.message}`);
-        uploaded += 1;
-
-        // Keep the front view as the legacy single-reference fallback for older code paths.
-        if (step.slot === 'front') {
-          const response = await fetchTimed(API_REF_PHOTO, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ bucket, path }) });
-          if (!response.ok) throw new Error((await response.text()).slice(0, 180));
-        }
+      // On web/iOS PWA the file picker MUST be the first asynchronous action after a tap.
+      // Waiting for permission dialogs/alerts first loses the browser user gesture and Safari blocks the picker.
+      let result: ImagePicker.ImagePickerResult;
+      if (Platform.OS === 'web') {
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
+        result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
       }
 
-      if (uploaded === 3) {
-        setMessages((old) => [...old, { role: 'iris', text: 'Face reference pack je hotový — spredu, 3/4 aj profil. 📸' }]);
-      } else if (uploaded > 0) {
-        Alert.alert('Iris', `Uložené ${uploaded}/3 referenčných fotiek. Spusti nastavenie znova, keď budeš chcieť pack dokončiť alebo nahradiť.`);
+      if (result.canceled || !result.assets?.[0]) return;
+      setFacePackUploading(slot);
+
+      const asset = result.assets[0];
+      const contentType = asset.mimeType || 'image/jpeg';
+      const bucket = IRIS_AVATAR_BUCKET;
+      const path = faceReferencePath(user.id, slot);
+      const blob = await (await fetch(asset.uri)).blob();
+      const { error } = await supabase.storage.from(bucket).upload(path, blob, { upsert: true, contentType, cacheControl: '3600' });
+      if (error) throw new Error(error.message);
+      setFacePackSaved((old) => ({ ...old, [slot]: true }));
+
+      // Keep front as the legacy single-reference fallback for older image paths.
+      if (slot === 'front') {
+        const token = await getToken();
+        if (!token) throw new Error('Nie si prihlásený.');
+        const response = await fetchTimed(API_REF_PHOTO, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ bucket, path }) });
+        if (!response.ok) throw new Error(`Fotka spredu je uložená, ale legacy reference sync zlyhal: ${(await response.text()).slice(0, 120)}`);
       }
     } catch (error: any) {
-      Alert.alert('Iris', `Referenčné fotky sa nepodarilo uložiť: ${error?.message || 'neznáma chyba'}`);
+      Alert.alert('Iris', `${label} sa nepodarilo uložiť: ${error?.message || 'neznáma chyba'}`);
     } finally {
-      setUploading(false);
+      setFacePackUploading(null);
     }
   };
 
@@ -448,13 +463,55 @@ export default function ChatScreen() {
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
-            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🧬 Face reference pack (3)</Text>}</Pressable>
+            <Pressable onPress={openFacePack} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>🧬 Face reference pack (3)</Text></Pressable>
             <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Vymazať históriu</Text></Pressable>
             <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Odhlásiť sa</Text></Pressable>
           </View>}
         </View>
       </View>
       {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
+
+      <Modal visible={facePackOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!facePackUploading) setFacePackOpen(false); }}>
+        <View style={styles.facePackBackdrop}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => { if (!facePackUploading) setFacePackOpen(false); }} />
+          <View style={[styles.facePackCard, glassWeb, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}> 
+            <View style={styles.facePackHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.facePackTitle, { color: theme.text }]}>Face reference pack</Text>
+                <Text style={[styles.facePackSubtitle, { color: theme.textMuted }]}>Tri pohľady na tú istú tvár Iris. Každú fotku vyber samostatným kliknutím.</Text>
+              </View>
+              <Pressable disabled={!!facePackUploading} onPress={() => setFacePackOpen(false)} style={[styles.facePackClose, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}><Text style={[styles.facePackCloseText, { color: theme.text }]}>✕</Text></Pressable>
+            </View>
+
+            <View style={styles.facePackSlots}>
+              {FACE_REFERENCE_STEPS.map((step, index) => {
+                const active = facePackUploading === step.slot;
+                const saved = facePackSaved[step.slot];
+                return (
+                  <Pressable
+                    key={step.slot}
+                    disabled={!!facePackUploading}
+                    onPress={() => void uploadFaceReference(step.slot, step.label)}
+                    style={({ pressed }) => [styles.facePackSlot, { backgroundColor: theme.surfaceSoft, borderColor: saved ? theme.accent : theme.surfaceBorder, opacity: pressed ? 0.78 : 1 }]}
+                  >
+                    <View style={[styles.facePackNumber, { backgroundColor: saved ? theme.accent : theme.surface, borderColor: saved ? theme.accent : theme.surfaceBorder }]}><Text style={[styles.facePackNumberText, { color: saved ? '#fff' : theme.text }]}>{saved ? '✓' : index + 1}</Text></View>
+                    <View style={styles.facePackSlotCopy}>
+                      <Text style={[styles.facePackSlotLabel, { color: theme.text }]}>{step.label}</Text>
+                      <Text style={[styles.facePackSlotHint, { color: theme.textMuted }]}>{step.hint}</Text>
+                    </View>
+                    {active
+                      ? <ActivityIndicator color={theme.text} />
+                      : <Text style={[styles.facePackAction, { color: saved ? theme.accent : theme.text }]}>{saved ? 'Nahradiť' : 'Vybrať'}</Text>}
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={[styles.facePackFootnote, { color: theme.textFaint }]}>Odporúčanie: čistá tvár + ramená, rovnaká identita, bez beauty filtrov. Fotky zostávajú oddelené od UI avataru.</Text>
+          </View>
+        </View>
+      </Modal>
+
       <ScrollView ref={scrollRef} style={styles.messages} contentContainerStyle={styles.messagesContent} keyboardShouldPersistTaps="handled" onScrollBeginDrag={() => setMenuOpen(false)}>
         {messages.map((message, index) => message.role === 'iris' && message.imageUrl
           ? <ImageBubble key={message.id || `img-${index}`} message={message} themeMode={themeMode} refreshUrl={() => refreshImage(message.imageBucket, message.imagePath)} />
@@ -495,6 +552,22 @@ const styles = StyleSheet.create({
   menuItem: { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 9 },
   menuText: { fontSize: 14 },
   menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 4 },
+  facePackBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center', padding: 18 },
+  facePackCard: { width: '100%', maxWidth: 520, borderWidth: 1, borderRadius: 22, padding: 18, shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.24, shadowRadius: 32, elevation: 14 },
+  facePackHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  facePackTitle: { fontSize: 20, fontWeight: '800' },
+  facePackSubtitle: { fontSize: 13, lineHeight: 18, marginTop: 5 },
+  facePackClose: { width: 36, height: 36, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  facePackCloseText: { fontSize: 16, fontWeight: '700' },
+  facePackSlots: { marginTop: 16, gap: 9 },
+  facePackSlot: { minHeight: 68, borderWidth: 1, borderRadius: 15, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center' },
+  facePackNumber: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  facePackNumberText: { fontSize: 14, fontWeight: '800' },
+  facePackSlotCopy: { flex: 1, paddingHorizontal: 11 },
+  facePackSlotLabel: { fontSize: 15, fontWeight: '700' },
+  facePackSlotHint: { fontSize: 12, marginTop: 3 },
+  facePackAction: { fontSize: 13, fontWeight: '800' },
+  facePackFootnote: { fontSize: 11, lineHeight: 16, marginTop: 13 },
   messages: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
   messagesContent: { paddingBottom: 12 },
   bubble: { maxWidth: '85%', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16, marginBottom: 8, overflow: 'hidden', borderWidth: 1, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 1 },
