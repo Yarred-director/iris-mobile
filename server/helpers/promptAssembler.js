@@ -17,11 +17,13 @@ import { formatRelationshipBlock } from '../memory/relationshipTimeline.js';
 import { formatInternalStateBlock } from '../memory/internalState.js';
 import { formatSelfAwarenessBlock } from '../memory/selfAwareness.js';
 import { formatPersonalityEvolutionBlock } from '../memory/personalityEvolution.js';
+import { formatVisualStateBlock } from '../memory/visualState.js';
 import { formatHardFactsBlock } from './factualDetector.js';
 
 export function assemblePrompt({
   sceneFacts,
   sceneContext,
+  visualState,
   userProfile,
   coreOrigin,
   summaries,
@@ -39,6 +41,9 @@ export function assemblePrompt({
   parts.push(formatHardFactsBlock(sceneFacts || []));
   parts.push(formatHardSceneContextBlock(sceneContext));
   parts.push(formatSceneContextBlock(sceneContext));
+
+  const visualStateBlock = formatVisualStateBlock(visualState);
+  if (visualStateBlock) parts.push(visualStateBlock);
 
   const userProfileBlock = formatUserProfileBlock(userProfile || []);
   if (userProfileBlock) parts.push(userProfileBlock);
