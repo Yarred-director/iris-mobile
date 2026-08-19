@@ -26,4 +26,5 @@ jobs:
       - run: npm run check:server
       - run: npm run test:image-context
       - run: npm run test:live-assistance
+      - run: npm run test:heat-routing
       - run: npm run build:web
