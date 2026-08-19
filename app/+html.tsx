@@ -9,17 +9,31 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
         <meta name="theme-color" content="#0b0b0f" />
-        <meta name="color-scheme" content="dark" />
+        <meta name="color-scheme" content="dark light" />
         <meta name="application-name" content="Iris" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="Iris" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/iris-icon.svg" type="image/svg+xml" />
-        <link rel="apple-touch-icon" href="/iris-icon.svg" />
+        <link rel="icon" href="/iris-icon.png" type="image/png" />
+        <link rel="apple-touch-icon" href="/iris-icon.png" />
         <ScrollViewStyleReset />
+        <script dangerouslySetInnerHTML={{ __html: `
+          (function () {
+            try {
+              var mode = localStorage.getItem('iris.ui.theme.v1') === 'light' ? 'light' : 'dark';
+              var bg = mode === 'light' ? '#eef0f3' : '#0b0b0f';
+              document.documentElement.dataset.irisTheme = mode;
+              document.documentElement.style.setProperty('--iris-app-bg', bg);
+              var meta = document.querySelector('meta[name="theme-color"]');
+              if (meta) meta.setAttribute('content', bg);
+            } catch (_) {}
+          })();
+        ` }} />
         <style dangerouslySetInnerHTML={{ __html: `
-          html, body { width: 100%; height: 100%; margin: 0; background: #0b0b0f; overflow: hidden; overscroll-behavior: none; }
+          html { --iris-app-bg: #0b0b0f; color-scheme: dark; }
+          html[data-iris-theme="light"] { --iris-app-bg: #eef0f3; color-scheme: light; }
+          html, body { width: 100%; height: 100%; margin: 0; background: var(--iris-app-bg); overflow: hidden; overscroll-behavior: none; }
           #root {
             position: fixed;
             left: 0;
@@ -29,7 +43,7 @@ export default function Root({ children }: PropsWithChildren) {
             height: var(--iris-visual-height, 100dvh);
             min-height: 0;
             overflow: hidden;
-            background: #0b0b0f;
+            background: var(--iris-app-bg);
           }
           input, textarea { font-size: 16px !important; }
           * { box-sizing: border-box; }

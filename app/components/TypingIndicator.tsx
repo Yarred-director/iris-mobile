@@ -1,7 +1,9 @@
+import { getIrisTheme, type IrisThemeMode } from '@/constants/irisTheme';
 import { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 
-export default function TypingIndicator() {
+export default function TypingIndicator({ themeMode = 'dark' }: { themeMode?: IrisThemeMode }) {
+  const theme = getIrisTheme(themeMode);
   const dots = [
     useRef(new Animated.Value(0.3)).current,
     useRef(new Animated.Value(0.3)).current,
@@ -13,39 +15,25 @@ export default function TypingIndicator() {
       Animated.loop(
         Animated.sequence([
           Animated.delay(delay),
-          Animated.timing(dot, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-          Animated.timing(dot, {
-            toValue: 0.3,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-        ])
+          Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+        ]),
       ).start();
 
     dots.forEach((dot, i) => animate(dot, i * 150));
   }, []);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.typingBackground, borderColor: theme.surfaceBorder }]}> 
       {dots.map((dot, i) => (
         <Animated.View
           key={i}
           style={[
             styles.dot,
             {
+              backgroundColor: theme.typingDot,
               opacity: dot,
-              transform: [
-                {
-                  scale: dot.interpolate({
-                    inputRange: [0.3, 1],
-                    outputRange: [0.85, 1],
-                  }),
-                },
-              ],
+              transform: [{ scale: dot.interpolate({ inputRange: [0.3, 1], outputRange: [0.85, 1] }) }],
             },
           ]}
         />
@@ -60,15 +48,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999, // 👈 pill tvar
-    backgroundColor: 'rgba(255,255,255,0.08)', // jemnejšie než bubble
+    borderRadius: 999,
+    borderWidth: 1,
     alignSelf: 'flex-start',
   },
   dot: {
     width: 5,
     height: 5,
     borderRadius: 3,
-    backgroundColor: '#cbd5f5',
     marginHorizontal: 3,
   },
 });

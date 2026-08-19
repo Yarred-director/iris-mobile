@@ -1,3 +1,4 @@
+import { getIrisTheme, IRIS_THEME_STORAGE_KEY, type IrisThemeMode } from '@/constants/irisTheme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/providers/AuthProvider';
 import * as Crypto from 'expo-crypto';
@@ -5,6 +6,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -37,6 +39,11 @@ async function storageSet(key: string, value: string) {
   if (Platform.OS === 'web') { try { if (typeof window !== 'undefined') window.localStorage.setItem(key, value); } catch {} return; }
   await (await import('@react-native-async-storage/async-storage')).default.setItem(key, value);
 }
+function initialThemeMode(): IrisThemeMode {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return 'dark';
+  try { return window.localStorage.getItem(IRIS_THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'; }
+  catch { return 'dark'; }
+}
 async function fetchTimed(url: string, init: RequestInit = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -67,17 +74,22 @@ function mapServer(item: ServerMessage): Message {
   return { id: item.id, role: item.role === 'assistant' ? 'iris' : 'user', text: item.content || '', imageUrl: item.image_url || null, imageBucket: item.image_bucket || null, imagePath: item.image_path || null, createdAt: item.created_at || null, clientMessageId: item.client_message_id || null };
 }
 
-function Bubble({ message }: { message: Message }) {
+function Bubble({ message, themeMode }: { message: Message; themeMode: IrisThemeMode }) {
   const user = message.role === 'user';
+  const theme = getIrisTheme(themeMode);
   return (
-    <LinearGradient colors={user ? ['rgba(91,108,255,0.32)', 'rgba(91,108,255,0.12)'] : ['rgba(255,255,255,0.10)', 'rgba(255,255,255,0.04)']} style={[styles.bubble, user ? styles.userBubble : styles.irisBubble]}>
-      <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={14} /></View>
-      <RichText text={message.text} style={styles.text} />
+    <LinearGradient
+      colors={user ? theme.userBubbleGradient : theme.irisBubbleGradient}
+      style={[styles.bubble, user ? styles.userBubble : styles.irisBubble, { borderColor: theme.bubbleBorder, shadowColor: theme.shadow }]}
+    >
+      <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={16} /></View>
+      <RichText text={message.text} style={[styles.text, { color: theme.text }]} />
     </LinearGradient>
   );
 }
 
-function ImageBubble({ message, refreshUrl }: { message: Message; refreshUrl: () => Promise<string | null> }) {
+function ImageBubble({ message, refreshUrl, themeMode }: { message: Message; refreshUrl: () => Promise<string | null>; themeMode: IrisThemeMode }) {
+  const theme = getIrisTheme(themeMode);
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState(message.imageUrl || '');
   const refreshing = useRef(false);
@@ -90,13 +102,13 @@ function ImageBubble({ message, refreshUrl }: { message: Message; refreshUrl: ()
   };
   return (
     <View style={styles.irisBubble}>
-      <LinearGradient colors={['rgba(255,255,255,0.10)', 'rgba(255,255,255,0.04)']} style={[styles.bubble, styles.irisBubble, styles.imageBubble]}>
-        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={14} /></View>
+      <LinearGradient colors={theme.irisBubbleGradient} style={[styles.bubble, styles.irisBubble, styles.imageBubble, { borderColor: theme.bubbleBorder, shadowColor: theme.shadow }]}> 
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={16} /></View>
         <Pressable onPress={() => setOpen(true)} accessibilityRole="button">
-          <Image source={{ uri: url }} style={styles.generatedImage} contentFit="cover" onError={() => void refresh()} />
-          <Text style={styles.imageHint}>klikni pre celú veľkosť 🔍</Text>
+          <Image source={{ uri: url }} style={[styles.generatedImage, { backgroundColor: theme.surfaceSoft }]} contentFit="cover" onError={() => void refresh()} />
+          <Text style={[styles.imageHint, { color: theme.textFaint }]}>klikni pre celú veľkosť 🔍</Text>
         </Pressable>
-        {!!message.text && <RichText text={message.text} style={[styles.text, styles.imageCaption]} />}
+        {!!message.text && <RichText text={message.text} style={[styles.text, styles.imageCaption, { color: theme.text }]} />}
       </LinearGradient>
       <Modal visible={open} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.fullscreen} onPress={() => setOpen(false)}>
@@ -121,12 +133,34 @@ export default function ChatScreen() {
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
+  const [themeMode, setThemeMode] = useState<IrisThemeMode>(initialThemeMode);
   const activeRequestRef = useRef(false);
   const requestBackgroundedRef = useRef(false);
   const pendingAssistantIdRef = useRef<string | null>(null);
+  const theme = getIrisTheme(themeMode);
+  const glassWeb = Platform.OS === 'web' ? ({ backdropFilter: 'blur(22px)', WebkitBackdropFilter: 'blur(22px)' } as any) : null;
 
   const getToken = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token || accessToken, [accessToken]);
   useEffect(() => { if (!loading && !user) router.replace('/auth'); }, [loading, user, router]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    void storageGet(IRIS_THEME_STORAGE_KEY).then((saved) => {
+      if (saved === 'light' || saved === 'dark') setThemeMode(saved);
+    });
+  }, []);
+
+  useEffect(() => {
+    void storageSet(IRIS_THEME_STORAGE_KEY, themeMode);
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.documentElement.dataset.irisTheme = themeMode;
+    document.documentElement.style.backgroundColor = theme.background;
+    document.body.style.backgroundColor = theme.background;
+    const root = document.getElementById('root');
+    if (root) root.style.backgroundColor = theme.background;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    meta?.setAttribute('content', theme.background);
+  }, [theme.background, themeMode]);
 
   const refreshServerHistory = useCallback(async () => {
     const token = await getToken();
@@ -316,63 +350,82 @@ export default function ChatScreen() {
 
   const lastIris = useMemo(() => messages.map((m) => m.role).lastIndexOf('iris'), [messages]);
   const chat = (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: 'transparent' }]}> 
+      <View style={[styles.header, glassWeb, { borderBottomColor: theme.headerBorder, backgroundColor: theme.header, shadowColor: theme.shadow }]}> 
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-        <View><Text style={styles.headerName}>Iris</Text><Text style={styles.headerStatus}>with you</Text></View>
+        <View><Text style={[styles.headerName, { color: theme.text }]}>Iris</Text><Text style={[styles.headerStatus, { color: theme.textMuted }]}>with you</Text></View>
         <View style={styles.menuWrap}>
-          <Pressable onPress={() => setMenuOpen((open) => !open)} style={styles.menuBtn}><Text style={styles.menuDots}>⋯</Text></Pressable>
-          {menuOpen && <View style={styles.menu}>
-            {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={styles.menuText}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
-            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color="#fff" /> : <Text style={styles.menuText}>📸 Nahrať fotku Iris</Text>}</Pressable>
-            <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={styles.menuText}>Vymazať históriu</Text></Pressable>
-            <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={styles.menuText}>Odhlásiť sa</Text></Pressable>
+          <Pressable onPress={() => setMenuOpen((open) => !open)} style={[styles.menuBtn, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}><Text style={[styles.menuDots, { color: theme.text }]}>⋯</Text></Pressable>
+          {menuOpen && <View style={[styles.menu, glassWeb, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}> 
+            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>Vzhľad</Text>
+            <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}> 
+              {(['dark', 'light'] as IrisThemeMode[]).map((mode) => {
+                const selected = themeMode === mode;
+                return (
+                  <Pressable key={mode} onPress={() => setThemeMode(mode)} style={[styles.themeOption, selected && { backgroundColor: theme.accent }]}> 
+                    <Text style={[styles.themeOptionText, { color: selected ? '#fff' : theme.text }]}>{mode === 'dark' ? 'Dark' : 'Light'}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
+            {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
+            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>📸 Nahrať fotku Iris</Text>}</Pressable>
+            <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Vymazať históriu</Text></Pressable>
+            <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Odhlásiť sa</Text></Pressable>
           </View>}
         </View>
       </View>
       {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
       <ScrollView ref={scrollRef} style={styles.messages} contentContainerStyle={styles.messagesContent} keyboardShouldPersistTaps="handled" onScrollBeginDrag={() => setMenuOpen(false)}>
         {messages.map((message, index) => message.role === 'iris' && message.imageUrl
-          ? <ImageBubble key={message.id || `img-${index}`} message={message} refreshUrl={() => refreshImage(message.imageBucket, message.imagePath)} />
-          : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} />)}
-        {isTyping && <View style={styles.typing}><TypingIndicator /></View>}
+          ? <ImageBubble key={message.id || `img-${index}`} message={message} themeMode={themeMode} refreshUrl={() => refreshImage(message.imageBucket, message.imagePath)} />
+          : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} themeMode={themeMode} />)}
+        {isTyping && <View style={styles.typing}><TypingIndicator themeMode={themeMode} /></View>}
       </ScrollView>
-      <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} /></View>
+      <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} themeMode={themeMode} /></View>
     </View>
   );
 
   const body = Platform.OS === 'web'
-    ? <View style={styles.root}>{chat}</View>
-    : <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{chat}</KeyboardAvoidingView>;
+    ? <View style={[styles.root, { backgroundColor: theme.background }]}>{chat}</View>
+    : <KeyboardAvoidingView style={[styles.root, { backgroundColor: theme.background }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>{chat}</KeyboardAvoidingView>;
+  const statusBar = <StatusBar style={themeMode === 'light' ? 'dark' : 'light'} />;
   if (background?.image_url) {
-    return <ImageBackground source={{ uri: background.image_url }} style={styles.root} blurRadius={background.blur ?? 0}><View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: `rgba(0,0,0,${background.overlay ?? 0.35})` }]} /><SafeAreaView style={styles.root}>{body}</SafeAreaView></ImageBackground>;
+    const overlayColor = themeMode === 'dark' ? `rgba(0,0,0,${background.overlay ?? 0.35})` : theme.backgroundOverlay;
+    return <ImageBackground source={{ uri: background.image_url }} style={[styles.root, { backgroundColor: theme.background }]} blurRadius={background.blur ?? 0}><View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: overlayColor }]} /><SafeAreaView style={[styles.root, { backgroundColor: 'transparent' }]}>{statusBar}{body}</SafeAreaView></ImageBackground>;
   }
-  return <SafeAreaView style={styles.root}>{body}</SafeAreaView>;
+  return <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]}>{statusBar}{body}</SafeAreaView>;
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0b0b0f' },
+  root: { flex: 1 },
   container: { flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.12)', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 5 },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, zIndex: 5, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.10, shadowRadius: 18, elevation: 4 },
   avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12 },
-  headerName: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  headerStatus: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
+  headerName: { fontSize: 18, fontWeight: '700' },
+  headerStatus: { fontSize: 12, marginTop: 2 },
   menuWrap: { marginLeft: 'auto' },
-  menuBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
-  menuDots: { color: '#fff', fontSize: 18 },
-  menu: { position: 'absolute', right: 0, top: 42, minWidth: 210, padding: 8, borderRadius: 12, backgroundColor: 'rgba(20,20,26,0.98)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', zIndex: 6 },
-  menuItem: { paddingVertical: 10, paddingHorizontal: 10 },
-  menuText: { color: '#fff', fontSize: 14 },
+  menuBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1 },
+  menuDots: { fontSize: 18 },
+  menu: { position: 'absolute', right: 0, top: 42, minWidth: 228, padding: 9, borderRadius: 16, borderWidth: 1, zIndex: 6, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 10 },
+  menuLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', paddingHorizontal: 8, paddingTop: 4, paddingBottom: 7 },
+  themeSwitch: { flexDirection: 'row', borderRadius: 12, padding: 3, borderWidth: 1, marginHorizontal: 3, marginBottom: 7 },
+  themeOption: { flex: 1, minHeight: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  themeOptionText: { fontSize: 13, fontWeight: '700' },
+  menuDivider: { height: 1, marginVertical: 5, marginHorizontal: 4 },
+  menuItem: { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 9 },
+  menuText: { fontSize: 14 },
   menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 4 },
   messages: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
   messagesContent: { paddingBottom: 12 },
-  bubble: { maxWidth: '85%', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' },
+  bubble: { maxWidth: '85%', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16, marginBottom: 8, overflow: 'hidden', borderWidth: 1, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 1 },
   userBubble: { alignSelf: 'flex-end' },
   irisBubble: { alignSelf: 'flex-start' },
-  text: { color: '#fff', fontSize: 15, lineHeight: 20 },
+  text: { fontSize: 15, lineHeight: 20 },
   imageBubble: { padding: 8 },
-  generatedImage: { width: 240, height: 240, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.05)' },
-  imageHint: { color: 'rgba(255,255,255,0.4)', fontSize: 11, textAlign: 'center', marginTop: 4 },
+  generatedImage: { width: 240, height: 240, borderRadius: 12 },
+  imageHint: { fontSize: 11, textAlign: 'center', marginTop: 4 },
   imageCaption: { marginTop: 8, paddingHorizontal: 4 },
   fullscreen: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   fullscreenImage: { width: '100%', height: '88%' },

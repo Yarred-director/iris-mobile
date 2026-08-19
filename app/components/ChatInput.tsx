@@ -1,13 +1,16 @@
+import { getIrisTheme, type IrisThemeMode } from '@/constants/irisTheme';
 import { useCallback, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 type Props = {
   onSend: (text: string) => void | Promise<void>;
   disabled?: boolean;
+  themeMode?: IrisThemeMode;
 };
 
-export default function ChatInput({ onSend, disabled = false }: Props) {
+export default function ChatInput({ onSend, disabled = false, themeMode = 'dark' }: Props) {
   const [text, setText] = useState('');
+  const theme = getIrisTheme(themeMode);
   const submit = useCallback(() => {
     const clean = text.trim();
     if (!clean || disabled) return;
@@ -16,13 +19,13 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
   }, [disabled, onSend, text]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { borderColor: theme.inputBorder, backgroundColor: theme.inputBar }]}> 
       <TextInput
         value={text}
         onChangeText={setText}
         placeholder="Napíš Iris..."
-        placeholderTextColor="#9ca3af"
-        style={styles.input}
+        placeholderTextColor={theme.placeholder}
+        style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.surfaceBorder }]}
         multiline
         editable={!disabled}
         accessibilityLabel="Správa pre Iris"
@@ -42,7 +45,7 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
         accessibilityRole="button"
         accessibilityLabel="Odoslať správu"
         disabled={disabled || !text.trim()}
-        style={({ pressed }) => [styles.button, (disabled || !text.trim()) && styles.buttonDisabled, pressed && !disabled && styles.buttonPressed]}
+        style={({ pressed }) => [styles.button, { backgroundColor: theme.accent }, (disabled || !text.trim()) && styles.buttonDisabled, pressed && !disabled && styles.buttonPressed]}
         onPress={submit}
       >
         <Text style={styles.buttonText}>{disabled ? '…' : 'Send'}</Text>
@@ -52,9 +55,9 @@ export default function ChatInput({ onSend, disabled = false }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.15)', backgroundColor: 'rgba(0,0,0,0.35)' },
-  input: { flex: 1, minHeight: 44, maxHeight: 132, backgroundColor: '#1a1a1f', color: '#ffffff', fontSize: 16, lineHeight: 21, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, marginRight: 8, outlineStyle: 'none' as any },
-  button: { minHeight: 44, backgroundColor: '#5b6cff', borderRadius: 10, paddingHorizontal: 16, justifyContent: 'center' },
+  container: { flexDirection: 'row', alignItems: 'flex-end', padding: 12, borderTopWidth: 1 },
+  input: { flex: 1, minHeight: 44, maxHeight: 132, fontSize: 16, lineHeight: 21, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, marginRight: 8, borderWidth: 1, outlineStyle: 'none' as any },
+  button: { minHeight: 44, borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' },
   buttonDisabled: { opacity: 0.45 },
   buttonPressed: { opacity: 0.8 },
   buttonText: { color: '#ffffff', fontWeight: '600' },

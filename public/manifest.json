@@ -11,6 +11,12 @@
   "theme_color": "#0b0b0f",
   "icons": [
     {
+      "src": "/iris-icon.png",
+      "sizes": "736x760",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "/iris-icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
