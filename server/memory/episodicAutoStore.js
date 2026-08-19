@@ -3,6 +3,7 @@
 
 import { randomUUID } from 'crypto';
 import { createEmbedding } from './embeddings.js';
+import { normalizeMemoryAssessment } from './memoryQuality.js';
 
 function parseJson(raw, fallback = null) {
   try {
@@ -25,6 +26,48 @@ async function jsonResponse({ llmClient, model, prompt, maxOutputTokens = 400 })
   return parseJson(response.output_text, null);
 }
 
+async function assessMemory({ userText, irisReply, llmClient, model }) {
+  const conversation = [
+    userText ? `User: ${String(userText).slice(0, 1400)}` : null,
+    irisReply ? `Iris: ${String(irisReply).slice(0, 1400)}` : null,
+  ].filter(Boolean).join('\n');
+
+  try {
+    const result = await jsonResponse({
+      llmClient,
+      model,
+      maxOutputTokens: 180,
+      prompt: `You are the durable episodic-memory judge for Iris, an AI companion.
+The deterministic memory gate has already rejected routine chat. Decide whether this exchange is still worth keeping as a durable episodic memory and score its long-term value.
+
+IMPORTANT:
+- importance means long-term recall value, NOT how explicit, dramatic, long or verbose the message is.
+- emotional_weight means emotional intensity/significance of the event, 0-100.
+- Repetitive or interchangeable moments should score lower than genuinely distinctive events.
+- Explicit/sexual content is not automatically important. A repeated generic intimate action may be low/moderate importance; a relationship milestone or uniquely meaningful shared event may be high.
+- Direct "remember this" instructions, durable life facts, major goals/projects, relationship milestones and distinctive shared experiences deserve higher importance.
+- Greetings, filler, generic questions and disposable details should not be stored.
+
+Importance rubric:
+0.10-0.35 = transient/minor detail
+0.40-0.55 = useful but ordinary context
+0.60-0.75 = meaningful preference/context/event likely useful later
+0.80-0.90 = significant personal, relationship, project or life event
+0.95-1.00 = core identity/life-defining fact, explicit durable-memory request, or exceptional milestone
+
+Conversation:\n${conversation}
+
+Return JSON only:
+{"should_store":true|false,"importance":0.1-1.0,"emotional_weight":0-100}`,
+    });
+    return normalizeMemoryAssessment(result);
+  } catch (e) {
+    console.log('[MEMORY_JUDGE_ERROR]', e?.message);
+    // The deterministic gate already approved this exchange. Fail open with conservative mid-range values.
+    return normalizeMemoryAssessment({ should_store: true, importance: 0.65, emotional_weight: 50 });
+  }
+}
+
 export async function autoStoreEpisodicMemoryHybrid({
   supabase,
   userId,
@@ -38,28 +81,9 @@ export async function autoStoreEpisodicMemoryHybrid({
   const textToStore = llmReply || userText;
   if (!textToStore || !textToStore.trim()) return;
 
-  // memoryPolicy already gates this path. For legacy direct callers, judge user-only writes cheaply.
-  let decision = { should_store: true, importance: 0.8 };
-  if (!llmReply) {
-    try {
-      decision = await jsonResponse({
-        llmClient,
-        model,
-        maxOutputTokens: 120,
-        prompt: `You are a memory judge for Iris, an AI companion.
-Store only durable personal facts, meaningful preferences, emotions/life events, important roleplay/shared experiences, or context likely to matter later.
-Do not store greetings, filler, one-word acknowledgements or generic questions.
-User message: ${JSON.stringify(String(userText || '').slice(0, 1200))}
-Return JSON only: {"should_store":true|false,"importance":0.1-1.0}`,
-      }) || { should_store: false, importance: 0.5 };
-    } catch (e) {
-      console.log('[MEMORY_JUDGE_ERROR]', e?.message);
-      decision = { should_store: false, importance: 0.5 };
-    }
-  }
-  if (!decision?.should_store) return;
+  const decision = await assessMemory({ userText, irisReply: llmReply, llmClient, model });
+  if (!decision.should_store) return;
 
-  const importance = Math.max(0.1, Math.min(1, Number(decision.importance ?? 0.7)));
   const rowId = randomUUID();
   const { error: insertError } = await supabase.from('episodic_memory').insert({
     id: rowId,
@@ -68,8 +92,13 @@ Return JSON only: {"should_store":true|false,"importance":0.1-1.0}`,
     title: 'Pending memory',
     narrative: textToStore,
     memory_type: 'episodic',
-    importance,
-    memory_note: JSON.stringify({ stage: 'raw', source: llmReply ? 'exchange' : 'user' }),
+    importance: decision.importance,
+    emotional_weight: decision.emotional_weight,
+    memory_note: JSON.stringify({
+      stage: 'raw',
+      source: llmReply ? 'exchange' : 'user',
+      importance_source: 'llm',
+    }),
   });
   if (insertError) {
     console.log('[AUTO_MEMORY_INSERT_ERROR]', insertError.message);
@@ -87,7 +116,11 @@ Return JSON only: {"should_store":true|false,"importance":0.1-1.0}`,
         emotional_tags: Array.isArray(enriched?.emotional_tags) ? enriched.emotional_tags.slice(0, 6) : [],
         embedding,
         memory_revision: 2,
-        memory_note: JSON.stringify({ stage: 'enriched', source: llmReply ? 'exchange' : 'user' }),
+        memory_note: JSON.stringify({
+          stage: 'enriched',
+          source: llmReply ? 'exchange' : 'user',
+          importance_source: 'llm',
+        }),
       }).eq('id', rowId);
       if (error) console.log('[AUTO_MEMORY_ENRICH_UPDATE_ERROR]', error.message);
     } catch (e) {
