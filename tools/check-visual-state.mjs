@@ -27,11 +27,13 @@ assert.equal(cleared.hair, undefined);
 const prefs = selectPotentialVisualPreferences([
   { category: 'preferences', fact_key: 'loves_black_nail_polish', fact_value: 'User loves black nail polish on Iris.', confidence: 0.98 },
   { category: 'visual_preferences', fact_key: 'iris_visual.sleepwear_style', fact_value: 'Prefers satin sleepwear on Iris.', confidence: 0.95 },
+  { category: 'appearance', fact_key: 'user_hair', fact_value: 'User has dark hair.', confidence: 1 },
   { category: 'interests', fact_key: 'elden_ring', fact_value: 'Plays Elden Ring.', confidence: 1 },
 ]);
 assert.equal(prefs.length, 2);
 assert.ok(prefs.some((item) => item.fact_key === 'loves_black_nail_polish'));
 assert.ok(prefs.some((item) => item.fact_key === 'iris_visual.sleepwear_style'));
+assert.ok(!prefs.some((item) => item.fact_key === 'user_hair'));
 
 const block = formatVisualStateBlock({ state: existing });
 assert.match(block, /current visual continuity state/i);
