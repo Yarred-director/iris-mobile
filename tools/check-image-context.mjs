@@ -39,6 +39,9 @@ assert.match(joined, /čierne plavky|black lace/, 'Recent outfit context was not
 assert.match(joined, /priesvitn|sheer/, 'Recent skirt detail was not passed into image prompt synthesis.');
 assert.match(joined, /balk[oó]n|balcony/, 'Recent scene context was not passed into image prompt synthesis.');
 assert.match(joined, /pošli mi fotku/, 'Latest image request was not passed into image prompt synthesis.');
+assert.match(joined, /head-to-body scale|head must not be enlarged/, 'Body proportion guardrails were not passed into image prompt synthesis.');
 assert.match(result.prompt.toLowerCase(), /black lace/, 'Prompt synthesis result was not returned.');
+assert.match(result.prompt.toLowerCase(), /head-to-body scale/, 'Mandatory body proportion guardrails were not injected into the final image prompt.');
+assert.match(result.prompt.toLowerCase(), /long-legged/, 'Iris body silhouette guardrail is missing from the final image prompt.');
 
 console.log('Image context continuity regression test passed.');
