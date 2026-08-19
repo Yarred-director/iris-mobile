@@ -1,5 +1,6 @@
 // server/memory/recall.js
 import { createEmbedding } from './embeddings.js';
+import { reinforceRecalledMemories } from './memoryQuality.js';
 
 function isConfidentRecall(memories, { minSimilarity = 0.35, minCount = 1 } = {}) {
   if (!Array.isArray(memories) || memories.length < minCount) return false;
@@ -27,6 +28,15 @@ export async function recallEpisodicMemory(supabaseClient, text, userID, queryEm
   const memories = data || [];
   const topSimilarity = memories.length > 0 && typeof memories[0]?.similarity === 'number' ? memories[0].similarity : 0;
   const confident = isConfidentRecall(memories, { minSimilarity: 0.35, minCount: 1 });
+
+  // A genuinely relevant recall strengthens the memory. This is deliberately fire-and-forget so
+  // a reinforcement write never adds latency to the user's reply. The RPC has a 24h per-memory
+  // cooldown, preventing a single conversation from inflating reinforcement_count repeatedly.
+  if (confident) {
+    reinforceRecalledMemories({ supabase: supabaseClient, userId: userID, memories })
+      .catch((reinforceError) => console.log('[MEMORY_REINFORCEMENT_ERROR]', reinforceError?.message));
+  }
+
   return {
     memories,
     meta: { confident, topSimilarity, match_threshold, match_count, reason: confident ? 'ok' : 'low_recall_confidence' },
