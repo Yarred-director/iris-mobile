@@ -1,7 +1,6 @@
 import { getIrisTheme, type IrisThemeMode } from '@/constants/irisTheme';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useState } from 'react';
 
 type Props = {
   onSend: (text: string) => void | Promise<void>;
