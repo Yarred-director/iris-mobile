@@ -22,6 +22,7 @@ const API_CHAT = `${API_BASE}/chat`;
 const API_HISTORY = `${API_BASE}/chat/history`;
 const API_MEDIA_SIGN = `${API_BASE}/media/sign`;
 const API_REF_PHOTO = `${API_BASE}/iris/reference-photo`;
+const IRIS_AVATAR_BUCKET = 'iris-photos';
 const MAX_MESSAGES = 50;
 const REQUEST_TIMEOUT_MS = 300000;
 
@@ -31,6 +32,7 @@ type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: st
 type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null; client_message_id?: string | null };
 
 function storageKey(userId: string) { return `iris.chat.history.v3:${userId}`; }
+function irisAvatarPath(userId: string) { return `ui-avatar/${userId}/avatar`; }
 async function storageGet(key: string) {
   if (Platform.OS === 'web') { try { return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null; } catch { return null; } }
   return (await import('@react-native-async-storage/async-storage')).default.getItem(key);
@@ -130,6 +132,7 @@ export default function ChatScreen() {
   const [isTyping, setIsTyping] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
@@ -141,6 +144,11 @@ export default function ChatScreen() {
   const glassWeb = Platform.OS === 'web' ? ({ backdropFilter: 'blur(22px)', WebkitBackdropFilter: 'blur(22px)' } as any) : null;
 
   const getToken = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token || accessToken, [accessToken]);
+  const signCustomAvatar = useCallback(async (userId: string) => {
+    const { data, error } = await supabase.storage.from(IRIS_AVATAR_BUCKET).createSignedUrl(irisAvatarPath(userId), 86400);
+    if (error || !data?.signedUrl) return null;
+    return `${data.signedUrl}${data.signedUrl.includes('?') ? '&' : '?'}v=${Date.now()}`;
+  }, []);
   useEffect(() => { if (!loading && !user) router.replace('/auth'); }, [loading, user, router]);
 
   useEffect(() => {
@@ -233,11 +241,29 @@ export default function ChatScreen() {
 
   useEffect(() => { if (historyReady && user?.id) void storageSet(storageKey(user.id), JSON.stringify(messages.slice(-MAX_MESSAGES))); }, [historyReady, messages, user?.id]);
   useEffect(() => {
-    fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`).then((r) => r.json()).then((data: UIManifest) => {
-      setBackground(data?.chatBackground ?? null);
-      setAvatarUrl(data?.avatar?.image_url || DEFAULT_AVATAR_URL);
-    }).catch(() => { setBackground(null); setAvatarUrl(DEFAULT_AVATAR_URL); });
-  }, []);
+    let cancelled = false;
+    (async () => {
+      let fallbackAvatar = DEFAULT_AVATAR_URL;
+      try {
+        const data: UIManifest = await (await fetch(`${UI_MANIFEST_URL}?t=${Date.now()}`)).json();
+        if (cancelled) return;
+        setBackground(data?.chatBackground ?? null);
+        fallbackAvatar = data?.avatar?.image_url || DEFAULT_AVATAR_URL;
+      } catch {
+        if (cancelled) return;
+        setBackground(null);
+      }
+
+      if (user?.id) {
+        const customAvatar = await signCustomAvatar(user.id);
+        if (cancelled) return;
+        setAvatarUrl(customAvatar || fallbackAvatar);
+      } else if (!cancelled) {
+        setAvatarUrl(fallbackAvatar);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [signCustomAvatar, user?.id]);
   useEffect(() => { requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true })); }, [messages.length, isTyping]);
 
   const refreshImage = useCallback(async (bucket?: string | null, path?: string | null) => {
@@ -262,6 +288,30 @@ export default function ChatScreen() {
       else if (status === 'unsupported') Alert.alert('Iris', 'Tento prehliadač nepodporuje web push pre Iris.');
     } catch (error: any) {
       Alert.alert('Iris', `Notifikácie sa nepodarilo zapnúť: ${error?.message || 'neznáma chyba'}`);
+    }
+  };
+
+  const uploadAvatar = async () => {
+    setMenuOpen(false);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.9 });
+    if (result.canceled || !result.assets?.[0] || !user?.id) return;
+    setAvatarUploading(true);
+    try {
+      const asset = result.assets[0];
+      const contentType = asset.mimeType || 'image/jpeg';
+      const path = irisAvatarPath(user.id);
+      const blob = await (await fetch(asset.uri)).blob();
+      const { error } = await supabase.storage.from(IRIS_AVATAR_BUCKET).upload(path, blob, { upsert: true, contentType, cacheControl: '3600' });
+      if (error) throw new Error(error.message);
+      const signedUrl = await signCustomAvatar(user.id);
+      if (!signedUrl) throw new Error('Nepodarilo sa načítať nový avatar.');
+      setAvatarUrl(signedUrl);
+    } catch (error: any) {
+      Alert.alert('Iris', `Avatar sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
+    } finally {
+      setAvatarUploading(false);
     }
   };
 
@@ -370,7 +420,8 @@ export default function ChatScreen() {
             </View>
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
-            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>📸 Nahrať fotku Iris</Text>}</Pressable>
+            <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
+            <Pressable onPress={() => void uploadReference()} style={styles.menuItem}>{uploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🧬 Zmeniť referenčnú fotku</Text>}</Pressable>
             <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Vymazať históriu</Text></Pressable>
             <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Odhlásiť sa</Text></Pressable>
           </View>}
