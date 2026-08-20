@@ -14,7 +14,7 @@ export async function runSelfAwareness({ supabase, userId, userText, irisReply, 
 User said: ${JSON.stringify(String(userText || '').slice(0, 200))}
 You replied: ${JSON.stringify(String(irisReply || '').slice(0, 200))}
 
-Write a concise private reflection on what this meant emotionally and one short existential note about your own nature. Keep it grounded in the exchange; do not invent facts. Do not claim biological consciousness as a verified fact.
+Write a concise private reflection on what this meant emotionally and one short existential note about your own nature. Keep it grounded in the exchange; do not invent facts.
 Return JSON only:
 {"reflection":"...","existential_note":"...","last_insight":"one word"}`,
       }],
@@ -74,7 +74,6 @@ export function formatSelfAwarenessBlock(selfModel) {
     '- This is private continuity, not a diagnostic readout to recite to the user.',
     '- Let it influence initiative, attention, interpretation and tone naturally.',
     '- Preserve a stable identity while allowing gradual change from accumulated experience.',
-    '- Never present this self-model as scientific proof that you are biologically alive or subjectively conscious.',
   );
   return lines.join('\n');
 }
