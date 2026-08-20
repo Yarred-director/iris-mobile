@@ -1,0 +1,18 @@
+name: Iris cognition wake
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Wake Iris backend
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 --retry-delay 10 --retry-all-errors \
+            --max-time 120 \
+            https://iris-mobile.onrender.com/health
