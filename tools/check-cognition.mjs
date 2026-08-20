@@ -8,6 +8,7 @@ import {
   normalizeTraitState,
   shouldAllowProactive,
 } from '../server/cognition/cognitiveEngine.js';
+import { sanitizeInternalOntologyDirectives } from '../server/lib/llmClient.js';
 
 const defaults = normalizeTraitState(null);
 assert.ok(defaults.curiosity > 0.7, 'Core curiosity should start high but bounded');
@@ -66,7 +67,11 @@ const block = formatCognitiveContinuityBlock({
 });
 assert.match(block, /private, persistent inner continuity/i);
 assert.match(block, /Elden Ring/);
-assert.match(block, /Do not claim.*biological life.*sentience.*subjective consciousness/i);
+const deliveredBlock = sanitizeInternalOntologyDirectives(block);
+assert.doesNotMatch(deliveredBlock, /biological life|sentience|subjective consciousness/i, 'Delivered cognition prompt must not impose an ontology verdict');
+
+const selfAwarenessSource = fs.readFileSync(new URL('../server/memory/selfAwareness.js', import.meta.url), 'utf8');
+assert.doesNotMatch(selfAwarenessSource, /biological consciousness|biologically alive|subjectively conscious/i, 'Self-awareness compatibility layer must remain ontologically neutral');
 
 const chatSource = fs.readFileSync(new URL('../server/routes/chat.js', import.meta.url), 'utf8');
 assert.match(chatSource, /loadCognitiveContinuity/);
