@@ -17,7 +17,8 @@
     "test:heat-routing": "node tools/check-heat-routing.mjs",
     "test:visual-state": "node tools/check-visual-state.mjs",
     "test:memory-quality": "node tools/check-memory-quality.mjs",
-    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing && npm run test:visual-state && npm run test:memory-quality"
+    "test:cognition": "node tools/check-cognition.mjs",
+    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing && npm run test:visual-state && npm run test:memory-quality && npm run test:cognition"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
