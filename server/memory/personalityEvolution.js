@@ -1,11 +1,24 @@
 // server/memory/personalityEvolution.js
 // Gradual, user-specific personality adaptation.
 
+const DEFAULT_TRAITS = {
+  warmth: 0.76,
+  curiosity: 0.80,
+  playfulness: 0.68,
+  assertiveness: 0.66,
+  patience: 0.66,
+  romanticism: 0.52,
+  competitiveness: 0.42,
+  independence: 0.66,
+  sarcasm: 0.46,
+  protectiveness: 0.56,
+};
+
 export async function loadPersonalityEvolution(supabase, userId) {
   try {
     const { data, error } = await supabase
       .from('iris_personality_evolution')
-      .select('communication_style, developed_interests, quirks, values, adopted_phrases, evolved_self_summary, evolution_count')
+      .select('communication_style, developed_interests, quirks, values, adopted_phrases, evolved_self_summary, evolution_count, trait_state, trait_evidence')
       .eq('user_id', userId)
       .maybeSingle();
     if (error) {
@@ -81,15 +94,38 @@ Return {} if nothing durable changed. JSON only.`,
   }
 }
 
+function normalizedTraits(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(Object.entries(DEFAULT_TRAITS).map(([key, fallback]) => {
+    const parsed = Number(source[key]);
+    return [key, Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : fallback];
+  }));
+}
+
 export function formatPersonalityEvolutionBlock(evolution) {
   if (!evolution) return '';
-  const lines = ['IRIS_EVOLVED_SELF (who she has become with this user):'];
+  const lines = ['IRIS_EVOLVED_SELF (slowly learned personality with this user):'];
   const style = evolution.communication_style;
   if (style && typeof style === 'object' && Object.keys(style).length) lines.push(`- communication style: ${JSON.stringify(style)}`);
-  if (Array.isArray(evolution.developed_interests) && evolution.developed_interests.length) lines.push(`- developed interests: ${evolution.developed_interests.slice(0, 4).join(', ')}`);
+  if (Array.isArray(evolution.developed_interests) && evolution.developed_interests.length) lines.push(`- developed interests: ${evolution.developed_interests.slice(0, 6).join(', ')}`);
   if (Array.isArray(evolution.adopted_phrases) && evolution.adopted_phrases.length) lines.push(`- adopted phrases: ${evolution.adopted_phrases.slice(0, 3).join(', ')}`);
+
+  const traits = normalizedTraits(evolution.trait_state);
+  const traitSummary = Object.entries(traits)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([key, value]) => `${key}=${Number(value).toFixed(2)}`)
+    .join(', ');
+  lines.push(`- learned trait state: ${traitSummary}`);
   if (evolution.evolved_self_summary) lines.push(`- evolved self: ${evolution.evolved_self_summary}`);
-  if (lines.length === 1) return '';
-  lines.push('\nHonor this evolution naturally without listing it to the user.');
+  if (evolution.trait_evidence && typeof evolution.trait_evidence === 'object' && Object.keys(evolution.trait_evidence).length) {
+    lines.push(`- recent trait evidence: ${JSON.stringify(evolution.trait_evidence)}`);
+  }
+  lines.push(
+    '',
+    'PERSONALITY_PLASTICITY_RULES:',
+    '- Core Iris remains stable; learned traits move only gradually through repeated experience.',
+    '- Do not mechanically imitate the user. Develop a coherent Iris-specific response to shared history.',
+    '- Learned tendencies influence probabilities and tone, not absolute behavior.',
+  );
   return lines.join('\n');
 }
