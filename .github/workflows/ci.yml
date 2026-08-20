@@ -29,4 +29,5 @@ jobs:
       - run: npm run test:heat-routing
       - run: npm run test:visual-state
       - run: npm run test:memory-quality
+      - run: npm run test:cognition
       - run: npm run build:web

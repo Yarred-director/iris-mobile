@@ -18,6 +18,7 @@ import { formatInternalStateBlock } from '../memory/internalState.js';
 import { formatSelfAwarenessBlock } from '../memory/selfAwareness.js';
 import { formatPersonalityEvolutionBlock } from '../memory/personalityEvolution.js';
 import { formatVisualStateBlock } from '../memory/visualState.js';
+import { formatCognitiveContinuityBlock } from '../cognition/cognitiveEngine.js';
 import { formatHardFactsBlock } from './factualDetector.js';
 
 export function assemblePrompt({
@@ -34,6 +35,7 @@ export function assemblePrompt({
   internalState,
   selfModel,
   personalityEvolution,
+  cognitiveContinuity,
   isFactual,
 }) {
   const parts = [];
@@ -83,6 +85,9 @@ export function assemblePrompt({
 
   const personalityBlock = formatPersonalityEvolutionBlock(personalityEvolution);
   if (personalityBlock) parts.push(personalityBlock);
+
+  const cognitiveBlock = formatCognitiveContinuityBlock(cognitiveContinuity);
+  if (cognitiveBlock) parts.push(cognitiveBlock);
 
   if (isFactual) {
     parts.push(
