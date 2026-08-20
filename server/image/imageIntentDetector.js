@@ -5,6 +5,7 @@ const IRIS_PHYSICAL = `Woman: pale skin, dirty blonde hair, green eyes, strong f
 large augmented breasts, long legs, model-like figure, slim waist, age 22.`;
 
 const BODY_PROPORTION_GUARDRAILS = `Natural adult female proportions and realistic anatomy. Keep a natural head-to-body scale: the head must not be enlarged relative to the shoulders, torso or legs. Preserve Iris's long-legged model-like silhouette, realistic shoulder width and torso length, and anatomically plausible limbs. No chibi, bobblehead, childlike or doll-like proportions.`;
+const BUST_VISIBILITY_GUARDRAIL = `Medium or three-quarter framing from head to at least the waist, preferably upper thighs when the scene allows. Keep Iris's entire augmented bust and enough torso visibly in frame; do not crop at the collarbones or shoulders and do not turn the scene into a tight beauty headshot.`;
 
 const MAX_HISTORY_TURNS = 10;
 const MAX_HISTORY_CHARS = 1800;
@@ -115,6 +116,19 @@ function withProportionGuardrails(prompt) {
   return `${BODY_PROPORTION_GUARDRAILS} ${scene}`.trim();
 }
 
+function asksForBustVisibility(text, history = []) {
+  const recent = [
+    ...(Array.isArray(history) ? history.slice(-6).map((item) => String(item?.content || '')) : []),
+    String(text || ''),
+  ].join(' ').toLowerCase();
+  return /\b(?:augmented\s+(?:chest|breasts?|bust)|full\s+chest|larger\s+(?:bust|breasts?)|bigger\s+(?:bust|breasts?)|cleavage|neckline|bust)\b|výstrih|vystrih|dekolt|poprsie|prsia/.test(recent);
+}
+
+function applyConversationFramingGuardrails(prompt, text, history) {
+  const scene = withProportionGuardrails(prompt);
+  return asksForBustVisibility(text, history) ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene;
+}
+
 export async function extractImageIntent({
   text,
   conversationHistory = [],
@@ -124,8 +138,8 @@ export async function extractImageIntent({
   llmClient,
   model,
 }) {
+  const history = cleanHistory(conversationHistory);
   try {
-    const history = cleanHistory(conversationHistory);
     const context = contextPayload(sceneContext, visualState, visualPreferences);
     const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
@@ -147,7 +161,7 @@ export async function extractImageIntent({
       `${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene. Photorealistic, realistic lighting.`;
 
     return {
-      prompt: withProportionGuardrails(scenePrompt),
+      prompt: applyConversationFramingGuardrails(scenePrompt, text, history),
       caption: String(parsed.caption || '📸').trim().slice(0, 280) || '📸',
       explicit: !!parsed.explicit,
       aspect_ratio: parsed.aspect_ratio || 'auto',
@@ -156,7 +170,7 @@ export async function extractImageIntent({
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
     return {
-      prompt: withProportionGuardrails(`${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}. Photorealistic, realistic lighting.`),
+      prompt: applyConversationFramingGuardrails(`${IRIS_PHYSICAL}${stateFallbackText(visualState)} Iris taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}. Photorealistic, realistic lighting.`, text, history),
       caption: '📸',
       explicit: false,
       aspect_ratio: 'auto',
