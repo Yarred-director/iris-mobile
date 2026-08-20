@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { detectState } from '../behavior/state.js';
 import { buildHeatDirective, engineForHeat, interactionModeForHeat } from '../behavior/heatRouting.js';
 import { intentJudgeLLM } from '../behavior/intentJudge.js';
+import { loadCognitiveContinuity, reflectOnExchange } from '../cognition/cognitiveEngine.js';
 import { looksLikeFactualQuestion } from '../helpers/factualDetector.js';
 import { buildLiveAssistanceDirective, looksLikeLiveAssistanceRequest } from '../helpers/liveAssistance.js';
 import { assemblePrompt } from '../helpers/promptAssembler.js';
@@ -21,12 +22,12 @@ import { autoStoreEpisodicMemoryHybrid } from '../memory/episodicAutoStore.js';
 import { loadInternalState, updateInternalState, inferStateUpdate } from '../memory/internalState.js';
 import { maybeRunDecay } from '../memory/memoryDecay.js';
 import { couldBeFactualQuestion, looksLikeImageRequest, shouldExtractSceneContext, shouldPersistExchange, shouldRunPersonalityEvolution, shouldRunRelationshipUpdate, shouldRunSelfAwareness, shouldRunSemanticRecall } from '../memory/memoryPolicy.js';
-import { loadPersonalityEvolution, evolvePersonality } from '../memory/personalityEvolution.js';
+import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
 import { loadCoreOrigin, loadSummaries, recallEpisodicMemory, recallSharedExperiences, loadUserProfile } from '../memory/recall.js';
 import { loadRelationshipState, updateRelationshipState, inferRelationshipDelta } from '../memory/relationshipTimeline.js';
 import { getSceneContext, patchSceneContext } from '../memory/sceneContext.js';
 import { getSceneFacts } from '../memory/sceneFacts.js';
-import { runSelfAwareness, loadSelfModel } from '../memory/selfAwareness.js';
+import { loadSelfModel } from '../memory/selfAwareness.js';
 import { beginOrTouchTemporalSession, touchLastPhotoSent } from '../memory/timeContext.js';
 import { loadVisualState, persistVisualSignals, selectPotentialVisualPreferences } from '../memory/visualState.js';
 
@@ -61,6 +62,12 @@ function imageVisualPreferences(intent) {
     if (value) values.push(value);
   }
   return [...new Set(values)].slice(0, 8);
+}
+
+function shouldRunCognitiveReflection(userText, irisReply) {
+  return shouldPersistExchange(userText, irisReply)
+    || shouldRunSelfAwareness(userText, irisReply)
+    || shouldRunPersonalityEvolution(userText);
 }
 
 router.post('/chat', async (req, res) => {
@@ -125,7 +132,7 @@ router.post('/chat', async (req, res) => {
       ? looksLikeFactualQuestion(message, openaiClient, utilityModel)
       : Promise.resolve(false);
 
-    const [sceneFacts, coreOrigin, summaries, userProfile, currentVisualState, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, recentChatRaw] = await Promise.allSettled([
+    const [sceneFacts, coreOrigin, summaries, userProfile, currentVisualState, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, cognitiveContinuity, recentChatRaw] = await Promise.allSettled([
       getSceneFacts(req.supabase, userId, sceneKey, 'global'),
       loadCoreOrigin(req.supabase),
       loadSummaries(req.supabase),
@@ -138,6 +145,7 @@ router.post('/chat', async (req, res) => {
       loadInternalState(req.supabase, userId),
       loadSelfModel(req.supabase, userId),
       loadPersonalityEvolution(req.supabase, userId),
+      loadCognitiveContinuity(req.supabase, userId),
       loadRecentChatMessages(req.supabase, userId, 14),
     ]).then((results) => results.map((item) => item.status === 'fulfilled' ? item.value : null));
 
@@ -188,6 +196,7 @@ router.post('/chat', async (req, res) => {
       internalState,
       selfModel,
       personalityEvolution,
+      cognitiveContinuity,
       isFactual: Boolean(isFactual && !useWebSearch),
     });
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
@@ -221,6 +230,24 @@ router.post('/chat', async (req, res) => {
           interaction_mode: interactionModeForHeat(heatLevel, state),
         });
         if (imageResult.imageUrl) touchLastPhotoSent(req.supabase, userId).catch(() => {});
+
+        if (reply && shouldRunCognitiveReflection(message, reply)) {
+          reflectOnExchange({
+            supabase: req.supabaseAdmin,
+            userId,
+            userText: message,
+            irisReply: reply,
+            sceneContext,
+            userProfile: userProfile || [],
+            relationshipState: relationshipState || {},
+            selfModel,
+            personalityEvolution,
+            cognitiveContinuity,
+            llmClient: openaiClient,
+            model: utilityModel,
+          }).catch((error) => console.log('[COGNITION_IMAGE_REFLECTION_ERROR]', error?.message));
+        }
+
         return res.json({
           reply,
           image_url: imageResult.imageUrl || null,
@@ -247,7 +274,8 @@ router.post('/chat', async (req, res) => {
     const reply = response.output_text || '…';
     await saveChatMessage(req.supabase, { userId, role: 'assistant', content: reply, clientMessageId: assistantClientMessageId(clientMessageId) });
 
-    if (shouldPersistExchange(message, reply)) {
+    const persistExchange = shouldPersistExchange(message, reply);
+    if (persistExchange) {
       autoStoreEpisodicMemoryHybrid({ supabase: req.supabase, userId, sceneKey, sceneContext, userText: message, llmReply: reply, llmClient: openaiClient, model: utilityModel })
         .catch((error) => console.log('[AUTO_MEMORY_EXCHANGE_ERROR]', error?.message));
     }
@@ -265,8 +293,22 @@ router.post('/chat', async (req, res) => {
         inferStateUpdate({ userText: message, irisReply: reply, currentState: internalState || {}, llmClient: openaiClient, model: utilityModel }).then((patch) => Object.keys(patch).length && updateInternalState(req.supabase, userId, patch)),
       );
     }
-    if (shouldRunSelfAwareness(message, reply)) governanceJobs.push(runSelfAwareness({ supabase: req.supabase, userId, userText: message, irisReply: reply, llmClient: openaiClient, model: utilityModel }));
-    if (shouldRunPersonalityEvolution(message)) governanceJobs.push(evolvePersonality({ supabase: req.supabase, userId, userText: message, irisReply: reply, currentEvolution: personalityEvolution, userProfile: userProfile || [], llmClient: openaiClient, model: utilityModel }));
+    if (persistExchange || shouldRunSelfAwareness(message, reply) || shouldRunPersonalityEvolution(message)) {
+      governanceJobs.push(reflectOnExchange({
+        supabase: req.supabaseAdmin,
+        userId,
+        userText: message,
+        irisReply: reply,
+        sceneContext,
+        userProfile: userProfile || [],
+        relationshipState: relationshipState || {},
+        selfModel,
+        personalityEvolution,
+        cognitiveContinuity,
+        llmClient: openaiClient,
+        model: utilityModel,
+      }));
+    }
     Promise.allSettled(governanceJobs).then((results) => {
       const failed = results.filter((item) => item.status === 'rejected');
       if (failed.length) console.log('[GOVERNANCE_UPDATE_ERRORS]', failed.length);
