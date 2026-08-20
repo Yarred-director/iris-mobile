@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import './config/env.js';
 
+import { startCognitionLoop } from './cognition/cognitionWorker.js';
 import { createIpRateLimit } from './middleware/rateLimit.js';
 import { sessionMiddleware } from './middleware/session.js';
 import chatRouter from './routes/chat.js';
@@ -61,4 +62,7 @@ app.use((error, _req, res, _next) => {
   return res.status(500).json({ error: 'server_error' });
 });
 
-app.listen(port, () => console.log(`Iris backend running on port ${port}`));
+app.listen(port, () => {
+  console.log(`Iris backend running on port ${port}`);
+  startCognitionLoop();
+});
