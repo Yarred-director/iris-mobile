@@ -128,6 +128,17 @@ function physicalFallbackText(physicalIdentity) {
   return body ? ` User-defined persistent body identity: ${body}.` : '';
 }
 
+function runtimeIdentityDirective(physicalIdentity) {
+  const body = String(physicalIdentity?.body_description || '').trim();
+  return body ? `MANDATORY USER-DEFINED BODY IDENTITY: ${body}. Preserve these body traits exactly; do not reduce, enlarge, replace or reinterpret them.` : '';
+}
+
+function runtimeVisualDirective(visualState) {
+  const state = compactObject(visualState?.state || visualState || {});
+  const values = Object.entries(state).map(([key, value]) => `${key}=${value}`);
+  return values.length ? `MANDATORY CURRENT VISUAL STATE: ${values.join('; ')}. Preserve these exact established visible details and colors unless the current request explicitly changes them.` : '';
+}
+
 function normalizeFraming(value) {
   return Object.prototype.hasOwnProperty.call(FRAMING_DIRECTIVES, value) ? value : 'three_quarter';
 }
@@ -139,9 +150,16 @@ function resolveAspectRatio(value, framing) {
   return framing === 'close_up' ? '1:1' : '3:4';
 }
 
-function withCoreGuardrails(prompt, framing) {
+function withCoreGuardrails(prompt, framing, physicalIdentity = null, visualState = null) {
   const scene = String(prompt || '').trim();
-  return `${ADULT_IDENTITY_RULE} ${BODY_PROPORTION_GUARDRAILS} ${FRAMING_DIRECTIVES[framing]} ${scene}`.trim();
+  return [
+    ADULT_IDENTITY_RULE,
+    BODY_PROPORTION_GUARDRAILS,
+    FRAMING_DIRECTIVES[framing],
+    runtimeIdentityDirective(physicalIdentity),
+    runtimeVisualDirective(visualState),
+    scene,
+  ].filter(Boolean).join(' ').trim();
 }
 
 function asksForBustVisibility(text, history = []) {
@@ -152,12 +170,13 @@ function asksForBustVisibility(text, history = []) {
   return /\b(?:augmented\s+(?:chest|breasts?|bust)|full\s+chest|larger\s+(?:bust|breasts?)|bigger\s+(?:bust|breasts?)|cleavage|neckline|bust|cup\s*(?:size)?)\b|výstrih|vystrih|dekolt|poprsie|prsia/.test(recent);
 }
 
-function applyConversationFramingGuardrails(prompt, text, history, framing) {
-  const safeFraming = asksForBustVisibility(text, history) && framing === 'close_up' ? 'three_quarter' : framing;
-  const scene = withCoreGuardrails(prompt, safeFraming);
+function applyConversationFramingGuardrails(prompt, text, history, framing, physicalIdentity, visualState) {
+  const hasBustFocus = asksForBustVisibility(text, history);
+  const safeFraming = hasBustFocus && framing === 'close_up' ? 'three_quarter' : framing;
+  const scene = withCoreGuardrails(prompt, safeFraming, physicalIdentity, visualState);
   return {
     framing: safeFraming,
-    prompt: asksForBustVisibility(text, history) ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene,
+    prompt: hasBustFocus ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene,
   };
 }
 
@@ -194,7 +213,7 @@ export async function extractImageIntent({
     const requestedFraming = normalizeFraming(parsed.framing);
     const scenePrompt = parsed.prompt?.trim() ||
       `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(physicalIdentity)}${stateFallbackText(visualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming);
+    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, visualState);
 
     return {
       prompt: framed.prompt,
@@ -206,9 +225,9 @@ export async function extractImageIntent({
     };
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
-    const fallbackFraming = asksForBustVisibility(text, history) ? 'three_quarter' : 'three_quarter';
+    const fallbackFraming = 'three_quarter';
     const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(physicalIdentity)}${stateFallbackText(visualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming);
+    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, visualState);
     return {
       prompt: framed.prompt,
       caption: '📸',
