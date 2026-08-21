@@ -63,6 +63,7 @@ export function formatPhysicalIdentityBlock(identity) {
   else lines.push('- body_description: not yet explicitly established by the user; do not invent fixed body traits.');
   lines.push(
     'RULES:',
+    '- Do not invent fixed body traits that the user has not explicitly established.',
     '- Specific enduring body traits come from explicit user-established identity memory, not from generated images or model invention.',
     '- Preserve established body traits across chat and generated photos until the user explicitly changes them.',
     '- Face reference images define facial identity; they do not define or override body proportions.',
