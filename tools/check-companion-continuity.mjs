@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { formatActivityStateBlock, sanitizeActivityState } from '../server/memory/activityContinuity.js';
+import { formatPhysicalIdentityBlock } from '../server/memory/physicalIdentity.js';
+import { formatScheduledActionDirective } from '../server/actions/scheduledActions.js';
+
+const physical = formatPhysicalIdentityBlock({
+  body_description: 'adult woman with a full augmented C-cup bust, slim waist and long legs',
+});
+assert.match(physical, /always an adult/i, 'Physical identity must enforce adult-only Iris.');
+assert.match(physical, /full augmented C-cup bust/i, 'User-defined body identity must be preserved.');
+assert.match(physical, /do not invent fixed body traits/i, 'Unknown body traits must not be invented.');
+
+const activity = sanitizeActivityState({
+  current_activity: 'morning chat',
+  next_steps: ['take a shower', 'make coffee'],
+  commitments: ['shower before coffee'],
+  pending_promises: ['send a shower photo later'],
+});
+const activityBlock = formatActivityStateBlock(activity);
+assert.match(activityBlock, /take a shower -> make coffee/i, 'Ordered plan must be preserved.');
+assert.match(activityBlock, /question or suggestion.*not automatically a new commitment/i, 'Plan questions must not silently become commitments.');
+assert.match(activityBlock, /do not invent a new destination or activity/i, 'Plan continuity must block invented destinations.');
+
+const scheduledDirective = formatScheduledActionDirective({
+  id: 'test',
+  action_type: 'image',
+  delay_minutes: 20,
+});
+assert.match(scheduledDirective, /real image delivery has been queued/i, 'Scheduled image must correspond to a real backend action.');
+assert.match(scheduledDirective, /about 20 minutes/i, 'Scheduled delay should be communicated approximately.');
+assert.match(scheduledDirective, /do not claim it has already been sent/i, 'Scheduled promises must not be presented as completed.');
+
+const intentSource = fs.readFileSync(new URL('../server/behavior/intentJudge.js', import.meta.url), 'utf8');
+assert.match(intentSource, /CURRENT_PHYSICAL_IDENTITY/, 'Intent judge must receive persistent physical identity.');
+assert.match(intentSource, /CURRENT_ACTIVITY_STATE/, 'Intent judge must receive persistent activity state.');
+assert.match(intentSource, /image_delivery_mode/, 'Intent judge must classify immediate vs scheduled photos.');
+assert.match(intentSource, /first shower, then coffee/i, 'Scheduled-photo classifier should cover future shower/photo continuity.');
+
+const chatSource = fs.readFileSync(new URL('../server/routes/chat.js', import.meta.url), 'utf8');
+assert.match(chatSource, /scheduleImageAction/, 'Chat route must create delayed image actions.');
+assert.match(chatSource, /persistPhysicalIdentitySignal/, 'Chat route must persist explicit user-defined body identity.');
+assert.match(chatSource, /persistActivityStateSignal/, 'Chat route must persist resolved plan continuity.');
+assert.match(chatSource, /imageDeliveryMode === 'scheduled'/, 'Chat route must avoid immediate generation for scheduled photos.');
+
+const workerSource = fs.readFileSync(new URL('../server/actions/scheduledActionWorker.js', import.meta.url), 'utf8');
+assert.match(workerSource, /handleImageRequest/, 'Scheduled worker must use the normal image pipeline.');
+assert.match(workerSource, /saveChatMessage/, 'Scheduled image must land in real Iris chat history.');
+assert.match(workerSource, /startScheduledActionLoop/, 'Scheduled worker must run with the backend.');
+
+console.log('Companion continuity checks passed.');
