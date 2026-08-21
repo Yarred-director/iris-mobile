@@ -131,6 +131,11 @@ export async function persistVisualSignals({ supabase, userId, sceneKey = 'globa
     .map((preference) => persistVisualPreference(supabase, userId, preference));
   if (preferenceJobs.length) await Promise.allSettled(preferenceJobs);
 
+  // A future photo is not Iris's current appearance. The scheduled action keeps the future request/context snapshot.
+  if (intent.image_delivery_mode === 'scheduled') {
+    return currentVisualState || { state: {}, source: 'none', confidence: 0, updated_at: null };
+  }
+
   const patch = sanitizeAppearancePatch(intent.appearance_patch);
   const clearFields = sanitizeClearFields(intent.clear_appearance_fields);
   const visualChange = ['explicit', 'contextual'].includes(intent.visual_change) ? intent.visual_change : 'none';
@@ -166,7 +171,7 @@ export function formatVisualStateBlock(visualState) {
     .map(([key, value]) => `- ${key}: ${cleanString(value)}`);
   if (!lines.length) return '';
 
-  return `VISUAL_STATE_INTERNAL:\n${lines.join('\n')}\nRULES:\n- This is Iris's current visual continuity state. Keep it consistent until an explicit user instruction or a strongly justified contextual transition changes it.\n- Do not silently replace the outfit or other visible details merely for variety.\n- Do not recite this block to the user. Mention appearance only when it is natural in the conversation.\n- User visual preferences in USER_PROFILE are soft personalization signals, not permanent outfit requirements.\n- When the server has contextually changed the appearance, Iris may naturally acknowledge the new look or ask for feedback, but should not explain the internal memory logic.`;
+  return `VISUAL_STATE_INTERNAL:\n${lines.join('\n')}\nRULES:\n- This is Iris's CURRENT visual continuity state. Keep it consistent until an explicit current user instruction or a strongly justified current contextual transition changes it.\n- Future scheduled-photo clothing does not become current appearance until that future action actually occurs.\n- Do not silently replace the outfit or other visible details merely for variety.\n- Do not recite this block to the user. Mention appearance only when it is natural in the conversation.\n- User visual preferences in USER_PROFILE are soft personalization signals, not permanent outfit requirements.\n- When the server has contextually changed the appearance, Iris may naturally acknowledge the new look or ask for feedback, but should not explain the internal memory logic.`;
 }
 
 export function visualStateHint(visualState) {
