@@ -2,6 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import './config/env.js';
 
+import { startScheduledActionLoop } from './actions/scheduledActionWorker.js';
 import { startCognitionLoop } from './cognition/cognitionWorker.js';
 import { createIpRateLimit } from './middleware/rateLimit.js';
 import { sessionMiddleware } from './middleware/session.js';
@@ -65,4 +66,5 @@ app.use((error, _req, res, _next) => {
 app.listen(port, () => {
   console.log(`Iris backend running on port ${port}`);
   startCognitionLoop();
+  startScheduledActionLoop();
 });
