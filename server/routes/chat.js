@@ -1,6 +1,7 @@
 // server/routes/chat.js
 
 import { Router } from 'express';
+import { formatScheduledActionDirective, scheduleImageAction } from '../actions/scheduledActions.js';
 import { detectState } from '../behavior/state.js';
 import { buildHeatDirective, engineForHeat, interactionModeForHeat } from '../behavior/heatRouting.js';
 import { intentJudgeLLM } from '../behavior/intentJudge.js';
@@ -13,6 +14,7 @@ import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 import { requireUserId } from '../middleware/auth.js';
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
+import { loadActivityState, persistActivityStateSignal } from '../memory/activityContinuity.js';
 import { applySubjectLock } from '../memory/subjectLock.js';
 import { assistantClientMessageId, loadExistingAssistantResponse, loadRecentChatMessages, saveChatMessage, toModelHistory } from '../memory/chatHistory.js';
 import { persistCompanionSignals } from '../memory/companionPreferences.js';
@@ -23,6 +25,7 @@ import { loadInternalState, updateInternalState, inferStateUpdate } from '../mem
 import { maybeRunDecay } from '../memory/memoryDecay.js';
 import { couldBeFactualQuestion, looksLikeImageRequest, shouldExtractSceneContext, shouldPersistExchange, shouldRunPersonalityEvolution, shouldRunRelationshipUpdate, shouldRunSelfAwareness, shouldRunSemanticRecall } from '../memory/memoryPolicy.js';
 import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
+import { loadPhysicalIdentity, persistPhysicalIdentitySignal } from '../memory/physicalIdentity.js';
 import { loadCoreOrigin, loadSummaries, recallEpisodicMemory, recallSharedExperiences, loadUserProfile } from '../memory/recall.js';
 import { loadRelationshipState, updateRelationshipState, inferRelationshipDelta } from '../memory/relationshipTimeline.js';
 import { getSceneContext, patchSceneContext } from '../memory/sceneContext.js';
@@ -132,12 +135,31 @@ router.post('/chat', async (req, res) => {
       ? looksLikeFactualQuestion(message, openaiClient, utilityModel)
       : Promise.resolve(false);
 
-    const [sceneFacts, coreOrigin, summaries, userProfile, currentVisualState, sharedExperiences, episodicRecall, isFactual, relationshipState, internalState, selfModel, personalityEvolution, cognitiveContinuity, recentChatRaw] = await Promise.allSettled([
+    const [
+      sceneFacts,
+      coreOrigin,
+      summaries,
+      userProfile,
+      currentVisualState,
+      currentPhysicalIdentity,
+      currentActivityState,
+      sharedExperiences,
+      episodicRecall,
+      isFactual,
+      relationshipState,
+      internalState,
+      selfModel,
+      personalityEvolution,
+      cognitiveContinuity,
+      recentChatRaw,
+    ] = await Promise.allSettled([
       getSceneFacts(req.supabase, userId, sceneKey, 'global'),
       loadCoreOrigin(req.supabase),
       loadSummaries(req.supabase),
       loadUserProfile(req.supabase, userId),
       loadVisualState(req.supabase, userId, sceneKey),
+      loadPhysicalIdentity(req.supabase, userId),
+      loadActivityState(req.supabase, userId),
       recallSharedTask,
       recallEpisodicTask,
       factualTask,
@@ -152,8 +174,6 @@ router.post('/chat', async (req, res) => {
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
     await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
 
-    // One multilingual utility classification already runs every turn. It also resolves visual continuity,
-    // so outfit/preference memory does not require a second LLM call per message.
     const state = detectState(message);
     const visualPreferenceFacts = selectPotentialVisualPreferences(userProfile || []);
     const visualMemoryHints = buildVisualMemoryHints(sharedExperiences, episodicRecall);
@@ -162,18 +182,34 @@ router.post('/chat', async (req, res) => {
       sceneContext: sceneContext || {},
       conversationHistory: recentChat,
       currentVisualState,
+      currentPhysicalIdentity,
+      currentActivityState,
       visualPreferenceFacts,
       memoryHints: visualMemoryHints,
       isImageRequest: imageRequested,
     });
 
-    const visualState = await persistVisualSignals({
-      supabase: req.supabase,
-      userId,
-      sceneKey,
-      intent,
-      currentVisualState,
-    });
+    const [visualState, physicalIdentity, activityState] = await Promise.all([
+      persistVisualSignals({
+        supabase: req.supabase,
+        userId,
+        sceneKey,
+        intent,
+        currentVisualState,
+      }),
+      persistPhysicalIdentitySignal({
+        supabase: req.supabase,
+        userId,
+        intent,
+        currentPhysicalIdentity,
+      }),
+      persistActivityStateSignal({
+        supabase: req.supabase,
+        userId,
+        intent,
+        currentActivityState,
+      }),
+    ]);
 
     persistCompanionSignals({ supabase: req.supabase, userId, intent })
       .catch((error) => console.log('[COMPANION_PREF_ERROR]', error?.message));
@@ -186,6 +222,8 @@ router.post('/chat', async (req, res) => {
       sceneFacts,
       sceneContext,
       visualState,
+      physicalIdentity,
+      activityState,
       userProfile,
       coreOrigin,
       summaries,
@@ -202,7 +240,29 @@ router.post('/chat', async (req, res) => {
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
     systemPrompt = `${systemPrompt}\n\n${buildHeatDirective({ heatLevel, intensityStyle: intent?.intensity_style })}`;
 
-    if (imageRequested) {
+    let scheduledAction = null;
+    let imageDeliveryMode = imageRequested ? (intent?.image_delivery_mode || 'immediate') : 'none';
+    if (imageRequested && imageDeliveryMode === 'scheduled') {
+      try {
+        scheduledAction = await scheduleImageAction({
+          supabase: req.supabase,
+          userId,
+          delayMinutes: intent?.image_delay_minutes || 20,
+          requestText: message,
+          conversationHistory: recentChat,
+          visualState,
+          physicalIdentity,
+          activityState,
+          sceneContext,
+        });
+        systemPrompt = `${systemPrompt}\n\n${formatScheduledActionDirective(scheduledAction)}`;
+      } catch (error) {
+        console.log('[SCHEDULE_IMAGE_ERROR]', error?.message);
+        imageDeliveryMode = 'immediate';
+      }
+    }
+
+    if (imageRequested && imageDeliveryMode === 'immediate') {
       const imageResult = await handleImageRequest({
         message,
         userId,
@@ -212,6 +272,8 @@ router.post('/chat', async (req, res) => {
         conversationHistory: recentChat,
         sceneContext,
         visualState,
+        physicalIdentity,
+        activityState,
         visualPreferences: imageVisualPreferences(intent),
       });
       if (imageResult.handled) {
@@ -280,7 +342,7 @@ router.post('/chat', async (req, res) => {
         .catch((error) => console.log('[AUTO_MEMORY_EXCHANGE_ERROR]', error?.message));
     }
     await patchSceneContext(req.supabase, sceneKey, {
-      last_engine: engine,
+      last_engine: scheduledAction ? 'scheduled_action' : engine,
       engine_lock_count: 0,
       last_engine_reply: reply,
       interaction_mode: interactionModeForHeat(heatLevel, state),
@@ -314,7 +376,11 @@ router.post('/chat', async (req, res) => {
       if (failed.length) console.log('[GOVERNANCE_UPDATE_ERRORS]', failed.length);
     });
 
-    return res.json({ reply, usage: { chat: chatUsage } });
+    return res.json({
+      reply,
+      scheduled_action: scheduledAction ? { type: 'image', due_at: scheduledAction.due_at } : null,
+      usage: { chat: chatUsage },
+    });
   } catch (error) {
     console.error('[CHAT_ERROR]', error?.message || error);
     const status = error?.message === 'usage_limit_unavailable' ? 503 : 500;

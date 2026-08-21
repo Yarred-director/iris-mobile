@@ -6,6 +6,8 @@ const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image
 const OPENAI_IMAGE_URL = 'https://api.openai.com/v1/images/generations';
 const DEFAULT_IMAGE_PROVIDER = process.env.IRIS_IMAGE_PROVIDER || 'qwen2';
 const MAX_IDENTITY_REFERENCES = 3;
+const QWEN_SCENE_PROMPT_MAX_CHARS = 2200;
+const QWEN_FINAL_PROMPT_MAX_CHARS = 2500;
 const QWEN_NEGATIVE_PROMPT = 'oversized head, bobblehead proportions, chibi proportions, childlike body proportions, doll-like anatomy, distorted anatomy, short compressed torso, malformed limbs, duplicate person, multiple faces';
 
 function getFalKey() {
@@ -79,9 +81,9 @@ async function persistFalResult(data, { userId, signedUrlSeconds, provider }) {
 
 export async function generateIrisImage({ prompt, imageUrl, imageUrls = [], provider = DEFAULT_IMAGE_PROVIDER, aspectRatio = 'auto', userId = 'shared', signedUrlSeconds = 86400 }) {
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
-  const safePrompt = clampPrompt(prompt, provider === 'qwen2' ? 800 : 2500);
+  const safePrompt = clampPrompt(prompt, provider === 'qwen2' ? QWEN_SCENE_PROMPT_MAX_CHARS : 2500);
   const safeImageUrls = normalizeReferenceUrls(imageUrls, imageUrl);
-  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length} reference_count=${safeImageUrls.length}`);
+  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length} resolved_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
 
   if (provider === 'openai') return generateOpenAI({ prompt: safePrompt, userId, signedUrlSeconds });
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
@@ -102,11 +104,12 @@ export async function generateIrisImage({ prompt, imageUrl, imageUrls = [], prov
 
 async function generateQwenImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const body = {
-    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, 800),
+    // Keep the resolved identity/outfit/framing constraints intact; the old 800-char cap could truncate the actual scene.
+    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, QWEN_FINAL_PROMPT_MAX_CHARS),
     negative_prompt: QWEN_NEGATIVE_PROMPT,
     image_urls: imageUrls,
     enable_prompt_expansion: true,
-    enable_safety_checker: true,
+    enable_safety_checker: false,
     num_images: 1,
     output_format: 'png',
   };

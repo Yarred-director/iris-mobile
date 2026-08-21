@@ -30,4 +30,5 @@ jobs:
       - run: npm run test:visual-state
       - run: npm run test:memory-quality
       - run: npm run test:cognition
+      - run: npm run test:companion-continuity
       - run: npm run build:web

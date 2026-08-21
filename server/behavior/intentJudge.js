@@ -1,7 +1,7 @@
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 
-const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing, intimacy intensity, and visual-continuity signals.
+const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing, intimacy intensity, visual continuity, persistent physical identity, activity continuity and image-delivery timing.
 
 GLOBAL RULES:
 - The user can write in ANY language. Classify by semantic meaning, never by language-specific keywords.
@@ -40,19 +40,30 @@ PREFERENCE LEARNING:
 - Set a preference only if the user explicitly states it OR at least two separate recent user turns clearly support the same preference.
 - Do not derive a durable preference from one isolated intimate message.
 
+PERSISTENT PHYSICAL IDENTITY:
+- Iris is ALWAYS an adult. Never create or store a minor/minor-like identity.
+- Specific enduring BODY traits must come from explicit USER statements about Iris, never from generated images, assistant statements, model assumptions, old hardcoded defaults, face references, or outfit descriptions.
+- Normally physical_identity_change="explicit" only when the latest USER message explicitly establishes or changes an enduring body trait for Iris (height/build/legs/waist/hips/bust/body proportions).
+- BOOTSTRAP EXCEPTION: when CURRENT_PHYSICAL_IDENTITY has no body_description, you MAY initialize it from one or more explicit enduring-body statements in recent USER turns supplied in conversation history, even if the latest message is about something else. Never bootstrap from assistant turns. This allows pre-existing user-established body traits to survive the migration to persistent body memory.
+- physical_identity_patch.body_description must be one concise COMPLETE merged natural-language description of all currently established body traits supported by CURRENT_PHYSICAL_IDENTITY plus explicit USER evidence. Do not drop older established traits when adding a new one.
+- Do not include clothing, pose, temporary scene details, sexual acts, or inferred beauty traits in body_description.
+- Never encode a minor age, childlike build, or minor-like description.
+- If there is no explicit USER evidence establishing/changing enduring body traits, set physical_identity_change="none" and body_description=null.
+
 VISUAL CONTINUITY:
 - CURRENT_VISUAL_STATE is what Iris is presently wearing/visibly presenting. Preserve it by default.
 - Never change Iris's outfit, nails, hair, makeup, footwear or accessories merely for novelty.
 - visual_change="explicit" only when the user directly describes, requests or clearly establishes a visible change for Iris now.
-- visual_change="contextual" only when a meaningful activity/scene transition makes a change strongly natural, or when an image is requested and the current outfit is genuinely unknown. Use ordinary real-world reasoning; there is NO fixed outfit mapping.
+- visual_change="contextual" only when a meaningful CURRENT activity/scene transition makes a change strongly natural, or when an immediate image is requested and the current outfit is genuinely unknown. There is NO fixed outfit mapping.
+- A FUTURE scheduled image must not mutate CURRENT_VISUAL_STATE now. Future requested clothing/scene belongs in the scheduled action's conversation/request context until that future action occurs.
 - An image request by itself is NOT a reason to change an already-known outfit.
-- For a contextual change, choose a plausible visible state from the actual scene/activity/time and current continuity. Stored user preferences may softly influence a choice among plausible options, but never override the situation and never become a permanent uniform.
+- For a contextual current change, choose a plausible visible state from the actual current scene/activity/time and continuity. Stored user preferences may softly influence a choice among plausible options but never override the situation.
 - If the latest user message only praises a look/style, learn the preference but do not automatically alter CURRENT_VISUAL_STATE unless the message also establishes a current change.
 - Resolve references like "those shorts", "the dress we bought", or equivalents using recent conversation and MEMORY_HINTS. Do not invent a remembered item when the hints do not support it.
 - appearance_patch contains only fields that actually change or need initialization. Allowed conceptual fields are outfit, footwear, nails, hair, makeup, accessories, other_details. Values are concise natural-language visual descriptions, not codes.
 - clear_appearance_fields contains fields that should genuinely become unknown/not applicable; otherwise leave it empty.
-- If is_image_request=true and CURRENT_VISUAL_STATE already has an outfit, preserve it unless the user explicitly changes it or a strong contextual transition requires a change.
-- If is_image_request=true and CURRENT_VISUAL_STATE has no outfit, infer one plausible complete outfit from context and mark visual_change="contextual" so the same outfit persists into later photos.
+- If is_image_request=true and CURRENT_VISUAL_STATE already has an outfit, preserve it unless the user explicitly changes it for the CURRENT moment or a strong current transition requires a change.
+- If an IMMEDIATE image is requested and CURRENT_VISUAL_STATE has no outfit, infer one plausible complete outfit from current context and mark visual_change="contextual" so it persists.
 
 VISUAL PREFERENCE MEMORY:
 - visual_preference_updates stores durable USER preferences about how Iris looks: clothing, colors, materials, grooming, nails, hair, makeup, accessories, or visual style.
@@ -61,13 +72,34 @@ VISUAL PREFERENCE MEMORY:
 - fact_key must be a short language-neutral snake_case concept. fact_value should preserve the actual preference meaning in natural language. confidence is 0..1.
 - relevant_visual_preferences contains only stored preference facts from the supplied profile that are actually useful for this turn. Never fabricate entries.
 
+ACTIVITY / PLAN CONTINUITY:
+- CURRENT_ACTIVITY_STATE is Iris's persistent ordered real-life/roleplay plan. Resolve it from the supplied state + recent conversation + latest user message.
+- Return activity_state as the FULL resolved state, not a tiny patch.
+- current_activity = what Iris is actually doing now, only when established. Do not mark a future step as current merely because it was mentioned.
+- next_steps = ordered future steps Iris actually intends/committed to do. Preserve order unless the user or Iris clearly changes it.
+- commitments = firm plans/decisions. A question, suggestion or "maybe/perhaps" is NOT a commitment.
+- pending_promises = things Iris has promised the user but has not yet fulfilled, including a photo promised for later.
+- Do not invent a beach/sea/trip/coffee/workout/etc. just to sound lively.
+- Do not repeat a completed step as if it still has to happen.
+- If the newest user message is merely asking "so are you going to the beach?", preserve the current plan; do not convert the question into a commitment.
+- Set activity_confidence high only when the resolved state is supported by recent conversation/current state.
+
+IMAGE DELIVERY TIMING:
+- image_delivery_mode is one of none | immediate | scheduled.
+- If is_image_request=false => none and image_delay_minutes=null.
+- Use immediate when the user clearly wants the image now, the requested scene is current, or no future timing is implied.
+- Use scheduled when the user asks for a photo tied to a future/not-yet-started activity, explicitly says later/not to forget/after something, or the recent conversation clearly makes the requested photo a future event.
+- Example: Iris said "first shower, then coffee" and user says "don't forget to send me a photo from the shower" => scheduled, normally about 15-25 minutes; default 20 if no better timing is known.
+- Do NOT schedule merely because the user says "send me a photo" without future context.
+- image_delay_minutes must be integer 3..180 for scheduled, otherwise null.
+
 Keep the legacy routing fields too:
 physicality: none | playful | intimate | explicit
 intent: neutral | joke | flirt | romance | erotic | uncertain
 safety_level: safe | borderline | explicit
 
 Return JSON with exactly these keys:
-physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence, visual_change, appearance_patch, clear_appearance_fields, visual_preference_updates, relevant_visual_preferences, appearance_confidence`;
+physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence, visual_change, appearance_patch, clear_appearance_fields, visual_preference_updates, relevant_visual_preferences, appearance_confidence, physical_identity_change, physical_identity_patch, physical_identity_confidence, activity_state, activity_confidence, image_delivery_mode, image_delay_minutes`;
 
 function safeJsonExtract(text) {
   if (!text) return null;
@@ -96,12 +128,25 @@ function validVisualPreferences(value) {
     typeof item.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1);
 }
 
+function validPhysicalPatch(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    (value.body_description === null || typeof value.body_description === 'string');
+}
+
+function validActivityState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const strings = (items) => Array.isArray(items) && items.length <= 6 && items.every((item) => typeof item === 'string');
+  return (value.current_activity === null || typeof value.current_activity === 'string') &&
+    strings(value.next_steps) && strings(value.commitments) && strings(value.pending_promises);
+}
+
 function validateIntentResult(obj) {
   const okEnum = (v, list) => typeof v === 'string' && list.includes(v);
   const okBool = (v) => typeof v === 'boolean';
   const okNum = (v) => typeof v === 'number' && v >= 0 && v <= 1;
   const okHeat = (v) => Number.isInteger(v) && v >= 0 && v <= 3;
   const okPreferredHeat = (v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 3);
+  const okDelay = (v) => v === null || (Number.isInteger(v) && v >= 3 && v <= 180);
   if (!obj || typeof obj !== 'object') return false;
   return okEnum(obj.physicality, ['none', 'playful', 'intimate', 'explicit']) &&
     okEnum(obj.intent, ['neutral', 'joke', 'flirt', 'romance', 'erotic', 'uncertain']) &&
@@ -116,7 +161,10 @@ function validateIntentResult(obj) {
     Array.isArray(obj.clear_appearance_fields) && obj.clear_appearance_fields.every((item) => typeof item === 'string') &&
     validVisualPreferences(obj.visual_preference_updates) &&
     Array.isArray(obj.relevant_visual_preferences) && obj.relevant_visual_preferences.every((item) => typeof item === 'string') &&
-    okNum(obj.appearance_confidence);
+    okNum(obj.appearance_confidence) &&
+    okEnum(obj.physical_identity_change, ['none', 'explicit']) && validPhysicalPatch(obj.physical_identity_patch) && okNum(obj.physical_identity_confidence) &&
+    validActivityState(obj.activity_state) && okNum(obj.activity_confidence) &&
+    okEnum(obj.image_delivery_mode, ['none', 'immediate', 'scheduled']) && okDelay(obj.image_delay_minutes);
 }
 
 function fallbackIntent() {
@@ -142,6 +190,13 @@ function fallbackIntent() {
     visual_preference_updates: [],
     relevant_visual_preferences: [],
     appearance_confidence: 0.2,
+    physical_identity_change: 'none',
+    physical_identity_patch: { body_description: null },
+    physical_identity_confidence: 0.2,
+    activity_state: { current_activity: null, next_steps: [], commitments: [], pending_promises: [] },
+    activity_confidence: 0.2,
+    image_delivery_mode: 'none',
+    image_delay_minutes: null,
   };
 }
 
@@ -150,7 +205,7 @@ function compactHistory(history = []) {
     .slice(-10)
     .map((item) => ({
       role: item?.role === 'assistant' ? 'assistant' : 'user',
-      content: String(item?.content || '').trim().slice(0, 500),
+      content: String(item?.content || '').trim().slice(0, 650),
     }))
     .filter((item) => item.content);
 }
@@ -183,6 +238,8 @@ export async function intentJudgeLLM({
   sceneContext = {},
   conversationHistory = [],
   currentVisualState = null,
+  currentPhysicalIdentity = null,
+  currentActivityState = null,
   visualPreferenceFacts = [],
   memoryHints = [],
   isImageRequest = false,
@@ -202,6 +259,8 @@ export async function intentJudgeLLM({
     },
     is_image_request: Boolean(isImageRequest),
     CURRENT_VISUAL_STATE: currentVisualState?.state || {},
+    CURRENT_PHYSICAL_IDENTITY: currentPhysicalIdentity || {},
+    CURRENT_ACTIVITY_STATE: currentActivityState || {},
     STORED_PREFERENCE_FACTS: compactProfilePreferences(visualPreferenceFacts),
     MEMORY_HINTS: compactMemoryHints(memoryHints),
   };
@@ -209,7 +268,7 @@ export async function intentJudgeLLM({
   const r = await client.responses.create({
     model,
     reasoning: { effort: 'none' },
-    max_output_tokens: 700,
+    max_output_tokens: 1000,
     input: [
       { role: 'system', content: SYSTEM_PROMPT },
       ...compactHistory(conversationHistory),
@@ -218,5 +277,13 @@ export async function intentJudgeLLM({
   });
 
   const parsed = safeJsonExtract(r.output_text || '');
-  return validateIntentResult(parsed) ? parsed : fallbackIntent();
+  const result = validateIntentResult(parsed) ? parsed : fallbackIntent();
+  if (!isImageRequest) {
+    result.image_delivery_mode = 'none';
+    result.image_delay_minutes = null;
+  } else if (result.image_delivery_mode === 'none') {
+    result.image_delivery_mode = 'immediate';
+  }
+  if (result.image_delivery_mode !== 'scheduled') result.image_delay_minutes = null;
+  return result;
 }

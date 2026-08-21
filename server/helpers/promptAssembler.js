@@ -1,5 +1,5 @@
 // server/helpers/promptAssembler.js
-// Assembles the full system prompt from all memory + governance blocks.
+// Assembles the full system prompt from core behavior + runtime memory/governance blocks.
 
 import { buildSystemPrompt } from '../prompt/systemPrompt.js';
 import {
@@ -18,6 +18,8 @@ import { formatInternalStateBlock } from '../memory/internalState.js';
 import { formatSelfAwarenessBlock } from '../memory/selfAwareness.js';
 import { formatPersonalityEvolutionBlock } from '../memory/personalityEvolution.js';
 import { formatVisualStateBlock } from '../memory/visualState.js';
+import { formatPhysicalIdentityBlock } from '../memory/physicalIdentity.js';
+import { formatActivityStateBlock } from '../memory/activityContinuity.js';
 import { formatCognitiveContinuityBlock } from '../cognition/cognitiveEngine.js';
 import { formatHardFactsBlock } from './factualDetector.js';
 
@@ -25,6 +27,8 @@ export function assemblePrompt({
   sceneFacts,
   sceneContext,
   visualState,
+  physicalIdentity,
+  activityState,
   userProfile,
   coreOrigin,
   summaries,
@@ -40,18 +44,25 @@ export function assemblePrompt({
 }) {
   const parts = [];
 
+  // Core YAML/fallback comes first. Runtime blocks below intentionally have later priority.
+  const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
+  parts.push(buildSystemPrompt(coreOriginData, summaries || []));
+
   parts.push(formatHardFactsBlock(sceneFacts || []));
   parts.push(formatHardSceneContextBlock(sceneContext));
   parts.push(formatSceneContextBlock(sceneContext));
 
+  const physicalIdentityBlock = formatPhysicalIdentityBlock(physicalIdentity);
+  if (physicalIdentityBlock) parts.push(physicalIdentityBlock);
+
   const visualStateBlock = formatVisualStateBlock(visualState);
   if (visualStateBlock) parts.push(visualStateBlock);
 
+  const activityStateBlock = formatActivityStateBlock(activityState);
+  if (activityStateBlock) parts.push(activityStateBlock);
+
   const userProfileBlock = formatUserProfileBlock(userProfile || []);
   if (userProfileBlock) parts.push(userProfileBlock);
-
-  const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
-  parts.push(buildSystemPrompt(coreOriginData, summaries || []));
 
   const bridge = formatBridgeBlock(sceneContext);
   if (bridge) parts.push(bridge);
