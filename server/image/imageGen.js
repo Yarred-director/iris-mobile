@@ -109,7 +109,7 @@ async function generateQwenImage2({ prompt, imageUrls, aspectRatio, userId, sign
     negative_prompt: QWEN_NEGATIVE_PROMPT,
     image_urls: imageUrls,
     enable_prompt_expansion: true,
-    enable_safety_checker: true,
+    enable_safety_checker: false,
     num_images: 1,
     output_format: 'png',
   };
