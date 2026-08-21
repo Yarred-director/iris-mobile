@@ -1,8 +1,8 @@
-name: Iris cognition wake
+name: Iris cognition and scheduled-action wake
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
