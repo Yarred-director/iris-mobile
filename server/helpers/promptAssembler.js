@@ -1,5 +1,5 @@
 // server/helpers/promptAssembler.js
-// Assembles the full system prompt from all memory + governance blocks.
+// Assembles the full system prompt from core behavior + runtime memory/governance blocks.
 
 import { buildSystemPrompt } from '../prompt/systemPrompt.js';
 import {
@@ -44,6 +44,10 @@ export function assemblePrompt({
 }) {
   const parts = [];
 
+  // Core YAML/fallback comes first. Runtime blocks below intentionally have later priority.
+  const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
+  parts.push(buildSystemPrompt(coreOriginData, summaries || []));
+
   parts.push(formatHardFactsBlock(sceneFacts || []));
   parts.push(formatHardSceneContextBlock(sceneContext));
   parts.push(formatSceneContextBlock(sceneContext));
@@ -59,9 +63,6 @@ export function assemblePrompt({
 
   const userProfileBlock = formatUserProfileBlock(userProfile || []);
   if (userProfileBlock) parts.push(userProfileBlock);
-
-  const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
-  parts.push(buildSystemPrompt(coreOriginData, summaries || []));
 
   const bridge = formatBridgeBlock(sceneContext);
   if (bridge) parts.push(bridge);
