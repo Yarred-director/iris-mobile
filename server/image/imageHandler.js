@@ -84,6 +84,8 @@ export async function handleImageRequest({
   conversationHistory = [],
   sceneContext = null,
   visualState = null,
+  physicalIdentity = null,
+  activityState = null,
   visualPreferences = [],
 }) {
   const intent = await extractImageIntent({
@@ -91,6 +93,8 @@ export async function handleImageRequest({
     conversationHistory,
     sceneContext,
     visualState,
+    physicalIdentity,
+    activityState,
     visualPreferences,
     llmClient,
     model,
@@ -112,6 +116,8 @@ export async function handleImageRequest({
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
     visualStateFields: Object.keys(visualState?.state || {}).length,
+    hasPhysicalIdentity: Boolean(physicalIdentity?.body_description),
+    framing: intent.framing || null,
     referenceCount: references.length,
     referenceSlots: references.map((item) => item.slot),
     provider,
@@ -132,6 +138,8 @@ export async function handleImageRequest({
       imagePath: result.imagePath || null,
       irisMessage: intent.caption || '📸',
       usage,
+      provider: result.provider || provider,
+      framing: intent.framing || null,
     };
   } catch (error) {
     console.log('[IMAGE_HANDLER] generation failed:', error?.message);
