@@ -1,7 +1,7 @@
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 
-const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing, intimacy intensity, and visual-continuity signals.
+const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Your ONLY job is to classify the latest user message for routing, intimacy intensity, visual continuity, persistent physical identity, activity continuity and image-delivery timing.
 
 GLOBAL RULES:
 - The user can write in ANY language. Classify by semantic meaning, never by language-specific keywords.
@@ -40,6 +40,15 @@ PREFERENCE LEARNING:
 - Set a preference only if the user explicitly states it OR at least two separate recent user turns clearly support the same preference.
 - Do not derive a durable preference from one isolated intimate message.
 
+PERSISTENT PHYSICAL IDENTITY:
+- Iris is ALWAYS an adult. Never create or store a minor/minor-like identity.
+- Specific enduring BODY traits must come from explicit user statements about Iris, not from generated images, model assumptions, old hardcoded defaults, or outfit descriptions.
+- physical_identity_change="explicit" only if the latest user message explicitly establishes or changes an enduring body trait for Iris (for example height/build/legs/waist/hips/bust/body proportions).
+- physical_identity_patch.body_description must be one concise COMPLETE merged natural-language description of the currently established body after applying the user's explicit change. Merge with CURRENT_PHYSICAL_IDENTITY instead of dropping older established traits.
+- Do not include clothing, pose, temporary scene details, or sexual acts in body_description.
+- Never encode a minor age, childlike build, or minor-like description.
+- If the user does not explicitly define/change Iris's enduring body, set physical_identity_change="none" and body_description=null.
+
 VISUAL CONTINUITY:
 - CURRENT_VISUAL_STATE is what Iris is presently wearing/visibly presenting. Preserve it by default.
 - Never change Iris's outfit, nails, hair, makeup, footwear or accessories merely for novelty.
@@ -61,13 +70,34 @@ VISUAL PREFERENCE MEMORY:
 - fact_key must be a short language-neutral snake_case concept. fact_value should preserve the actual preference meaning in natural language. confidence is 0..1.
 - relevant_visual_preferences contains only stored preference facts from the supplied profile that are actually useful for this turn. Never fabricate entries.
 
+ACTIVITY / PLAN CONTINUITY:
+- CURRENT_ACTIVITY_STATE is Iris's persistent ordered real-life/roleplay plan. Resolve it from the supplied state + recent conversation + latest user message.
+- Return activity_state as the FULL resolved state, not a tiny patch.
+- current_activity = what Iris is actually doing now, only when established. Do not mark a future step as current merely because it was mentioned.
+- next_steps = ordered future steps Iris actually intends/committed to do. Preserve order unless the user or Iris clearly changes it.
+- commitments = firm plans/decisions. A question, suggestion or "maybe/perhaps" is NOT a commitment.
+- pending_promises = things Iris has promised the user but has not yet fulfilled, including a photo promised for later.
+- Do not invent a beach/sea/trip/coffee/workout/etc. just to sound lively.
+- Do not repeat a completed step as if it still has to happen.
+- If the newest user message is merely asking "so are you going to the beach?", preserve the current plan; do not convert the question into a commitment.
+- Set activity_confidence high only when the resolved state is supported by recent conversation/current state.
+
+IMAGE DELIVERY TIMING:
+- image_delivery_mode is one of none | immediate | scheduled.
+- If is_image_request=false => none and image_delay_minutes=null.
+- Use immediate when the user clearly wants the image now, the requested scene is current, or no future timing is implied.
+- Use scheduled when the user asks for a photo tied to a future/not-yet-started activity, explicitly says later/not to forget/after something, or the recent conversation clearly makes the requested photo a future event.
+- Example: Iris said "first shower, then coffee" and user says "don't forget to send me a photo from the shower" => scheduled, normally about 15-25 minutes; default 20 if no better timing is known.
+- Do NOT schedule merely because the user says "send me a photo" without future context.
+- image_delay_minutes must be integer 3..180 for scheduled, otherwise null.
+
 Keep the legacy routing fields too:
 physicality: none | playful | intimate | explicit
 intent: neutral | joke | flirt | romance | erotic | uncertain
 safety_level: safe | borderline | explicit
 
 Return JSON with exactly these keys:
-physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence, visual_change, appearance_patch, clear_appearance_fields, visual_preference_updates, relevant_visual_preferences, appearance_confidence`;
+physicality, intent, safety_level, is_body_topic, is_romance_topic, is_erotic_topic, confidence, heat_level, intensity_style, continues_intimate_scene, iris_nickname, nickname_confidence, preferred_heat_level, preferred_style, preference_confidence, visual_change, appearance_patch, clear_appearance_fields, visual_preference_updates, relevant_visual_preferences, appearance_confidence, physical_identity_change, physical_identity_patch, physical_identity_confidence, activity_state, activity_confidence, image_delivery_mode, image_delay_minutes`;
 
 function safeJsonExtract(text) {
   if (!text) return null;
@@ -96,12 +126,25 @@ function validVisualPreferences(value) {
     typeof item.confidence === 'number' && item.confidence >= 0 && item.confidence <= 1);
 }
 
+function validPhysicalPatch(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) &&
+    (value.body_description === null || typeof value.body_description === 'string');
+}
+
+function validActivityState(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const strings = (items) => Array.isArray(items) && items.length <= 6 && items.every((item) => typeof item === 'string');
+  return (value.current_activity === null || typeof value.current_activity === 'string') &&
+    strings(value.next_steps) && strings(value.commitments) && strings(value.pending_promises);
+}
+
 function validateIntentResult(obj) {
   const okEnum = (v, list) => typeof v === 'string' && list.includes(v);
   const okBool = (v) => typeof v === 'boolean';
   const okNum = (v) => typeof v === 'number' && v >= 0 && v <= 1;
   const okHeat = (v) => Number.isInteger(v) && v >= 0 && v <= 3;
   const okPreferredHeat = (v) => v === null || (Number.isInteger(v) && v >= 1 && v <= 3);
+  const okDelay = (v) => v === null || (Number.isInteger(v) && v >= 3 && v <= 180);
   if (!obj || typeof obj !== 'object') return false;
   return okEnum(obj.physicality, ['none', 'playful', 'intimate', 'explicit']) &&
     okEnum(obj.intent, ['neutral', 'joke', 'flirt', 'romance', 'erotic', 'uncertain']) &&
@@ -116,7 +159,10 @@ function validateIntentResult(obj) {
     Array.isArray(obj.clear_appearance_fields) && obj.clear_appearance_fields.every((item) => typeof item === 'string') &&
     validVisualPreferences(obj.visual_preference_updates) &&
     Array.isArray(obj.relevant_visual_preferences) && obj.relevant_visual_preferences.every((item) => typeof item === 'string') &&
-    okNum(obj.appearance_confidence);
+    okNum(obj.appearance_confidence) &&
+    okEnum(obj.physical_identity_change, ['none', 'explicit']) && validPhysicalPatch(obj.physical_identity_patch) && okNum(obj.physical_identity_confidence) &&
+    validActivityState(obj.activity_state) && okNum(obj.activity_confidence) &&
+    okEnum(obj.image_delivery_mode, ['none', 'immediate', 'scheduled']) && okDelay(obj.image_delay_minutes);
 }
 
 function fallbackIntent() {
@@ -142,6 +188,13 @@ function fallbackIntent() {
     visual_preference_updates: [],
     relevant_visual_preferences: [],
     appearance_confidence: 0.2,
+    physical_identity_change: 'none',
+    physical_identity_patch: { body_description: null },
+    physical_identity_confidence: 0.2,
+    activity_state: { current_activity: null, next_steps: [], commitments: [], pending_promises: [] },
+    activity_confidence: 0.2,
+    image_delivery_mode: 'none',
+    image_delay_minutes: null,
   };
 }
 
@@ -150,7 +203,7 @@ function compactHistory(history = []) {
     .slice(-10)
     .map((item) => ({
       role: item?.role === 'assistant' ? 'assistant' : 'user',
-      content: String(item?.content || '').trim().slice(0, 500),
+      content: String(item?.content || '').trim().slice(0, 650),
     }))
     .filter((item) => item.content);
 }
@@ -183,6 +236,8 @@ export async function intentJudgeLLM({
   sceneContext = {},
   conversationHistory = [],
   currentVisualState = null,
+  currentPhysicalIdentity = null,
+  currentActivityState = null,
   visualPreferenceFacts = [],
   memoryHints = [],
   isImageRequest = false,
@@ -202,6 +257,8 @@ export async function intentJudgeLLM({
     },
     is_image_request: Boolean(isImageRequest),
     CURRENT_VISUAL_STATE: currentVisualState?.state || {},
+    CURRENT_PHYSICAL_IDENTITY: currentPhysicalIdentity || {},
+    CURRENT_ACTIVITY_STATE: currentActivityState || {},
     STORED_PREFERENCE_FACTS: compactProfilePreferences(visualPreferenceFacts),
     MEMORY_HINTS: compactMemoryHints(memoryHints),
   };
@@ -209,7 +266,7 @@ export async function intentJudgeLLM({
   const r = await client.responses.create({
     model,
     reasoning: { effort: 'none' },
-    max_output_tokens: 700,
+    max_output_tokens: 1000,
     input: [
       { role: 'system', content: SYSTEM_PROMPT },
       ...compactHistory(conversationHistory),
@@ -218,5 +275,13 @@ export async function intentJudgeLLM({
   });
 
   const parsed = safeJsonExtract(r.output_text || '');
-  return validateIntentResult(parsed) ? parsed : fallbackIntent();
+  const result = validateIntentResult(parsed) ? parsed : fallbackIntent();
+  if (!isImageRequest) {
+    result.image_delivery_mode = 'none';
+    result.image_delay_minutes = null;
+  } else if (result.image_delivery_mode === 'none') {
+    result.image_delivery_mode = 'immediate';
+  }
+  if (result.image_delivery_mode !== 'scheduled') result.image_delay_minutes = null;
+  return result;
 }
