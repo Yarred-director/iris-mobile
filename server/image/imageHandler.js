@@ -4,6 +4,8 @@ import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 
+const TEMPORARY_IMAGE_PROVIDER = 'nano-banana-2';
+
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
   { slot: 'three-quarter', name: 'face-three-quarter' },
@@ -111,7 +113,9 @@ export async function handleImageRequest({
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
 
-  const provider = process.env.IRIS_IMAGE_PROVIDER || intent.provider || 'qwen2';
+  // Temporary production A/B test: force all Iris photo requests through Nano Banana 2.
+  // Remove this override to restore the normal env/intent-driven provider routing.
+  const provider = TEMPORARY_IMAGE_PROVIDER;
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
@@ -154,7 +158,7 @@ export async function handleImageRequest({
   }
 }
 
-export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = process.env.IRIS_IMAGE_PROVIDER || 'qwen2' }) {
+export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = TEMPORARY_IMAGE_PROVIDER }) {
   const references = await getIrisReferencePhotos(supabase, userId);
   if (!references.length) return null;
   return generateIrisImage({ prompt, imageUrls: references.map((item) => item.url), provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
