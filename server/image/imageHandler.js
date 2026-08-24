@@ -4,7 +4,7 @@ import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 
-const TEMPORARY_IMAGE_PROVIDER = 'nano-banana-2';
+const ACTIVE_IMAGE_PROVIDER = 'openai';
 
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
@@ -113,14 +113,13 @@ export async function handleImageRequest({
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
 
-  // Temporary production A/B test: force all Iris photo requests through Nano Banana 2.
-  // Remove this override to restore the normal env/intent-driven provider routing.
-  const provider = TEMPORARY_IMAGE_PROVIDER;
+  const provider = ACTIVE_IMAGE_PROVIDER;
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
     visualStateFields: Object.keys(visualState?.state || {}).length,
     hasPhysicalIdentity: Boolean(physicalIdentity?.body_description),
+    physicalIdentitySource: physicalIdentity?.source || null,
     framing: intent.framing || null,
     referenceCount: references.length,
     referenceSlots: references.map((item) => item.slot),
@@ -143,6 +142,7 @@ export async function handleImageRequest({
       irisMessage: intent.caption || '📸',
       usage,
       provider: result.provider || provider,
+      model: result.model || null,
       framing: intent.framing || null,
     };
   } catch (error) {
@@ -158,7 +158,7 @@ export async function handleImageRequest({
   }
 }
 
-export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = TEMPORARY_IMAGE_PROVIDER }) {
+export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = ACTIVE_IMAGE_PROVIDER }) {
   const references = await getIrisReferencePhotos(supabase, userId);
   if (!references.length) return null;
   return generateIrisImage({ prompt, imageUrls: references.map((item) => item.url), provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
