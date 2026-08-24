@@ -25,7 +25,7 @@ import { loadInternalState, updateInternalState, inferStateUpdate } from '../mem
 import { maybeRunDecay } from '../memory/memoryDecay.js';
 import { couldBeFactualQuestion, looksLikeImageRequest, shouldExtractSceneContext, shouldPersistExchange, shouldRunPersonalityEvolution, shouldRunRelationshipUpdate, shouldRunSelfAwareness, shouldRunSemanticRecall } from '../memory/memoryPolicy.js';
 import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
-import { loadPhysicalIdentity, persistPhysicalIdentitySignal } from '../memory/physicalIdentity.js';
+import { bootstrapPhysicalIdentityFromUserHistory, loadPhysicalIdentity, persistPhysicalIdentitySignal } from '../memory/physicalIdentity.js';
 import { loadCoreOrigin, loadSummaries, recallEpisodicMemory, recallSharedExperiences, loadUserProfile } from '../memory/recall.js';
 import { loadRelationshipState, updateRelationshipState, inferRelationshipDelta } from '../memory/relationshipTimeline.js';
 import { getSceneContext, patchSceneContext } from '../memory/sceneContext.js';
@@ -174,6 +174,15 @@ router.post('/chat', async (req, res) => {
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
     await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
 
+    const resolvedPhysicalIdentity = await bootstrapPhysicalIdentityFromUserHistory({
+      supabase: req.supabase,
+      userId,
+      currentPhysicalIdentity,
+      latestUserText: message,
+      llmClient: openaiClient,
+      model: utilityModel,
+    });
+
     const state = detectState(message);
     const visualPreferenceFacts = selectPotentialVisualPreferences(userProfile || []);
     const visualMemoryHints = buildVisualMemoryHints(sharedExperiences, episodicRecall);
@@ -182,7 +191,7 @@ router.post('/chat', async (req, res) => {
       sceneContext: sceneContext || {},
       conversationHistory: recentChat,
       currentVisualState,
-      currentPhysicalIdentity,
+      currentPhysicalIdentity: resolvedPhysicalIdentity,
       currentActivityState,
       visualPreferenceFacts,
       memoryHints: visualMemoryHints,
@@ -201,7 +210,7 @@ router.post('/chat', async (req, res) => {
         supabase: req.supabase,
         userId,
         intent,
-        currentPhysicalIdentity,
+        currentPhysicalIdentity: resolvedPhysicalIdentity,
       }),
       persistActivityStateSignal({
         supabase: req.supabase,
