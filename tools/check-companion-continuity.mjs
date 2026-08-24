@@ -37,11 +37,28 @@ assert.match(intentSource, /CURRENT_ACTIVITY_STATE/, 'Intent judge must receive 
 assert.match(intentSource, /image_delivery_mode/, 'Intent judge must classify immediate vs scheduled photos.');
 assert.match(intentSource, /first shower, then coffee/i, 'Scheduled-photo classifier should cover future shower/photo continuity.');
 
+const physicalIdentitySource = fs.readFileSync(new URL('../server/memory/physicalIdentity.js', import.meta.url), 'utf8');
+assert.match(physicalIdentitySource, /bootstrapPhysicalIdentityFromUserHistory/, 'Empty body identity must bootstrap from prior explicit user evidence.');
+assert.match(physicalIdentitySource, /\.eq\('role', 'user'\)/, 'Physical identity bootstrap must read user messages only.');
+assert.match(physicalIdentitySource, /Do NOT include clothes, colors, nails, hair, makeup, pose, scene/i, 'Body identity bootstrap must exclude temporary styling.');
+assert.match(physicalIdentitySource, /bootstrap_user_history/, 'Bootstrapped identity must be auditable by source.');
+
 const chatSource = fs.readFileSync(new URL('../server/routes/chat.js', import.meta.url), 'utf8');
 assert.match(chatSource, /scheduleImageAction/, 'Chat route must create delayed image actions.');
+assert.match(chatSource, /bootstrapPhysicalIdentityFromUserHistory/, 'Chat route must initialize missing user-defined body identity.');
 assert.match(chatSource, /persistPhysicalIdentitySignal/, 'Chat route must persist explicit user-defined body identity.');
 assert.match(chatSource, /persistActivityStateSignal/, 'Chat route must persist resolved plan continuity.');
 assert.match(chatSource, /imageDeliveryMode === 'scheduled'/, 'Chat route must avoid immediate generation for scheduled photos.');
+
+const imageHandlerSource = fs.readFileSync(new URL('../server/image/imageHandler.js', import.meta.url), 'utf8');
+assert.match(imageHandlerSource, /ACTIVE_IMAGE_PROVIDER = 'openai'/, 'Production Iris photos must currently route through OpenAI.');
+assert.match(imageHandlerSource, /physicalIdentitySource/, 'Image logs should expose whether persistent body identity was loaded.');
+
+const imageGenSource = fs.readFileSync(new URL('../server/image/imageGen.js', import.meta.url), 'utf8');
+assert.match(imageGenSource, /gpt-image-2/, 'OpenAI image provider must use GPT Image 2.');
+assert.match(imageGenSource, /\/v1\/images\/edits/, 'Reference-based Iris images must use the OpenAI image edit endpoint.');
+assert.match(imageGenSource, /form\.append\('image\[\]'/, 'All available face-pack references must be attached to GPT Image 2.');
+assert.match(imageGenSource, /IRIS_OPENAI_IMAGE_MODERATION \|\| 'low'/, 'OpenAI image moderation should use the supported low setting by default.');
 
 const workerSource = fs.readFileSync(new URL('../server/actions/scheduledActionWorker.js', import.meta.url), 'utf8');
 assert.match(workerSource, /handleImageRequest/, 'Scheduled worker must use the normal image pipeline.');
