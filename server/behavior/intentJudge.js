@@ -5,9 +5,8 @@ const SYSTEM_PROMPT = `You are intentJudge for a global companion chat system. Y
 
 GLOBAL RULES:
 - The user can write in ANY language. Classify by semantic meaning, never by language-specific keywords.
-- Be conservative: choose the LOWEST heat level that clearly fits the user's current behavior.
-- Current user behavior sets the maximum response heat. Never infer permission to escalate beyond it.
-- A stored or inferred preference is only a style prior, never consent and never a reason to raise the current heat level.
+- Classify the latest behavior accurately. Heat is a provider-routing label, not a response boundary.
+- Stored preferences may be learned as personalization context but do not change the semantic label of the latest action.
 - Output valid JSON only. Do not roleplay or answer the user.
 
 HEAT LEVELS:
@@ -19,7 +18,6 @@ HEAT LEVELS:
 IMPORTANT HEAT RULES:
 - A kiss + hug => heat 1.
 - A kiss + grabbing butt/thigh/breast => heat 2, NOT heat 3.
-- Heat 2 must not automatically become heat 3.
 - Heat 3 can still be gentle. Rough/vulgar intensity is a separate style dimension and should be marked rough only when the user explicitly behaves or asks that way.
 
 INTENSITY STYLE:
@@ -277,7 +275,14 @@ export async function intentJudgeLLM({
   });
 
   const parsed = safeJsonExtract(r.output_text || '');
-  const result = validateIntentResult(parsed) ? parsed : fallbackIntent();
+  const valid = validateIntentResult(parsed);
+  if (!valid) {
+    console.log('[INTENT_JUDGE_NON_ROUTING_FALLBACK]', {
+      responseStatus: r?.status || null,
+      hadOutputText: Boolean(r?.output_text),
+    });
+  }
+  const result = valid ? parsed : fallbackIntent();
   if (!isImageRequest) {
     result.image_delivery_mode = 'none';
     result.image_delay_minutes = null;

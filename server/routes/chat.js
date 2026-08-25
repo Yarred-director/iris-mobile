@@ -2,21 +2,24 @@
 
 import { Router } from 'express';
 import { formatScheduledActionDirective, scheduleImageAction } from '../actions/scheduledActions.js';
+import { assertAdultIntimacyReply } from '../behavior/adultIntimacyReplyJudge.js';
 import { detectState } from '../behavior/state.js';
 import { buildHeatDirective, engineForHeat, interactionModeForHeat } from '../behavior/heatRouting.js';
+import { classifyIntimacyRoute } from '../behavior/intimacyRouter.js';
 import { intentJudgeLLM } from '../behavior/intentJudge.js';
 import { loadCognitiveContinuity, reflectOnExchange } from '../cognition/cognitiveEngine.js';
 import { looksLikeFactualQuestion } from '../helpers/factualDetector.js';
 import { buildLiveAssistanceDirective, looksLikeLiveAssistanceRequest } from '../helpers/liveAssistance.js';
 import { assemblePrompt } from '../helpers/promptAssembler.js';
 import { handleImageRequest } from '../image/imageHandler.js';
+import { createValidatedAssistantReply, safeAssistantText } from '../lib/assistantReplyGuard.js';
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 import { requireUserId } from '../middleware/auth.js';
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { loadActivityState, persistActivityStateSignal } from '../memory/activityContinuity.js';
 import { applySubjectLock } from '../memory/subjectLock.js';
-import { assistantClientMessageId, loadExistingAssistantResponse, loadRecentChatMessages, saveChatMessage, toModelHistory } from '../memory/chatHistory.js';
+import { assistantClientMessageId, deleteUserChatMessageById, loadExistingAssistantResponse, loadRecentChatMessages, saveChatMessage, toModelHistory } from '../memory/chatHistory.js';
 import { persistCompanionSignals } from '../memory/companionPreferences.js';
 import { extractContextFromText } from '../memory/contextJudge.js';
 import { createEmbedding } from '../memory/embeddings.js';
@@ -74,6 +77,8 @@ function shouldRunCognitiveReflection(userText, irisReply) {
 }
 
 router.post('/chat', async (req, res) => {
+  let rollbackUserMessage = null;
+  let assistantPersisted = false;
   try {
     const message = String(req.body?.message || '').trim();
     if (!message) return res.json({ reply: '…' });
@@ -172,7 +177,10 @@ router.post('/chat', async (req, res) => {
     ]).then((results) => results.map((item) => item.status === 'fulfilled' ? item.value : null));
 
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
-    await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
+    const savedUserMessage = await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
+    if (savedUserMessage?.id) {
+      rollbackUserMessage = { supabase: req.supabase, userId, messageId: savedUserMessage.id };
+    }
 
     const resolvedPhysicalIdentity = await bootstrapPhysicalIdentityFromUserHistory({
       supabase: req.supabase,
@@ -186,17 +194,34 @@ router.post('/chat', async (req, res) => {
     const state = detectState(message);
     const visualPreferenceFacts = selectPotentialVisualPreferences(userProfile || []);
     const visualMemoryHints = buildVisualMemoryHints(sharedExperiences, episodicRecall);
-    const intent = await intentJudgeLLM({
-      text: message,
-      sceneContext: sceneContext || {},
-      conversationHistory: recentChat,
-      currentVisualState,
-      currentPhysicalIdentity: resolvedPhysicalIdentity,
-      currentActivityState,
-      visualPreferenceFacts,
-      memoryHints: visualMemoryHints,
-      isImageRequest: imageRequested,
-    });
+    const [intent, intimacyRoute] = await Promise.all([
+      intentJudgeLLM({
+        text: message,
+        sceneContext: sceneContext || {},
+        conversationHistory: recentChat,
+        currentVisualState,
+        currentPhysicalIdentity: resolvedPhysicalIdentity,
+        currentActivityState,
+        visualPreferenceFacts,
+        memoryHints: visualMemoryHints,
+        isImageRequest: imageRequested,
+      }),
+      classifyIntimacyRoute({
+        text: message,
+        sceneContext: sceneContext || {},
+        conversationHistory: recentChat,
+      }),
+    ]);
+
+    intent.heat_level = intimacyRoute.heat_level;
+    intent.intensity_style = intimacyRoute.intensity_style;
+    intent.continues_intimate_scene = intimacyRoute.continues_intimate_scene;
+
+    if (state === 'heated' && intimacyRoute.heat_level === 0) {
+      const routeError = new Error('intimacy_route_inconsistent');
+      routeError.code = 'intimacy_route_inconsistent';
+      throw routeError;
+    }
 
     const [visualState, physicalIdentity, activityState] = await Promise.all([
       persistVisualSignals({
@@ -223,8 +248,9 @@ router.post('/chat', async (req, res) => {
     persistCompanionSignals({ supabase: req.supabase, userId, intent })
       .catch((error) => console.log('[COMPANION_PREF_ERROR]', error?.message));
 
-    const useWebSearch = Boolean(liveAssistanceRequested || isFactual);
     const heatLevel = Number.isInteger(intent?.heat_level) ? intent.heat_level : 0;
+    const requestedWebSearch = Boolean(liveAssistanceRequested || isFactual);
+    const useWebSearch = requestedWebSearch && heatLevel < 2;
     const engine = engineForHeat(heatLevel, { useWebSearch });
 
     let systemPrompt = assemblePrompt({
@@ -244,7 +270,7 @@ router.post('/chat', async (req, res) => {
       selfModel,
       personalityEvolution,
       cognitiveContinuity,
-      isFactual: Boolean(isFactual && !useWebSearch),
+      isFactual: Boolean(isFactual && heatLevel < 2 && !useWebSearch),
     });
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
     systemPrompt = `${systemPrompt}\n\n${buildHeatDirective({ heatLevel, intensityStyle: intent?.intensity_style })}`;
@@ -286,8 +312,8 @@ router.post('/chat', async (req, res) => {
         visualPreferences: imageVisualPreferences(intent),
       });
       if (imageResult.handled) {
-        const reply = imageResult.irisMessage || '';
-        await saveChatMessage(req.supabase, {
+        const reply = safeAssistantText(imageResult.irisMessage, imageResult.imageUrl ? '📸' : 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!');
+        const savedAssistantMessage = await saveChatMessage(req.supabase, {
           userId,
           role: 'assistant',
           content: reply,
@@ -295,6 +321,7 @@ router.post('/chat', async (req, res) => {
           imagePath: imageResult.imagePath || null,
           clientMessageId: assistantClientMessageId(clientMessageId),
         });
+        assistantPersisted = Boolean(savedAssistantMessage);
         await patchSceneContext(req.supabase, sceneKey, {
           last_engine: 'image',
           engine_lock_count: 0,
@@ -341,9 +368,12 @@ router.post('/chat', async (req, res) => {
       responseArgs.reasoning = { effort: 'low' };
     }
 
-    const response = await client.responses.create(responseArgs);
-    const reply = response.output_text || '…';
-    await saveChatMessage(req.supabase, { userId, role: 'assistant', content: reply, clientMessageId: assistantClientMessageId(clientMessageId) });
+    const validateReply = heatLevel >= 2
+      ? (candidate) => assertAdultIntimacyReply({ userText: message, reply: candidate })
+      : null;
+    const reply = await createValidatedAssistantReply({ client, responseArgs, engine, validateReply });
+    const savedAssistantMessage = await saveChatMessage(req.supabase, { userId, role: 'assistant', content: reply, clientMessageId: assistantClientMessageId(clientMessageId) });
+    assistantPersisted = Boolean(savedAssistantMessage);
 
     const persistExchange = shouldPersistExchange(message, reply);
     if (persistExchange) {
@@ -392,6 +422,17 @@ router.post('/chat', async (req, res) => {
     });
   } catch (error) {
     console.error('[CHAT_ERROR]', error?.message || error);
+    if (rollbackUserMessage && !assistantPersisted) {
+      await deleteUserChatMessageById(rollbackUserMessage.supabase, rollbackUserMessage);
+    }
+
+    const errorCode = error?.code || error?.message || '';
+    if (String(errorCode).startsWith('intimacy_route_')) {
+      return res.status(503).json({ error: 'routing_unavailable' });
+    }
+    if (String(errorCode).startsWith('assistant_reply_')) {
+      return res.status(502).json({ error: 'invalid_model_output' });
+    }
     const status = error?.message === 'usage_limit_unavailable' ? 503 : 500;
     return res.status(status).json({ error: status === 503 ? 'usage_limit_unavailable' : 'chat_failed' });
   }

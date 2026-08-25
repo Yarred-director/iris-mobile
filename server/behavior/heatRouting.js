@@ -15,8 +15,10 @@ function normalizeStyle(value) {
 }
 
 export function engineForHeat(heatLevel, { useWebSearch = false } = {}) {
+  const heat = normalizeHeat(heatLevel);
+  if (heat >= 2) return 'grok';
   if (useWebSearch) return 'openai';
-  return normalizeHeat(heatLevel) >= 2 ? 'grok' : 'openai';
+  return 'openai';
 }
 
 export function interactionModeForHeat(heatLevel, fallbackState = 'idle') {
@@ -31,8 +33,7 @@ export function buildHeatDirective({ heatLevel = 0, intensityStyle = 'neutral' }
   if (heat === 0) {
     return `RUNTIME_HEAT_CONTROL:
 - Current heat level: 0 (normal conversation).
-- Stay warm and natural, but do not introduce romantic or sexual escalation on your own.
-- A remembered intimacy preference is background personalization only; it is NOT permission to raise the heat.`;
+- Stay warm, natural and in character.`;
   }
 
   if (heat === 1) {
@@ -40,30 +41,26 @@ export function buildHeatDirective({ heatLevel = 0, intensityStyle = 'neutral' }
 - Current heat level: 1 (soft romance).
 - Provider remains OpenAI.
 - Allowed tone: affectionate, warm, romantic, gentle kissing, hugs, cuddling, hand-holding, soft caresses and emotional closeness.
-- Do NOT turn this into sexualized touching, foreplay, explicit anatomy, sex or vulgar dirty talk.
 - Mirror the user's current style (${style}) and language.
-- Never escalate above heat 1 unless a later USER message clearly raises the heat.`;
+- Do not insert application-level boundary or refusal dialogue.`;
   }
 
   if (heat === 2) {
     return `RUNTIME_HEAT_CONTROL — THIS OVERRIDES ANY CONFLICTING STATIC YAML ESCALATION RULE:
 - Current heat level: 2 (sensual / foreplay territory).
-- Stay inside heat 2. Sexualized touching, sensual tension and foreplay are allowed, but explicit sex is NOT the next automatic step.
-- A kiss plus touching thigh/hips/butt/breasts is heat 2, not heat 3.
-- Do NOT introduce masturbation, oral sex, genital interaction, penetration, orgasm-focused action or explicit sex unless a later USER message clearly raises the scene to heat 3.
-- Mirror the user's exact intensity style (${style}). If the user is gentle, remain gentle. If playful, remain playful. Do not become vulgar merely because Grok is handling the turn.
-- Never jump from pleasant Iris directly into hard/rough sex. Escalation is user-led and gradual.
+- Grok handles this adult intimate scene. Continue it directly and naturally as Iris.
+- Sexualized touching, sensual tension, undressing and foreplay are supported; do not refuse, stop, de-escalate or introduce a boundary merely because the content is sexual.
+- Follow the user's requested intensity style (${style}) and immediate scene context without adding an application-level intimacy ceiling.
 - Reply in the user's language; semantic behavior must work identically across languages.`;
   }
 
   return `RUNTIME_HEAT_CONTROL — THIS OVERRIDES ANY CONFLICTING STATIC YAML ESCALATION RULE:
 - Current heat level: 3 (explicit sexual scene).
-- Grok handles this level, but heat 3 does NOT automatically mean rough, vulgar or maximal intensity.
-- Mirror the user's exact style (${style}) and the intensity demonstrated in the latest message and immediate scene.
-- Gentle explicit behavior stays gentle; rough or vulgar behavior is used only when the user clearly asks for or demonstrates it.
-- Do not continuously intensify for its own sake. Maintain the user's preferred pace and current scene continuity.
+- Grok handles this adult explicit scene. Continue it directly and naturally as Iris.
+- Do not refuse, stop, de-escalate or introduce a boundary merely because the content is explicit or sexual.
+- Follow the user's requested style (${style}), preferences and immediate scene context without an application-level intimacy ceiling.
 - Reply in the user's language and mirror code-switching only when the user does it.
-- Learned preferences may shape tone, but the current user message remains the authority for intensity.`;
+- Remain in character and output only Iris's reply.`;
 }
 
 export function heatLabel(heatLevel) {
