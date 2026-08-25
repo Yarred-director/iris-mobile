@@ -288,6 +288,12 @@ Prompt assembly includes:
 - explicit framing directive;
 - complete scene/outfit/material/color/pose/lighting/style.
 
+Image request scope is decided semantically before prompt composition:
+- `scene_continuation` keeps the recent turns needed for "this/that scene", a specific pose/action/outfit/location, a correction, or an immediately accepted planned image;
+- `standalone` is a generic new personal-photo/selfie request and does not inherit older actions, poses or interactions;
+- one or more image-generation error messages must not bridge an older intimate scene into a later generic standalone request;
+- the classifier uses strict structured output and fails closed to `scene_continuation`, which preserves context but disables the neutral moderation retry.
+
 Framing policy:
 - default personal photo = `three_quarter`, not face close-up;
 - prefer `full_body` when full outfit/activity/location/body silhouette matters;
@@ -313,25 +319,36 @@ The three references are views of the SAME adult Iris identity. They define faci
 ## 14. Current image-generation stack
 
 ### Production routing as of 2026-08-25
-PR #25 temporarily forces all Iris photo generation through:
-- **Nano Banana 2** (`nano-banana-2`), including ordinary, autonomous and scheduled photos.
+All immediate, autonomous and scheduled Iris photos use the direct OpenAI Image API path selected by:
+`ACTIVE_IMAGE_PROVIDER = 'openai'` in `server/image/imageHandler.js`.
 
-This is a temporary A/B provider override in `server/image/imageHandler.js`:
-`TEMPORARY_IMAGE_PROVIDER = 'nano-banana-2'`.
+The active image model defaults to **`gpt-image-2`** through `IRIS_OPENAI_IMAGE_MODEL` in `server/image/imageGen.js`:
+- requests with the private face pack use `POST /v1/images/edits` and multipart `image[]` inputs;
+- up to three reference images are supported and were verified to reach the OpenAI request path;
+- references define facial identity only;
+- default quality is `medium` and moderation is `low`, both configurable through server-only environment variables;
+- generated base64 output is copied to Iris private media storage.
+
+Observed production incident on 2026-08-25:
+- Render recorded `provider=openai`, `reference_count=3`, then OpenAI returned `moderation_blocked` with `moderation_stage=output` and category `sexual`;
+- this proves the three references and request payload were accepted; the generated result, not the reference count or Fal transport, was blocked;
+- current requests do not appear in Fal history because Fal is not the active provider.
+
+Output-moderation recovery:
+- only a semantically `standalone`, nonsexual, non-explicit request is eligible;
+- only OpenAI `moderation_blocked` at the `output` stage is eligible;
+- retry exactly once with a changed, explicitly ordinary/nonsexual portrait prompt;
+- never retry input moderation, a sexualized scene request, or an arbitrary provider/user error;
+- never fall back to Fal merely to bypass a moderation decision;
+- preserve OpenAI request ID, status, error code, moderation stage and categories in structured server diagnostics without logging the user prompt.
 
 Existing provider integrations still present in `server/image/imageGen.js`:
 - Qwen Image 2 Edit via fal;
 - Kling O3 fallback/path;
 - Nano Banana 2;
-- legacy OpenAI image generation path.
+- direct OpenAI `gpt-image-2` generation/edit path.
 
 Qwen currently has `enable_safety_checker: false` in application code. Provider/account/platform rules may still apply.
-
-OpenAI status:
-- repo currently has a legacy OpenAI generation path using `gpt-image-1` generations only;
-- **OpenAI `gpt-image-2` reference/edit integration is NOT yet implemented/deployed at the time of this master synchronization**;
-- the next image-engine task is to add current `gpt-image-2` Image API edit/reference support so Iris can pass the private 3-view face pack while preserving the same dynamic prompt/body/visual-state pipeline;
-- do not claim the app is using `gpt-image-2` until code, CI, merge and Render deployment are verified.
 
 All generated provider outputs should be copied into Iris private storage rather than relying on provider URLs as durable storage.
 
@@ -421,7 +438,7 @@ Required before broader beta/monetization:
 - provider/subprocessor register;
 - DPIA-style review before broad scale because Iris combines new AI technology with potentially highly sensitive data.
 
-For fal image generation specifically, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Do not claim these are implemented until verified.
+For any optional Fal image path, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Fal is not the active production image path. Do not claim these controls are implemented until verified.
 
 ## 21. Monetization direction
 
@@ -439,6 +456,8 @@ Important regression checks now include:
 - lint;
 - server syntax;
 - image context continuity;
+- semantic standalone-vs-scene-continuation image scope;
+- OpenAI typed image-error parsing and output-vs-input moderation retry eligibility;
 - live assistance;
 - strict semantic heat routing and fail-closed route parsing;
 - assistant final-output validation/meta-leak rejection with retry;
@@ -471,12 +490,13 @@ Engineering rules:
 - PR #23 / merge `b479131da861372c1871f34d0e61b62fa5709204` — stronger immediate image-scene continuity/framing guardrails.
 - PR #24 / merge `b46f2d2bd52bc41ff489e0cca189fe10cf00de73` — user-defined physical identity, framing intelligence, activity continuity and scheduled photos.
 - PR #25 / merge `71a2dfbb3ca5691f2db84104400a6941d4dd6226` — temporary production switch to Nano Banana 2 for all Iris photos.
+- PR #27 / merge `bd06233a459c74c1145fe4568d3aeeb48111fb25` — strict semantic intimacy routing, guaranteed heat 2/3 Grok routing, application-boundary removal and pre-persistence assistant-output guards.
 
 ## 24. Current immediate engineering order
 
-1. Fix/populate USER_DEFINED_PHYSICAL_IDENTITY bootstrap so explicit user-established body traits actually persist in production; verify DB row after a real user turn.
-2. Replace the temporary Nano Banana provider override with an OpenAI `gpt-image-2` integration that supports reference/edit input from the private 3-view face pack while preserving dynamic prompt assembly. Run CI, merge and verify Render/Vercel.
-3. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
+1. Deploy and production-test standalone image scope isolation plus the one-time output-moderation recovery on an ordinary Iris photo.
+2. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
+3. Verify USER_DEFINED_PHYSICAL_IDENTITY bootstrap with an actual production DB row after a real user turn; do not infer success from prompt logs alone.
 4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
 5. Add questionnaire + post-trial lock.
 6. Add per-user provider cost telemetry + cohort/global budget kill switch.
@@ -488,4 +508,4 @@ Engineering rules:
 
 ## 25. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, a private three-view face pack and dynamic non-hardcoded image prompt/framing logic; production images are temporarily forced through Nano Banana 2, while the next active engineering task is to make the physical-identity bootstrap actually populate production state and then integrate OpenAI `gpt-image-2` reference/edit generation without losing that dynamic memory-driven appearance pipeline.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, and a private three-view face pack; production images use direct OpenAI `gpt-image-2` reference/edit generation with semantic standalone-vs-continuation prompt isolation and a narrowly gated one-time recovery for nonsexual output-stage moderation blocks.

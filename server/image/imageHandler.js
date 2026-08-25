@@ -123,6 +123,8 @@ export async function handleImageRequest({
     framing: intent.framing || null,
     referenceCount: references.length,
     referenceSlots: references.map((item) => item.slot),
+    requestScope: intent.requestScope || null,
+    sexualized: Boolean(intent.sexualized),
     provider,
   });
 
@@ -133,6 +135,7 @@ export async function handleImageRequest({
       provider,
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
+      allowNeutralOutputRetry: intent.requestScope === 'standalone' && !intent.sexualized && !intent.explicit,
     });
     return {
       handled: true,
@@ -144,9 +147,17 @@ export async function handleImageRequest({
       provider: result.provider || provider,
       model: result.model || null,
       framing: intent.framing || null,
+      usedNeutralRetry: Boolean(result.usedNeutralRetry),
     };
   } catch (error) {
-    console.log('[IMAGE_HANDLER] generation failed:', error?.message);
+    console.log('[IMAGE_HANDLER] generation failed:', {
+      message: error?.message,
+      code: error?.code || null,
+      status: error?.status || null,
+      requestId: error?.requestId || null,
+      moderationStage: error?.moderationStage || null,
+      moderationCategories: error?.moderationCategories || [],
+    });
     return {
       handled: true,
       imageUrl: null,
@@ -154,6 +165,7 @@ export async function handleImageRequest({
       imagePath: null,
       irisMessage: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!',
       usage,
+      errorCode: error?.code || 'image_generation_failed',
     };
   }
 }
