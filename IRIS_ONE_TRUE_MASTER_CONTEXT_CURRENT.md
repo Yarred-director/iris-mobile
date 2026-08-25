@@ -319,36 +319,30 @@ The three references are views of the SAME adult Iris identity. They define faci
 ## 14. Current image-generation stack
 
 ### Production routing as of 2026-08-25
-All immediate, autonomous and scheduled Iris photos use the direct OpenAI Image API path selected by:
-`ACTIVE_IMAGE_PROVIDER = 'openai'` in `server/image/imageHandler.js`.
-
-The active image model defaults to **`gpt-image-2`** through `IRIS_OPENAI_IMAGE_MODEL` in `server/image/imageGen.js`:
-- requests with the private face pack use `POST /v1/images/edits` and multipart `image[]` inputs;
-- up to three reference images are supported and were verified to reach the OpenAI request path;
-- references define facial identity only;
-- default quality is `medium` and moderation is `low`, both configurable through server-only environment variables;
-- generated base64 output is copied to Iris private media storage.
+All immediate, autonomous and scheduled Iris photos use **Kling O3 image-to-image through Fal**:
+- active endpoint: `fal-ai/kling-image/o3/image-to-image`;
+- canonical routing lives in `server/image/imageProvider.js`;
+- production default is `kling_o3`;
+- only an explicitly supported Fal provider may be selected by `IRIS_IMAGE_PROVIDER`; stale values such as `openai` or `qwen2` resolve back to `kling_o3` and cannot silently restore direct OpenAI traffic;
+- the private three-view identity pack is sent as `image_urls` and referenced deterministically as `@Image1`, `@Image2`, `@Image3`;
+- Kling O3 currently supports more references than Iris uses, so the three-view pack is within the provider schema;
+- generated Fal media is immediately copied into Iris private storage instead of treating the provider URL as durable storage.
 
 Observed production incident on 2026-08-25:
 - Render recorded `provider=openai`, `reference_count=3`, then OpenAI returned `moderation_blocked` with `moderation_stage=output` and category `sexual`;
 - this proves the three references and request payload were accepted; the generated result, not the reference count or Fal transport, was blocked;
-- current requests do not appear in Fal history because Fal is not the active provider.
+- PR #28 isolated generic standalone photo prompts from older intimate scenes and added typed OpenAI diagnostics, but a later ordinary DnD-scene photo still failed on the direct path;
+- product decision: direct OpenAI image traffic is no longer the active production route.
 
-Output-moderation recovery:
-- only a semantically `standalone`, nonsexual, non-explicit request is eligible;
-- only OpenAI `moderation_blocked` at the `output` stage is eligible;
-- retry exactly once with a changed, explicitly ordinary/nonsexual portrait prompt;
-- never retry input moderation, a sexualized scene request, or an arbitrary provider/user error;
-- never fall back to Fal merely to bypass a moderation decision;
-- preserve OpenAI request ID, status, error code, moderation stage and categories in structured server diagnostics without logging the user prompt.
+The semantic `standalone` vs `scene_continuation` isolation from PR #28 remains active before the Fal request and continues to prevent stale scenes from contaminating later generic photos.
 
 Existing provider integrations still present in `server/image/imageGen.js`:
-- Qwen Image 2 Edit via fal;
-- Kling O3 fallback/path;
-- Nano Banana 2;
-- direct OpenAI `gpt-image-2` generation/edit path.
+- active Kling O3 through Fal;
+- optional Nano Banana 2 through Fal.
 
-Qwen currently has `enable_safety_checker: false` in application code. Provider/account/platform rules may still apply.
+Direct OpenAI image request code has been removed from the runtime. Unsupported, legacy or stale provider values are normalized to the active Fal default before generation.
+
+The old `fal-ai/qwen-image-2/edit` integration was removed because Fal marks that endpoint deprecated and unsupported. Do not re-enable it.
 
 All generated provider outputs should be copied into Iris private storage rather than relying on provider URLs as durable storage.
 
@@ -438,7 +432,7 @@ Required before broader beta/monetization:
 - provider/subprocessor register;
 - DPIA-style review before broad scale because Iris combines new AI technology with potentially highly sensitive data.
 
-For any optional Fal image path, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Fal is not the active production image path. Do not claim these controls are implemented until verified.
+For active Fal image generation, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Do not claim these controls are implemented until verified.
 
 ## 21. Monetization direction
 
@@ -457,7 +451,7 @@ Important regression checks now include:
 - server syntax;
 - image context continuity;
 - semantic standalone-vs-scene-continuation image scope;
-- OpenAI typed image-error parsing and output-vs-input moderation retry eligibility;
+- Fal-only active-provider enforcement and Kling O3 default routing;
 - live assistance;
 - strict semantic heat routing and fail-closed route parsing;
 - assistant final-output validation/meta-leak rejection with retry;
@@ -491,10 +485,11 @@ Engineering rules:
 - PR #24 / merge `b46f2d2bd52bc41ff489e0cca189fe10cf00de73` — user-defined physical identity, framing intelligence, activity continuity and scheduled photos.
 - PR #25 / merge `71a2dfbb3ca5691f2db84104400a6941d4dd6226` — temporary production switch to Nano Banana 2 for all Iris photos.
 - PR #27 / merge `bd06233a459c74c1145fe4568d3aeeb48111fb25` — strict semantic intimacy routing, guaranteed heat 2/3 Grok routing, application-boundary removal and pre-persistence assistant-output guards.
+- PR #28 / merge `2a41bf827094d839c066481a5c24dcc36a60017f` — standalone image-scene isolation, structured OpenAI image diagnostics and narrowly gated output-moderation recovery.
 
 ## 24. Current immediate engineering order
 
-1. Deploy and production-test standalone image scope isolation plus the one-time output-moderation recovery on an ordinary Iris photo.
+1. Deploy and production-test Kling O3 through Fal on an ordinary Iris DnD-scene photo; verify the request appears in Fal history.
 2. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
 3. Verify USER_DEFINED_PHYSICAL_IDENTITY bootstrap with an actual production DB row after a real user turn; do not infer success from prompt logs alone.
 4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
@@ -508,4 +503,4 @@ Engineering rules:
 
 ## 25. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, and a private three-view face pack; production images use direct OpenAI `gpt-image-2` reference/edit generation with semantic standalone-vs-continuation prompt isolation and a narrowly gated one-time recovery for nonsexual output-stage moderation blocks.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, and a private three-view face pack; production images use Kling O3 image-to-image through Fal with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport is inactive.
