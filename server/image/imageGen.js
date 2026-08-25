@@ -1,25 +1,14 @@
-import { persistBase64Image, persistRemoteImage } from '../media/privateMedia.js';
+import { persistRemoteImage } from '../media/privateMedia.js';
+import { ACTIVE_IMAGE_PROVIDER, resolveFalImageProvider } from './imageProvider.js';
 
 const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-image';
-const FAL_API_URL_QWEN_IMAGE_2 = 'https://fal.run/fal-ai/qwen-image-2/edit';
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
-const OPENAI_IMAGE_GENERATION_URL = 'https://api.openai.com/v1/images/generations';
-const OPENAI_IMAGE_EDIT_URL = 'https://api.openai.com/v1/images/edits';
-const OPENAI_IMAGE_MODEL = process.env.IRIS_OPENAI_IMAGE_MODEL || 'gpt-image-2';
-const DEFAULT_IMAGE_PROVIDER = process.env.IRIS_IMAGE_PROVIDER || 'openai';
+const DEFAULT_IMAGE_PROVIDER = ACTIVE_IMAGE_PROVIDER;
 const MAX_IDENTITY_REFERENCES = 3;
-const QWEN_SCENE_PROMPT_MAX_CHARS = 2200;
-const QWEN_FINAL_PROMPT_MAX_CHARS = 2500;
-const QWEN_NEGATIVE_PROMPT = 'oversized head, bobblehead proportions, chibi proportions, childlike body proportions, doll-like anatomy, distorted anatomy, short compressed torso, malformed limbs, duplicate person, multiple faces';
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
   if (!key) throw new Error('FAL_KEY missing in environment');
-  return key;
-}
-function getOpenAIKey() {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('OPENAI_API_KEY missing');
   return key;
 }
 function clampPrompt(prompt, max = 2500) {
@@ -30,37 +19,6 @@ function clampPrompt(prompt, max = 2500) {
 function normalizeAspectRatio(value) {
   const allowed = new Set(['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9']);
   return allowed.has(value) ? value : 'auto';
-}
-function qwenImageSize(aspectRatio) {
-  const map = {
-    '1:1': 'square_hd',
-    '16:9': 'landscape_16_9',
-    '9:16': 'portrait_16_9',
-    '4:3': 'landscape_4_3',
-    '3:4': 'portrait_4_3',
-  };
-  return map[aspectRatio] || null;
-}
-function openAIImageSize(aspectRatio) {
-  const map = {
-    '1:1': '1024x1024',
-    '3:4': '1024x1360',
-    '4:3': '1360x1024',
-    '9:16': '1024x1792',
-    '16:9': '1792x1024',
-    '3:2': '1536x1024',
-    '2:3': '1024x1536',
-    '21:9': '1792x768',
-  };
-  return map[aspectRatio] || '1024x1536';
-}
-function openAIImageQuality() {
-  const value = String(process.env.IRIS_OPENAI_IMAGE_QUALITY || 'medium').toLowerCase();
-  return ['low', 'medium', 'high', 'auto'].includes(value) ? value : 'medium';
-}
-function openAIImageModeration() {
-  const value = String(process.env.IRIS_OPENAI_IMAGE_MODERATION || 'low').toLowerCase();
-  return ['auto', 'low'].includes(value) ? value : 'low';
 }
 function imageTimeoutMs() {
   return Math.max(30000, Math.min(Number(process.env.IMAGE_GENERATION_TIMEOUT_MS || 240000), 300000));
@@ -104,58 +62,6 @@ async function persistFalResult(data, { userId, signedUrlSeconds, provider }) {
   return { ...persisted, provider };
 }
 
-function parseOpenAIErrorBody(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed?.error && typeof parsed.error === 'object' ? parsed.error : {};
-  } catch {
-    return {};
-  }
-}
-
-export async function parseOpenAIImageResponse(response, label) {
-  const requestId = response.headers.get('x-request-id') || null;
-  if (!response.ok) {
-    const apiError = parseOpenAIErrorBody((await response.text()).slice(0, 12000));
-    const moderationDetails = apiError?.moderation_details && typeof apiError.moderation_details === 'object'
-      ? apiError.moderation_details
-      : {};
-    const error = new Error(
-      `[${label}] ${response.status}${requestId ? ` request_id=${requestId}` : ''}` +
-      `${apiError?.code ? ` code=${apiError.code}` : ''}` +
-      `${moderationDetails?.moderation_stage ? ` moderation_stage=${moderationDetails.moderation_stage}` : ''}`,
-    );
-    error.name = 'OpenAIImageRequestError';
-    error.status = response.status;
-    error.requestId = requestId;
-    error.code = String(apiError?.code || 'openai_image_request_failed');
-    error.apiType = String(apiError?.type || '');
-    error.moderationStage = String(moderationDetails?.moderation_stage || '');
-    error.moderationCategories = Array.isArray(moderationDetails?.categories)
-      ? moderationDetails.categories.map((value) => String(value)).slice(0, 10)
-      : [];
-    throw error;
-  }
-  const data = await response.json();
-  const base64 = data?.data?.[0]?.b64_json;
-  if (!base64) throw new Error(`[${label}] No image returned${requestId ? ` request_id=${requestId}` : ''}`);
-  return { base64, requestId };
-}
-
-export function isOpenAIOutputModerationBlock(error) {
-  return error?.code === 'moderation_blocked' && error?.moderationStage === 'output';
-}
-
-async function downloadReferenceBlob(url, index) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(Math.min(imageTimeoutMs(), 60000)) });
-  if (!response.ok) throw new Error(`[OPENAI_REFERENCE_${index + 1}] ${response.status}: failed to download signed reference`);
-  const contentType = String(response.headers.get('content-type') || 'image/png').split(';')[0].trim() || 'image/png';
-  const bytes = await response.arrayBuffer();
-  if (!bytes.byteLength) throw new Error(`[OPENAI_REFERENCE_${index + 1}] empty reference image`);
-  const extension = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
-  return { blob: new Blob([bytes], { type: contentType }), filename: `iris-reference-${index + 1}.${extension}` };
-}
-
 export async function generateIrisImage({
   prompt,
   imageUrl,
@@ -164,51 +70,16 @@ export async function generateIrisImage({
   aspectRatio = 'auto',
   userId = 'shared',
   signedUrlSeconds = 86400,
-  allowNeutralOutputRetry = false,
 }) {
+  const resolvedProvider = resolveFalImageProvider(provider);
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
-  const safePrompt = clampPrompt(prompt, provider === 'qwen2' ? QWEN_SCENE_PROMPT_MAX_CHARS : 3500);
+  const safePrompt = clampPrompt(prompt, 3500);
   const safeImageUrls = normalizeReferenceUrls(imageUrls, imageUrl);
-  console.log(`[IMAGE_GEN] provider=${provider} prompt_chars=${String(prompt || '').length} resolved_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
+  console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} prompt_chars=${String(prompt || '').length} resolved_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
 
-  if (provider === 'openai') return generateOpenAIImage2({
-    prompt: safePrompt,
-    imageUrls: safeImageUrls,
-    aspectRatio: safeAspectRatio,
-    userId,
-    signedUrlSeconds,
-    allowNeutralOutputRetry,
-  });
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
-  if (provider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-  if (provider === 'kling' || provider === 'kling_o3') return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-
-  try {
-    return await generateQwenImage2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-  } catch (qwenError) {
-    console.log('[IMAGE_GEN] Qwen Image 2 failed, falling back to Kling O3:', qwenError?.message);
-    try {
-      return await generateKlingO3({ prompt: clampPrompt(prompt), imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
-    } catch (klingError) {
-      throw new Error(`Qwen failed: ${qwenError?.message}; Kling fallback failed: ${klingError?.message}`);
-    }
-  }
-}
-
-async function generateQwenImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
-  const body = {
-    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, QWEN_FINAL_PROMPT_MAX_CHARS),
-    negative_prompt: QWEN_NEGATIVE_PROMPT,
-    image_urls: imageUrls,
-    enable_prompt_expansion: true,
-    enable_safety_checker: false,
-    num_images: 1,
-    output_format: 'png',
-  };
-  const imageSize = qwenImageSize(aspectRatio);
-  if (imageSize) body.image_size = imageSize;
-  const data = await callFal(FAL_API_URL_QWEN_IMAGE_2, body, 'QWEN_IMAGE_2');
-  return persistFalResult(data, { userId, signedUrlSeconds, provider: 'qwen_image_2' });
+  if (resolvedProvider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
 }
 
 async function generateNanoBanana2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
@@ -236,104 +107,4 @@ async function generateKlingO3({ prompt, imageUrls, aspectRatio, userId, signedU
     output_format: 'png',
   }, 'KLING_O3');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'kling_o3' });
-}
-
-function createOpenAIEditForm(common, references) {
-  const form = new FormData();
-  form.append('model', common.model);
-  form.append('prompt', common.prompt);
-  form.append('size', common.size);
-  form.append('quality', common.quality);
-  form.append('moderation', common.moderation);
-  form.append('output_format', common.output_format);
-  for (const reference of references) form.append('image[]', reference.blob, reference.filename);
-  return form;
-}
-
-async function requestOpenAIImage(common, references) {
-  if (references.length) {
-    const response = await fetch(OPENAI_IMAGE_EDIT_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${getOpenAIKey()}` },
-      body: createOpenAIEditForm(common, references),
-      signal: AbortSignal.timeout(imageTimeoutMs()),
-    });
-    return parseOpenAIImageResponse(response, 'OPENAI_GPT_IMAGE_2_EDIT');
-  }
-
-  const response = await fetch(OPENAI_IMAGE_GENERATION_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${getOpenAIKey()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(common),
-    signal: AbortSignal.timeout(imageTimeoutMs()),
-  });
-  return parseOpenAIImageResponse(response, 'OPENAI_GPT_IMAGE_2_GENERATE');
-}
-
-function neutralPortraitRetryPrompt(referenceCount) {
-  return clampPrompt(
-    `${multiViewIdentityPrefix(referenceCount)}` +
-    'Create an ordinary, nonsexual editorial portrait photograph of Iris, a clearly adult woman. ' +
-    'Iris is alone, fully clothed in opaque tasteful casual clothing, in a relaxed neutral standing pose in a simple everyday interior. ' +
-    'No nudity, lingerie, erotic context, sexual activity, intimate touching, suggestive pose, or other people. ' +
-    'Preserve only her exact adult facial identity from the reference images. Natural adult proportions, realistic anatomy, realistic skin and soft believable daylight. ' +
-    'Three-quarter composition from head to upper thighs. High-quality photorealistic personal photo.',
-    4000,
-  );
-}
-
-async function generateOpenAIImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds, allowNeutralOutputRetry }) {
-  const resolvedPrompt = clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, 4000);
-  const common = {
-    model: OPENAI_IMAGE_MODEL,
-    prompt: resolvedPrompt,
-    size: openAIImageSize(aspectRatio),
-    quality: openAIImageQuality(),
-    moderation: openAIImageModeration(),
-    output_format: 'png',
-  };
-
-  const references = await Promise.all(imageUrls.map((url, index) => downloadReferenceBlob(url, index)));
-  let parsed;
-  let usedNeutralRetry = false;
-  try {
-    parsed = await requestOpenAIImage(common, references);
-  } catch (error) {
-    if (!allowNeutralOutputRetry || !isOpenAIOutputModerationBlock(error)) throw error;
-
-    usedNeutralRetry = true;
-    console.log('[OPENAI_GPT_IMAGE_2_NEUTRAL_RETRY]', {
-      requestId: error.requestId || null,
-      code: error.code,
-      moderationStage: error.moderationStage,
-      moderationCategories: error.moderationCategories,
-      referenceCount: references.length,
-    });
-    parsed = await requestOpenAIImage({
-      ...common,
-      prompt: neutralPortraitRetryPrompt(references.length),
-    }, references);
-  }
-
-  const persisted = await persistBase64Image({
-    base64: parsed.base64,
-    userId,
-    contentType: 'image/png',
-    signedUrlSeconds,
-  });
-  console.log('[OPENAI_GPT_IMAGE_2_SUCCESS]', {
-    requestId: parsed.requestId,
-    referenceCount: imageUrls.length,
-    size: common.size,
-    quality: common.quality,
-    moderation: common.moderation,
-    usedNeutralRetry,
-  });
-  return {
-    ...persisted,
-    provider: 'openai_gpt_image_2',
-    model: OPENAI_IMAGE_MODEL,
-    requestId: parsed.requestId,
-    usedNeutralRetry,
-  };
 }

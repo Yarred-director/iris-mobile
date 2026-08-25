@@ -3,8 +3,7 @@ import { createSignedMediaUrl, isUserOwnedMediaPath } from '../media/privateMedi
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
-
-const ACTIVE_IMAGE_PROVIDER = 'openai';
+import { ACTIVE_IMAGE_PROVIDER } from './imageProvider.js';
 
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
@@ -135,7 +134,6 @@ export async function handleImageRequest({
       provider,
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
-      allowNeutralOutputRetry: intent.requestScope === 'standalone' && !intent.sexualized && !intent.explicit,
     });
     return {
       handled: true,
@@ -147,7 +145,6 @@ export async function handleImageRequest({
       provider: result.provider || provider,
       model: result.model || null,
       framing: intent.framing || null,
-      usedNeutralRetry: Boolean(result.usedNeutralRetry),
     };
   } catch (error) {
     console.log('[IMAGE_HANDLER] generation failed:', {
