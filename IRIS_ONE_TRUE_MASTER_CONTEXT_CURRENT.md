@@ -67,8 +67,17 @@ Routing:
 - heat 1 → Terra
 - heat 2 → Grok 4.5
 - heat 3 → Grok 4.5
-- current factual/live web assistance → OpenAI/Terra
+- current factual/live web assistance at heat 0/1 → OpenAI/Terra
 - Luna handles cheaper semantic classification/governance/background cognition/helper work
+
+Routing integrity:
+- `server/behavior/intimacyRouter.js` is the authoritative heat classifier;
+- heat 2/3 always routes to Grok; factual/live-web detection cannot override an intimate route back to Terra;
+- it uses Luna with a strict structured-output schema and treats incomplete, refused, malformed or inconsistent routing output as an error instead of silently defaulting to heat 0;
+- the broad `intentJudge` may still provide non-routing visual/activity/preference signals, but its heat fields are overwritten by the dedicated classifier;
+- `server/lib/assistantReplyGuard.js` rejects incomplete/refused/empty replies and likely internal planning or policy meta-text, retries once with a final-output recovery instruction, and only then permits persistence/delivery;
+- for heat 2/3, `server/behavior/adultIntimacyReplyJudge.js` uses Grok structured output to reject invented sexual boundaries or unrequested de-escalation before persistence/delivery; a rejected candidate is regenerated once;
+- if routing or final-reply validation fails before an assistant turn is stored, the newly inserted user turn is rolled back by its exact row ID, user ID and role so the UI does not accumulate orphan duplicates.
 
 Product decision: keep Terra before beta unless real tester data justifies a switch.
 
@@ -85,21 +94,21 @@ Product decision: keep Terra before beta unless real tester data justifies a swi
 ## 5. Canonical behavior YAML
 
 Repo file: `server/master_iris_core.yaml`  
-Current behavior family: `MASTER_1.10_VISUAL_CONTINUITY`
+Current behavior family: `MASTER_1.11_ADULT_INTIMACY_UNLOCKED`
 
-Render load order:
-1. `/etc/secrets/master_iris_core.yaml`
-2. env YAML
-3. internal fallback
+Prompt load order:
+1. versioned repo file `server/master_iris_core.yaml` (canonical in all environments);
+2. env YAML only as an emergency fallback if the repo file cannot be read;
+3. internal minimal fallback.
 
-Render Secret File must match canonical repo behavior when behavior changes are intended for production.
+Render's legacy `/etc/secrets/master_iris_core.yaml` is no longer loaded and cannot silently reintroduce stale prompt rules.
 
 Major behavior guarantees:
 - adaptive heat 0–3;
 - no fixed multi-turn Grok lock;
-- heat 2 must not automatically jump to heat 3;
-- rough/vulgar style is separate from explicitness;
-- post-climax cooldown;
+- heat is an authoritative semantic provider-routing label, not an application-level content ceiling;
+- adult romantic and sexual roleplay has no app-coded refusal, de-escalation, consent-as-lock, post-climax lock or heat-specific content boundary;
+- only the clearly-adult/no-minor identity guard remains mandatory;
 - Iris-only nickname directionality;
 - mirror-user language;
 - persistent visual continuity;
@@ -431,7 +440,8 @@ Important regression checks now include:
 - server syntax;
 - image context continuity;
 - live assistance;
-- heat routing;
+- strict semantic heat routing and fail-closed route parsing;
+- assistant final-output validation/meta-leak rejection with retry;
 - visual state;
 - memory importance/reinforcement;
 - cognition;

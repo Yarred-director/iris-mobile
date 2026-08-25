@@ -1,4 +1,5 @@
 import { notifyWebPushReply } from '../lib/webPush.js';
+import { safeAssistantText } from '../lib/assistantReplyGuard.js';
 import { createSignedMediaUrl, isUserOwnedMediaPath } from '../media/privateMedia.js';
 
 const DEFAULT_MODEL_HISTORY_LIMIT = 14;
@@ -31,13 +32,14 @@ export async function loadRecentChatMessages(supabase, userId, limit = DEFAULT_M
 }
 
 export function toModelHistory(messages) {
-  return (messages || []).map((message) => {
+  return (messages || []).flatMap((message) => {
     const content = cleanContent(message.content);
+    if (message.role === 'assistant' && !safeAssistantText(content)) return [];
     const imageNote = message.image_path ? '\n[An image was sent in this turn.]' : '';
-    return {
+    return [{
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: `${content}${imageNote}`.trim() || '[empty message]',
-    };
+    }];
   });
 }
 
@@ -65,6 +67,21 @@ export async function saveChatMessage(supabase, { userId, role, content, imageBu
     notifyWebPushReply(userId).catch((pushError) => console.log('[WEB_PUSH_AFTER_REPLY_ERROR]', pushError?.message || pushError));
   }
   return data || null;
+}
+
+export async function deleteUserChatMessageById(supabase, { userId, messageId }) {
+  if (!userId || !messageId) return false;
+  const { error } = await supabase
+    .from('chat_messages')
+    .delete()
+    .eq('user_id', userId)
+    .eq('role', 'user')
+    .eq('id', messageId);
+  if (error) {
+    console.log('[CHAT_HISTORY] rollback error:', error.message);
+    return false;
+  }
+  return true;
 }
 
 async function signHistoryMessage(message, userId) {
