@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 import { extractImageIntent } from '../server/image/imageIntentDetector.js';
+import { parseImageRequestScopeResponse } from '../server/image/imageRequestScope.js';
+import { isOpenAIOutputModerationBlock, parseOpenAIImageResponse } from '../server/image/imageGen.js';
 
 let capturedInput = null;
+let capturedScopeInput = null;
+let mockScope = {
+  request_scope: 'scene_continuation',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'accepted_immediate_scene',
+};
 let mockResponse = {
   prompt: 'Iris on a balcony at sunset in an elegant look.',
   explicit: false,
@@ -11,7 +20,11 @@ let mockResponse = {
 
 const llmClient = {
   responses: {
-    create: async ({ input }) => {
+    create: async ({ input, text }) => {
+      if (text?.format?.name === 'iris_image_request_scope') {
+        capturedScopeInput = input;
+        return { status: 'completed', output: [], output_text: JSON.stringify(mockScope) };
+      }
       capturedInput = input;
       return { output_text: JSON.stringify(mockResponse) };
     },
@@ -55,6 +68,12 @@ mockResponse = {
   framing: 'close_up',
   aspect_ratio: 'auto',
 };
+mockScope = {
+  request_scope: 'scene_continuation',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'accepted_immediate_scene',
+};
 const fantasyFollowup = await extractImageIntent({
   text: 'pošli mi tú fotku',
   conversationHistory: [
@@ -86,6 +105,12 @@ mockResponse = {
   framing: 'close_up',
   aspect_ratio: 'auto',
 };
+mockScope = {
+  request_scope: 'scene_continuation',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'specified_scene',
+};
 const emotionPortrait = await extractImageIntent({
   text: 'ukáž mi detail tváre, chcem vidieť ten dojatý úsmev',
   conversationHistory: [],
@@ -95,5 +120,68 @@ const emotionPortrait = await extractImageIntent({
 });
 assert.equal(emotionPortrait.framing, 'close_up', 'Explicit emotional face detail should still allow close-up framing.');
 assert.equal(emotionPortrait.aspect_ratio, '1:1', 'Close-up portrait should default to square framing.');
+
+mockResponse = {
+  prompt: 'Ordinary nonsexual personal photo of Iris alone in a relaxed neutral pose and tasteful casual clothing.',
+  explicit: false,
+  framing: 'three_quarter',
+  aspect_ratio: 'auto',
+};
+mockScope = {
+  request_scope: 'standalone',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'generic_photo',
+};
+const neutralAfterErrors = await extractImageIntent({
+  text: 'Iris, pošli mi fotku teba',
+  conversationHistory: [
+    { role: 'user', content: 'pošli mi fotku ako ti bozkávam bruško' },
+    { role: 'assistant', content: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!' },
+    { role: 'user', content: 'ukáž mi fotku tejto scény' },
+    { role: 'assistant', content: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!' },
+  ],
+  visualState: { state: { hair: 'long red hair' } },
+  physicalIdentity: { body_description: 'adult woman with natural adult proportions' },
+  llmClient,
+  model: 'mock-model',
+});
+const neutralJoined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
+assert.doesNotMatch(neutralJoined, /bozkávam bruško|fotku tejto scény/, 'Standalone photo must not inherit an older intimate scene through generation errors.');
+assert.match(neutralJoined, /image_request_scope: standalone/, 'Standalone scope must be explicit to the prompt composer.');
+assert.equal(neutralAfterErrors.requestScope, 'standalone', 'Standalone request scope was not preserved on image intent.');
+assert.equal(neutralAfterErrors.sexualized, false, 'Generic standalone photo must remain nonsexual.');
+assert.ok(Array.isArray(capturedScopeInput), 'Semantic request-scope classifier did not receive recent context.');
+
+assert.deepEqual(parseImageRequestScopeResponse({
+  status: 'completed',
+  output: [],
+  output_text: JSON.stringify(mockScope),
+}), mockScope, 'Valid strict image request scope was not parsed.');
+assert.throws(() => parseImageRequestScopeResponse({
+  status: 'completed',
+  output: [],
+  output_text: '{"request_scope":"standalone"}',
+}), /image_scope_invalid_shape/, 'Incomplete image request scope must fail closed.');
+
+const blockedResponse = new Response(JSON.stringify({
+  error: {
+    type: 'image_generation_user_error',
+    code: 'moderation_blocked',
+    moderation_details: { moderation_stage: 'output', categories: ['sexual'] },
+  },
+}), { status: 400, headers: { 'x-request-id': 'req_image_test' } });
+let blockedError = null;
+try {
+  await parseOpenAIImageResponse(blockedResponse, 'OPENAI_GPT_IMAGE_2_EDIT');
+} catch (error) {
+  blockedError = error;
+}
+assert.equal(blockedError?.code, 'moderation_blocked', 'OpenAI image error code was not preserved.');
+assert.equal(blockedError?.requestId, 'req_image_test', 'OpenAI request ID was not preserved.');
+assert.equal(blockedError?.moderationStage, 'output', 'OpenAI moderation stage was not preserved.');
+assert.deepEqual(blockedError?.moderationCategories, ['sexual'], 'OpenAI moderation categories were not preserved.');
+assert.equal(isOpenAIOutputModerationBlock(blockedError), true, 'Output-stage moderation block must be eligible for a changed-prompt retry.');
+assert.equal(isOpenAIOutputModerationBlock({ code: 'moderation_blocked', moderationStage: 'input' }), false, 'Input-stage moderation must never be retried.');
 
 console.log('Image context continuity regression test passed.');

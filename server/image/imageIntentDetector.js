@@ -1,5 +1,7 @@
 // server/image/imageIntentDetector.js
 
+import { classifyImageRequestScope } from './imageRequestScope.js';
+
 const ADULT_IDENTITY_RULE = `Iris is a clearly adult woman. Never depict her as a minor, underage, childlike, teen-like, or with minor-like body proportions.`;
 const BODY_PROPORTION_GUARDRAILS = `Natural adult female anatomy and realistic head-to-body scale. Preserve the proportions defined by USER_DEFINED_PHYSICAL_IDENTITY when present. Never enlarge the head relative to shoulders or torso merely to preserve the face reference. No chibi, bobblehead, childlike or doll-like proportions, distorted anatomy, shortened torso, or malformed limbs.`;
 const BUST_VISIBILITY_GUARDRAIL = `Frame from the head to at least the waist, preferably upper thighs when the scene allows. Keep the entire established bust and enough torso visibly in frame; do not crop at the collarbones or shoulders and do not turn the scene into a tight beauty headshot.`;
@@ -191,12 +193,20 @@ export async function extractImageIntent({
   llmClient,
   model,
 }) {
-  const history = cleanHistory(conversationHistory);
+  let requestScope = { request_scope: 'scene_continuation', sexualized: false, confidence: 0, signal: 'specified_scene' };
+  try {
+    requestScope = await classifyImageRequestScope({ text, conversationHistory, llmClient, model });
+  } catch (error) {
+    console.log('[IMAGE_SCOPE_ERROR]', error?.code || error?.message);
+  }
+
+  const history = cleanHistory(requestScope.request_scope === 'scene_continuation' ? conversationHistory : []);
   try {
     const context = contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences);
     const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
       ...history,
+      { role: 'system', content: `IMAGE_REQUEST_SCOPE: ${requestScope.request_scope}. REQUEST_IS_SEXUALIZED: ${requestScope.sexualized}. For standalone requests, do not import actions, poses or interaction from older conversation.` },
       { role: 'system', content: `Resolved visual/activity context for this image:\n${JSON.stringify(context)}` },
       { role: 'user', content: String(text || '').trim() },
     ];
@@ -219,6 +229,8 @@ export async function extractImageIntent({
       prompt: framed.prompt,
       caption: String(parsed.caption || '📸').trim().slice(0, 280) || '📸',
       explicit: !!parsed.explicit,
+      sexualized: Boolean(requestScope.sexualized || parsed.explicit),
+      requestScope: requestScope.request_scope,
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio(parsed.aspect_ratio, framed.framing),
       provider: 'qwen2',
@@ -232,6 +244,8 @@ export async function extractImageIntent({
       prompt: framed.prompt,
       caption: '📸',
       explicit: false,
+      sexualized: Boolean(requestScope.sexualized),
+      requestScope: requestScope.request_scope,
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio('auto', framed.framing),
       provider: 'qwen2',
