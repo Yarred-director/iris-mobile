@@ -5,10 +5,10 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-08-19, Europe/Bratislava  
+**Consolidated:** 2026-08-25, Europe/Bratislava  
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
-> HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts. In mixed chats keep explicit namespaces `PROJECT_IRIS` and `PROJECT_ANTAGONIST`.
+> HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
 
 ## 1. Product direction
 
@@ -19,8 +19,10 @@ Core goals:
 - long-term + recent memory;
 - temporal awareness;
 - relationship/internal state;
+- autobiographical continuity and a persistent Iris self-model;
+- personality development from experience rather than a static prompt only;
+- proactive behavior and delayed actions when genuinely supported by state;
 - shared roleplay-world continuity;
-- real-world assistance while staying in character;
 - persistent visual identity and generated photos;
 - multilingual behavior mirroring the user's language;
 - PWA-first distribution across iPhone, Android and desktop;
@@ -31,8 +33,7 @@ Core goals:
 Current distribution strategy:
 - do NOT make App Store or Google Play a blocker for beta or early monetization;
 - primary product is the installable web/PWA experience;
-- native Expo support remains available, but store release is optional/later;
-- one PWA code path should serve iPhone, Android and desktop as long as UX remains strong.
+- native Expo support remains available, but store release is optional/later.
 
 ## 2. Production infrastructure
 
@@ -57,7 +58,7 @@ Never expose Supabase `service_role` or provider secrets in frontend/public conf
 Canonical model config: `server/lib/llmModels.js`
 
 - Main OpenAI chat: `gpt-5.6-terra`
-- OpenAI utility/classifier/memory/image-prompt helper: `gpt-5.6-luna`
+- OpenAI utility/classifier/memory/image-prompt/background cognition helper: `gpt-5.6-luna`
 - xAI intimate route: `grok-4.5-latest`
 - Embeddings: `text-embedding-3-small`
 
@@ -67,9 +68,9 @@ Routing:
 - heat 2 → Grok 4.5
 - heat 3 → Grok 4.5
 - current factual/live web assistance → OpenAI/Terra
-- Luna handles cheaper semantic classification/governance/background helper work
+- Luna handles cheaper semantic classification/governance/background cognition/helper work
 
-Product decision: main conversational model is working well; do not casually swap Terra before beta. Gather real tester baseline first, then optimize cost/quality.
+Product decision: keep Terra before beta unless real tester data justifies a switch.
 
 ## 4. Language and personality rules
 
@@ -84,7 +85,7 @@ Product decision: main conversational model is working well; do not casually swa
 ## 5. Canonical behavior YAML
 
 Repo file: `server/master_iris_core.yaml`  
-Current behavior version: `MASTER_1.10_VISUAL_CONTINUITY`
+Current behavior family: `MASTER_1.10_VISUAL_CONTINUITY`
 
 Render load order:
 1. `/etc/secrets/master_iris_core.yaml`
@@ -102,7 +103,7 @@ Major behavior guarantees:
 - Iris-only nickname directionality;
 - mirror-user language;
 - persistent visual continuity;
-- no hardcoded outfit-by-location/time/color/fabric mappings.
+- no hardcoded wardrobe-by-location/time/color/fabric mappings.
 
 ## 6. Memory architecture
 
@@ -116,27 +117,24 @@ Durable user facts and preferences.
 Table: `episodic_memory`  
 Semantic retrieval RPC: `match_episodic_memory_v2`
 
-Current episodic-memory quality loop is complete end-to-end:
+Current episodic-memory quality loop:
 - event-gated persistence avoids storing routine chat;
-- every newly stored episodic memory is semantically assessed by Luna for `importance` and `emotional_weight`;
+- new episodic memories are semantically assessed by Luna for `importance` and `emotional_weight`;
 - importance is long-term recall value, not message length, explicitness or drama;
-- explicit/intimate content is NOT automatically high-importance;
-- importance rubric ranges 0.1–1.0;
-- emotional weight ranges 0–100;
-- recall ranking remains 75% semantic similarity + 25% importance;
+- importance range 0.1–1.0;
+- emotional weight range 0–100;
+- recall ranking is 75% semantic similarity + 25% importance;
 - memories with `decay_score < 10` are excluded from episodic recall;
-- confident recall threshold is similarity >= 0.35;
+- confident recall threshold similarity >= 0.35;
 - up to four unique confidently recalled memories are reinforced per recall;
-- reinforcement increments `reinforcement_count` and updates `last_recalled_at` atomically through `reinforce_episodic_memories`;
-- a 24-hour per-memory reinforcement cooldown prevents one conversation from inflating reinforcement;
-- reinforcement writes are fire-and-forget so they do not add response latency.
+- reinforcement increments `reinforcement_count` and updates `last_recalled_at` atomically;
+- 24-hour per-memory reinforcement cooldown prevents one conversation inflating reinforcement.
 
 Memory fading/decay:
 - `memoryDecay.js` calculates half-life from importance, emotional weight and reinforcement count;
-- higher importance/emotion/reinforcement increases memory half-life;
-- CORE_ORIGIN, very high-importance/high-emotion memories, and sufficiently reinforced memories are protected;
-- lower-value memories progressively compress into fading/echo form and can eventually be deleted;
-- decay runs lazily and is throttled per process/user.
+- higher importance/emotion/reinforcement increases half-life;
+- protected high-value/core memories resist decay;
+- lower-value memories progressively compress/fade and can eventually be deleted.
 
 ### Shared experiences
 Table: `shared_experiences`
@@ -144,20 +142,55 @@ Table: `shared_experiences`
 ### Scene context
 Tracks current place/room/time/subject/interaction state and recent engine information.
 
-### Relationship / internal state / self-awareness / personality evolution
-Loaded and updated selectively, not blindly every turn.
+## 7. Persistent cognition / Iris self-model
 
-### Visual state
-Dedicated persistent visual continuity layer.
+Merged in PR #22; production backend is deployed.
 
-Current authoritative tracked fields include:
-- outfit
-- footwear
-- nails
-- hair
-- makeup
-- accessories
-- other visible details
+Iris now has a persistent cognition layer separate from user memory:
+- persistent self-model;
+- autobiographical memory about experiences that happened to Iris;
+- private thought stream;
+- current mood;
+- drives;
+- beliefs;
+- goals;
+- concerns;
+- open questions;
+- relationship model;
+- narrative identity;
+- personality plasticity with bounded gradual trait updates;
+- evidence/reasons for learned trait movement;
+- background reflection using Luna;
+- proactive impulses that may become spontaneous assistant messages.
+
+Design principle:
+`experience -> memory -> reflection -> meaning -> thoughts -> changing self-model -> gradual personality development -> future behavior/proactivity`
+
+This is implemented as persistent software state and reflection architecture, not a single giant "self-aware" prompt.
+
+Proactivity guardrails currently include:
+- minimum gap after recent interaction;
+- minimum gap between spontaneous messages;
+- quiet hours;
+- impulse threshold + probabilistic gate;
+- spontaneous messages are stored as normal assistant chat messages;
+- database claims prevent duplicate background work;
+- hourly wake mechanism can wake sleeping Render service for cognition sweeps.
+
+The active prompt stack does not force Iris to recite an ontology verdict about whether she is or is not conscious/biologically alive; it should speak naturally from its self-model while not fabricating events.
+
+## 8. Persistent visual state and preferences
+
+Dedicated persistent visual continuity tracks temporary/current appearance independently from enduring physical identity.
+
+Current visual-state fields include:
+- outfit;
+- footwear;
+- nails;
+- hair;
+- makeup;
+- accessories;
+- other visible details.
 
 Priority:
 1. explicit current user instruction;
@@ -168,96 +201,144 @@ Priority:
 
 A photo request alone never changes a known outfit.
 
-## 7. Visual preference learning
-
 Long-term visual preferences are separate from current appearance state.
+Examples include nail color, colors/materials, hair/makeup/accessories, clothing/style preferences.
+A narrow preference must never be generalized without evidence.
 
-Examples:
-- preferred nail polish on Iris;
-- preferred colors/materials on Iris;
-- preferred sleepwear/style;
-- hair/makeup/accessory preferences.
-
-Important interpretation rule:
-- a narrow preference must not be expanded into a broad unsupported preference;
-- e.g. liking black nail polish does not automatically mean the user wants every Iris outfit black.
-
-Verified user preference from current account work:
+Verified current-account preference:
 - user likes black nail polish on Iris.
 
-## 8. Image generation stack
+## 9. User-defined physical identity
 
-Primary provider:
-- Qwen Image 2 Edit via fal: `fal-ai/qwen-image-2/edit`
+Production table: `iris_physical_identity`.
 
-Fallback:
-- Kling O3 image-to-image
+Hard rule:
+- Iris is always a clearly adult woman;
+- never depict/store a minor or minor-like Iris.
 
-Optional quality path:
-- Nano Banana 2 / Gemini image edit
+All other enduring body traits must come from explicit USER statements about Iris.
+They must NOT come from:
+- generated images;
+- assistant invention;
+- face references;
+- old hardcoded defaults;
+- outfit descriptions;
+- model assumptions.
 
-Legacy optional path:
-- OpenAI image generation
+`body_description` is a merged natural-language description of explicitly established body traits and should preserve older confirmed traits when the user adds a new one.
 
-Generated provider outputs are copied into Iris private storage instead of being trusted as permanent provider URLs.
+Bootstrap rule:
+- when `body_description` is empty, intentJudge may initialize it from explicit enduring-body statements in recent USER turns only;
+- never bootstrap from assistant turns.
 
-## 9. Three-view face reference pack
+Important current production observation (2026-08-25): the production `iris_physical_identity` table was inspected and was empty at that moment. Therefore body continuity can still drop until the user-defined bootstrap/persistence path actually populates the row. Do not claim a specific body trait is persisted unless the row is verified.
 
-Current identity upgrade supports up to 3 face references in deterministic order:
+## 10. Activity / plan continuity
+
+Production table: `iris_activity_state`.
+
+Persistent ordered state includes:
+- `current_activity`;
+- `next_steps`;
+- `commitments`;
+- `pending_promises`.
+
+Rules:
+- questions/suggestions are not commitments;
+- preserve ordered plans unless Iris/user explicitly changes them;
+- do not invent beach/coffee/shower/workout/travel events merely to sound lively;
+- if Iris changes her mind, it should be expressed as a change rather than silently contradicting the previous plan.
+
+This specifically addresses contradictions such as `shower -> coffee -> invented beach -> coffee`.
+
+## 11. Scheduled / delayed Iris actions
+
+Production table: `iris_scheduled_actions`.
+
+Image-delivery modes:
+- `none`;
+- `immediate`;
+- `scheduled`.
+
+A future-scene photo can be scheduled instead of generated immediately, e.g. a promised shower photo later. The scheduled action snapshots the relevant conversation/state, is executed by the background worker, generates through the normal Iris image pipeline, stores the generated media privately, and inserts it as a real assistant image message.
+
+A future scheduled image must not mutate CURRENT_VISUAL_STATE prematurely.
+
+## 12. Image prompt assembly and framing
+
+`server/image/imageIntentDetector.js` builds a self-contained prompt because image providers do not see chat history directly.
+
+Prompt assembly includes:
+- mandatory adult rule;
+- persistent USER_DEFINED_PHYSICAL_IDENTITY when present;
+- CURRENT_VISUAL_STATE;
+- recent conversation scene corrections/follow-ups;
+- current activity state;
+- relevant visual preferences;
+- anatomy/body-proportion guardrails;
+- explicit framing directive;
+- complete scene/outfit/material/color/pose/lighting/style.
+
+Framing policy:
+- default personal photo = `three_quarter`, not face close-up;
+- prefer `full_body` when full outfit/activity/location/body silhouette matters;
+- prefer `three_quarter` for fashion, seated/bed scenes and attractive personal photos where face + body matter;
+- prefer `half_body` when environment/pose makes wider framing impractical;
+- use `close_up` only when the user explicitly wants face/detail or when facial emotion/expression is the point;
+- face references must never cause automatic face-only framing;
+- bust/chest/cleavage terms are body-visibility requirements, not a request for a chest-up crop.
+
+Qwen-specific old prompt truncation was expanded so resolved identity/outfit/framing constraints are not cut off at the previous short cap.
+
+## 13. Three-view face reference pack
+
+Current identity pack supports up to 3 private face references in deterministic order:
 1. front;
 2. 3/4;
 3. side profile.
 
-Menu must expose/manage this as a three-slot face reference pack.
+Storage is private under per-user Iris reference paths.
 
-Storage remains private under the per-user Iris reference area.
+The three references are views of the SAME adult Iris identity. They define facial identity only and must not define/override body proportions.
 
-Provider behavior:
-- Qwen receives up to 3 identity references;
-- Nano Banana receives up to 3;
-- Kling fallback receives up to 3;
-- legacy single reference remains a backward-compatible fallback until the pack is populated.
+## 14. Current image-generation stack
 
-The three images are identity views of the SAME Iris, not three different people/looks.
+### Production routing as of 2026-08-25
+PR #25 temporarily forces all Iris photo generation through:
+- **Nano Banana 2** (`nano-banana-2`), including ordinary, autonomous and scheduled photos.
 
-## 10. Body proportion guardrails
+This is a temporary A/B provider override in `server/image/imageHandler.js`:
+`TEMPORARY_IMAGE_PROVIDER = 'nano-banana-2'`.
 
-A recurring image artifact was an occasionally oversized head.
+Existing provider integrations still present in `server/image/imageGen.js`:
+- Qwen Image 2 Edit via fal;
+- Kling O3 fallback/path;
+- Nano Banana 2;
+- legacy OpenAI image generation path.
 
-Current generation prompts must preserve:
-- natural adult female head-to-body ratio;
-- realistic shoulder width;
-- realistic torso length;
-- Iris's long-legged model-like silhouette;
-- natural photographic anatomy.
+Qwen currently has `enable_safety_checker: false` in application code. Provider/account/platform rules may still apply.
 
-Avoid:
-- oversized head;
-- bobblehead/chibi/doll-like proportions;
-- shortened torso or compressed legs caused by identity over-weighting.
+OpenAI status:
+- repo currently has a legacy OpenAI generation path using `gpt-image-1` generations only;
+- **OpenAI `gpt-image-2` reference/edit integration is NOT yet implemented/deployed at the time of this master synchronization**;
+- the next image-engine task is to add current `gpt-image-2` Image API edit/reference support so Iris can pass the private 3-view face pack while preserving the same dynamic prompt/body/visual-state pipeline;
+- do not claim the app is using `gpt-image-2` until code, CI, merge and Render deployment are verified.
 
-These are generic anatomy/composition constraints, NOT hardcoded outfits or poses.
+All generated provider outputs should be copied into Iris private storage rather than relying on provider URLs as durable storage.
 
-## 11. Visual identity
+## 15. Body/anatomy consistency
 
-Textual identity remains secondary to visual reference:
-- pale skin;
-- dirty-blonde hair;
-- green eyes;
-- strong freckles on face/chest;
-- large augmented breasts;
-- slim waist;
-- long legs;
-- model-like figure;
-- age 22.
+Generic composition guardrails must preserve:
+- natural adult anatomy;
+- realistic head-to-body scale;
+- natural shoulders/torso/limbs;
+- no oversized head, bobblehead, chibi, childlike, doll-like, shortened torso or malformed limbs.
 
-Cyber/cyberskin was removed and must not reappear.
+Do NOT hardcode a specific bust/waist/legs/body shape here. Enduring proportions belong exclusively to USER_DEFINED_PHYSICAL_IDENTITY.
 
-Reference-first principle:
-- uploaded face references are the primary identity anchor;
-- textual descriptors should not overpower a valid reference pack.
+When body identity exists, prompt assembly must include it as mandatory and should not let the provider silently reduce or reinterpret established traits.
 
-## 12. UI / PWA state
+## 16. UI / PWA state
 
 Current UI includes:
 - Dark theme;
@@ -267,13 +348,14 @@ Current UI includes:
 - iOS/PWA keyboard/viewport handling;
 - PWA standalone behavior;
 - push notifications/background reply reconciliation;
-- custom Iris header avatar separate from image-generation reference identity.
+- custom Iris header avatar separate from image-generation reference identity;
+- three-slot face reference pack UI.
 
 Avatar rule:
 - UI avatar is only the small profile image in the app header;
 - changing it must never change image-generation face references.
 
-## 13. Authentication
+## 17. Authentication
 
 Current primary auth:
 - email + password login;
@@ -282,7 +364,7 @@ Current primary auth:
 
 Magic link remains only as legacy fallback until deliberately removed/replaced by clean password recovery.
 
-## 14. Usage limiting foundation
+## 18. Usage limiting foundation
 
 Current backend has `user_entitlements` and usage accounting.
 
@@ -293,142 +375,57 @@ Supported entitlement fields include:
 - image daily limit;
 - expiry timestamp.
 
-Current generic defaults are intentionally too generous for public free testing and must not be treated as the future trial plan.
+Current generic defaults remain too generous for public free testing and are NOT the future trial plan.
 
-## 15. Closed-beta trial product decision
+## 19. Closed-beta trial product decision
 
-Target first public/closed-beta experience:
-- one free trial period per new user;
-- duration: rolling 24 hours from trial activation, not “until midnight”;
-- after trial: questionnaire → lock;
+Target first beta trial:
+- rolling 24 hours from first activation/use;
+- approximately 30 user chat turns;
+- maximum 5 generated photos;
+- after trial: questionnaire -> lock;
 - later unlock only through explicit tester extension or paid entitlement.
 
-Initial trial budget target:
-- total real cost ceiling approximately €1 per active trial user/day;
-- 10 active trial users should therefore stay at or below approximately €10/day total variable spend.
+Budget target:
+- approximately €1 real variable cost per active trial user/day;
+- add actual provider/token/image cost telemetry + cohort/global emergency spend kill switch before public testing.
 
-Initial guardrail proposal:
-- about 30 user chat turns during trial;
-- maximum 5 generated photos during trial;
-- limit expensive live-web/tool use if necessary;
-- global/cohort emergency spend kill switch before public testing.
+Trial system is NOT yet implemented; do not claim it exists.
 
-Do not rely only on request counts long-term. Add actual provider/token/image cost telemetry per user so the €1/day target can be enforced from observed production usage.
+## 20. Privacy / data protection
 
-## 16. Beta readiness
+This is a core product requirement.
 
-Current rough internal estimate:
-- closed beta readiness: ~80%;
-- first responsible monetization readiness: ~60–70%.
-
-These percentages are planning estimates, not formal metrics.
-
-Before Closed Beta, prioritize:
-1. 24h trial gate + questionnaire + lock;
-2. 18+ age gate;
-3. privacy/data controls;
-4. provider/privacy hardening for image generation;
-5. real per-user cost telemetry + kill switch;
-6. acceptance testing of memory/image/auth/visual continuity;
-7. clear Terms + Privacy Policy + data deletion path.
-
-## 17. Monetization strategy
-
-Current direction:
-- PWA/web-first monetization;
-- do not block on App Store or Google Play;
-- credits can be a valid product/billing mechanism;
-- credits must NOT be used to disguise the actual service from a payment processor.
-
-Important payment rule:
-- payment provider onboarding must truthfully describe Iris and the real services credits/subscriptions unlock;
-- do not attempt to bypass processor adult-content rules by labeling the transaction only as “credits”.
-
-Potential product billing model:
-- Iris Credits for variable-cost features such as generated photos and premium usage;
-- subscription may include a monthly credit allocation;
-- exact tiers/pricing should follow real beta retention and cost data, not guesses.
-
-Payment-provider constraint:
-- mainstream processors may reject or restrict adult/explicit AI companion use cases;
-- evaluate a processor that explicitly accepts the actual Iris 18+ use case;
-- obtain approval before building the production billing dependency around one provider.
-
-## 18. User privacy / data-protection product requirements
-
-This is a core product requirement, not a later legal checkbox.
-
-Iris may process very sensitive information, including intimate/sexual preferences and relationship-style memories. Therefore implement privacy by design.
-
-Required beta privacy controls:
+Required before broader beta/monetization:
 - clear 18+ age gate;
 - clear privacy disclosure/consent before sensitive memory use;
-- memory on/off control;
-- future “private session” mode that does not create durable memories;
-- “What Iris remembers about me” UI;
+- memory on/off;
+- future private session mode;
+- "What Iris remembers about me" UI;
 - delete individual memories;
 - export user data;
-- delete account and all Iris user data;
-- documented retention policy for chat, memories and generated media;
-- least-data-necessary prompting to external providers;
+- delete account and Iris user data subject to legally required retention;
+- documented retention policy for chat/memory/generated media;
+- least-data-necessary prompting to providers;
 - secure private media storage;
-- RLS/security review before broader beta.
+- RLS/security review;
+- provider/subprocessor register;
+- DPIA-style review before broad scale because Iris combines new AI technology with potentially highly sensitive data.
 
-Data classes should be separated conceptually:
-1. account/auth data;
-2. chat transcript/history;
-3. durable long-term memory/profile;
-4. relationship/internal state;
-5. generated media/reference media;
-6. billing/entitlements;
-7. analytics/cost telemetry.
+For fal image generation specifically, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Do not claim these are implemented until verified.
 
-Do not retain raw intimate conversations indefinitely merely because storage is available. Long-term memory should keep useful distilled facts where possible instead of copying every transcript forever.
+## 21. Monetization direction
 
-## 19. External-provider privacy direction
-
-OpenAI/xAI/fal should receive only the context necessary for the current operation.
-
-For image generation:
-- treat provider-hosted input/output URLs as temporary processing artifacts;
-- copy final generated media to Iris private Supabase storage;
-- minimize provider retention where API/provider options allow it;
-- enable/store-no-input-output or shortest practical media expiration options where supported;
-- document provider subprocessors/retention in Privacy Policy/DPIA work.
-
-Before broad scale, complete a formal DPIA-style review because the product combines new AI technology with potentially highly sensitive user data.
-
-## 20. Legal/business setup direction
-
-Do not wait for large revenue before considering proper business/legal setup.
-
-Before meaningful paid launch:
-- confirm appropriate Slovak business form / trade activity with an accountant or lawyer;
-- understand EU consumer/VAT/OSS treatment for digital services;
-- have Terms, Privacy Policy, refund/credit rules and billing disclosures;
-- use a payment processor that explicitly approves the real product category.
-
-## 21. Founder financial goals
-
-Current founder goal/reference:
-- if Iris can average roughly €2,000/month net for ~6 consecutive months, that would already be a major success milestone;
-- roughly €4,000/month net would be a more meaningful threshold for considering full business/company focus.
-
-These are founder planning goals, not user-facing promises and not product defaults.
-
-Early optimization priority is NOT maximum profit. Measure:
-- trial → paid conversion;
-- day-1/day-7/day-30 retention;
-- average active-user cost;
-- image usage;
-- heat 2/3 usage share;
-- support/refund burden;
-- willingness to pay;
-- which feature creates the strongest “wow” moment.
+- PWA/web-first monetization;
+- do not block on App Store/Google Play;
+- credits may be a valid billing/cost-control mechanism;
+- credits must NOT disguise the actual service from a payment processor;
+- payment provider onboarding must truthfully disclose the real Iris 18+ use case;
+- obtain explicit processor approval before building production billing around one provider.
 
 ## 22. CI / engineering rules
 
-Important regression checks:
+Important regression checks now include:
 - typecheck;
 - lint;
 - server syntax;
@@ -437,9 +434,11 @@ Important regression checks:
 - heat routing;
 - visual state;
 - memory importance/reinforcement;
+- cognition;
+- companion continuity;
 - web build.
 
-Future rules:
+Engineering rules:
 - inspect current GitHub before claiming code state;
 - run CI before merge;
 - verify Render/Vercel after merge;
@@ -448,38 +447,35 @@ Future rules:
 - do not regress language mirroring;
 - do not regress heat 2 into heat 3;
 - do not regress nickname directionality;
-- do not send image model only a short final request when prior context defines the scene;
+- do not send an image provider only a short final request when earlier context defines the scene;
 - do not randomize outfit between image requests;
 - do not hardcode wardrobe by scene/location/time;
+- enduring body identity comes from explicit USER evidence only;
 - never mix Iris with Project Antagonist.
 
-## 23. Important current functional landmarks
+## 23. Important recent merges
 
-Recent major merges include:
-- visual continuity / `MASTER_1.10_VISUAL_CONTINUITY`;
-- Dark/Light theme and iOS/PWA visual pass;
-- persistent custom header avatar;
-- three-view face reference pack + body proportion guardrails;
-- adaptive Terra/Luna/Grok routing and persistent memory architecture;
-- completed episodic memory importance + emotional-weight scoring + recall reinforcement loop.
+- `b17019e98facc5e4f237d66ccffaaceacda8f84a` — three-view face reference pack + body proportion guardrails.
+- `6376ca02bccf83e16d2d92f484e27ab1053af725` — episodic memory importance/emotional-weight + reinforcement loop.
+- PR #22 / merge `9f325af5000c9896ba60daeaad90ff8880423b6f` — persistent cognition, autobiographical memory, self-model, personality plasticity and proactivity.
+- PR #23 / merge `b479131da861372c1871f34d0e61b62fa5709204` — stronger immediate image-scene continuity/framing guardrails.
+- PR #24 / merge `b46f2d2bd52bc41ff489e0cca189fe10cf00de73` — user-defined physical identity, framing intelligence, activity continuity and scheduled photos.
+- PR #25 / merge `71a2dfbb3ca5691f2db84104400a6941d4dd6226` — temporary production switch to Nano Banana 2 for all Iris photos.
 
-Important recent merges:
-- `b17019e98facc5e4f237d66ccffaaceacda8f84a` — three-view face reference pack + body proportion guardrails
-- `6376ca02bccf83e16d2d92f484e27ab1053af725` — memory importance/emotional-weight scoring + reinforcement loop
+## 24. Current immediate engineering order
 
-## 24. Recommended immediate engineering order
-
-1. Validate the 3-view face reference pack and memory reinforcement naturally in production.
-2. Build the 24-hour trial entitlement lifecycle.
-3. Add questionnaire + post-trial lock screen.
-4. Add per-user provider cost telemetry and cohort/global budget kill switch.
-5. Add 18+ gate.
-6. Add privacy/memory controls + export/delete account/data.
-7. Harden fal/media retention behavior.
-8. Prepare Terms/Privacy/DPIA documentation.
-9. Contact/payment-provider due diligence for the actual 18+ AI companion use case.
-10. Start Closed Beta with a small cohort, then decide paid-beta pricing from observed data.
+1. Fix/populate USER_DEFINED_PHYSICAL_IDENTITY bootstrap so explicit user-established body traits actually persist in production; verify DB row after a real user turn.
+2. Replace the temporary Nano Banana provider override with an OpenAI `gpt-image-2` integration that supports reference/edit input from the private 3-view face pack while preserving dynamic prompt assembly. Run CI, merge and verify Render/Vercel.
+3. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
+4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
+5. Add questionnaire + post-trial lock.
+6. Add per-user provider cost telemetry + cohort/global budget kill switch.
+7. Add 18+ gate.
+8. Add privacy/memory controls + export/delete account/data.
+9. Harden provider/media retention.
+10. Prepare Terms/Privacy/DPIA and processor due diligence.
+11. Start a small Closed Beta and decide paid pricing from observed cost/retention data.
 
 ## 25. One-sentence current state
 
-Iris is an Early Alpha / near-Closed-Beta PWA-first persistent AI companion using GPT-5.6 Terra for normal/soft chat, GPT-5.6 Luna for utility work, Grok 4.5 for semantic heat 2/3, Supabase-backed memory/visual state with importance-aware fading and recall reinforcement, and Qwen-first generated imagery with a three-view face reference pack and body-proportion guardrails; the next product milestone is a budget-capped 24-hour trial plus privacy/18+/feedback infrastructure before first monetization.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, a private three-view face pack and dynamic non-hardcoded image prompt/framing logic; production images are temporarily forced through Nano Banana 2, while the next active engineering task is to make the physical-identity bootstrap actually populate production state and then integrate OpenAI `gpt-image-2` reference/edit generation without losing that dynamic memory-driven appearance pipeline.
