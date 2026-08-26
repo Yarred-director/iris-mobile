@@ -39,7 +39,7 @@ app.use(cors({
     }
     return callback(new Error('origin_not_allowed'));
   },
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Authorization', 'Content-Type', 'x-timezone'],
   maxAge: 86400,
 }));

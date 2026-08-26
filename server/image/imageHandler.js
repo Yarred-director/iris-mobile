@@ -3,7 +3,7 @@ import { createSignedMediaUrl, isUserOwnedMediaPath } from '../media/privateMedi
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
-import { ACTIVE_IMAGE_PROVIDER } from './imageProvider.js';
+import { loadUserImageProvider } from './imageProvider.js';
 
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
@@ -112,7 +112,7 @@ export async function handleImageRequest({
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
 
-  const provider = ACTIVE_IMAGE_PROVIDER;
+  const provider = await loadUserImageProvider(supabase, userId);
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
@@ -167,8 +167,9 @@ export async function handleImageRequest({
   }
 }
 
-export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = ACTIVE_IMAGE_PROVIDER }) {
+export async function generateAutonomousIrisImage({ userId, supabase, prompt, provider = null }) {
   const references = await getIrisReferencePhotos(supabase, userId);
   if (!references.length) return null;
-  return generateIrisImage({ prompt, imageUrls: references.map((item) => item.url), provider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
+  const resolvedProvider = provider || await loadUserImageProvider(supabase, userId);
+  return generateIrisImage({ prompt, imageUrls: references.map((item) => item.url), provider: resolvedProvider, aspectRatio: 'auto', userId, signedUrlSeconds: 86400 });
 }

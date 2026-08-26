@@ -22,6 +22,7 @@ const API_CHAT = `${API_BASE}/chat`;
 const API_HISTORY = `${API_BASE}/chat/history`;
 const API_MEDIA_SIGN = `${API_BASE}/media/sign`;
 const API_REF_PHOTO = `${API_BASE}/iris/reference-photo`;
+const API_IMAGE_PROVIDER = `${API_BASE}/iris/image-provider`;
 const IRIS_AVATAR_BUCKET = 'iris-photos';
 const MAX_MESSAGES = 50;
 const REQUEST_TIMEOUT_MS = 300000;
@@ -31,6 +32,13 @@ type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
 type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
 type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null; client_message_id?: string | null };
 type FaceReferenceSlot = 'front' | 'three-quarter' | 'side';
+type ImageProvider = 'openai_gpt_image_2' | 'grok_imagine_2' | 'kling_o3';
+
+const IMAGE_PROVIDER_OPTIONS: { value: ImageProvider; label: string }[] = [
+  { value: 'openai_gpt_image_2', label: 'OpenAI' },
+  { value: 'grok_imagine_2', label: 'Grok' },
+  { value: 'kling_o3', label: 'Kling' },
+];
 
 const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; label: string; hint: string }[] = [
   { slot: 'front', label: 'Spredu', hint: 'Tvár rovno ku kamere' },
@@ -146,6 +154,8 @@ export default function ChatScreen() {
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
+  const [imageProvider, setImageProvider] = useState<ImageProvider>('kling_o3');
+  const [imageProviderSaving, setImageProviderSaving] = useState(false);
   const [themeMode, setThemeMode] = useState<IrisThemeMode>(initialThemeMode);
   const activeRequestRef = useRef(false);
   const requestBackgroundedRef = useRef(false);
@@ -154,6 +164,46 @@ export default function ChatScreen() {
   const glassWeb = Platform.OS === 'web' ? ({ backdropFilter: 'blur(22px)', WebkitBackdropFilter: 'blur(22px)' } as any) : null;
 
   const getToken = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token || accessToken, [accessToken]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      const token = await getToken();
+      if (!token) return;
+      try {
+        const response = await fetchTimed(API_IMAGE_PROVIDER, { headers: { Authorization: `Bearer ${token}` } });
+        if (!response.ok) return;
+        const provider = (await response.json())?.provider;
+        if (!cancelled && IMAGE_PROVIDER_OPTIONS.some((option) => option.value === provider)) setImageProvider(provider);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [getToken, user?.id]);
+
+  const selectImageProvider = async (provider: ImageProvider) => {
+    if (imageProviderSaving || provider === imageProvider) return;
+    const previous = imageProvider;
+    setImageProvider(provider);
+    setImageProviderSaving(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('Chýba prihlásenie.');
+      const response = await fetchTimed(API_IMAGE_PROVIDER, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ provider }),
+      });
+      if (!response.ok) throw new Error(`Uloženie zlyhalo (${response.status}).`);
+      const saved = (await response.json())?.provider;
+      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === saved)) setImageProvider(saved);
+    } catch (error: any) {
+      setImageProvider(previous);
+      Alert.alert('Iris', `Generátor fotiek sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
+    } finally {
+      setImageProviderSaving(false);
+    }
+  };
   const signCustomAvatar = useCallback(async (userId: string) => {
     const { data, error } = await supabase.storage.from(IRIS_AVATAR_BUCKET).createSignedUrl(irisAvatarPath(userId), 86400);
     if (error || !data?.signedUrl) return null;
@@ -451,12 +501,23 @@ export default function ChatScreen() {
           <Pressable onPress={() => setMenuOpen((open) => !open)} style={[styles.menuBtn, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}><Text style={[styles.menuDots, { color: theme.text }]}>⋯</Text></Pressable>
           {menuOpen && <View style={[styles.menu, glassWeb, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}> 
             <Text style={[styles.menuLabel, { color: theme.textMuted }]}>Vzhľad</Text>
-            <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}> 
+            <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}>
               {(['dark', 'light'] as IrisThemeMode[]).map((mode) => {
                 const selected = themeMode === mode;
                 return (
                   <Pressable key={mode} onPress={() => setThemeMode(mode)} style={[styles.themeOption, selected && { backgroundColor: theme.accent }]}> 
                     <Text style={[styles.themeOptionText, { color: selected ? '#fff' : theme.text }]}>{mode === 'dark' ? 'Dark' : 'Light'}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>Generátor fotiek</Text>
+            <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}>
+              {IMAGE_PROVIDER_OPTIONS.map((option) => {
+                const selected = imageProvider === option.value;
+                return (
+                  <Pressable key={option.value} disabled={imageProviderSaving} onPress={() => void selectImageProvider(option.value)} style={[styles.themeOption, selected && { backgroundColor: theme.accent }, imageProviderSaving && styles.providerOptionSaving]}>
+                    <Text style={[styles.providerOptionText, { color: selected ? '#fff' : theme.text }]}>{option.label}</Text>
                   </Pressable>
                 );
               })}
@@ -549,6 +610,8 @@ const styles = StyleSheet.create({
   themeSwitch: { flexDirection: 'row', borderRadius: 12, padding: 3, borderWidth: 1, marginHorizontal: 3, marginBottom: 7 },
   themeOption: { flex: 1, minHeight: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   themeOptionText: { fontSize: 13, fontWeight: '700' },
+  providerOptionText: { fontSize: 12, fontWeight: '700' },
+  providerOptionSaving: { opacity: 0.65 },
   menuDivider: { height: 1, marginVertical: 5, marginHorizontal: 4 },
   menuItem: { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 9 },
   menuText: { fontSize: 14 },

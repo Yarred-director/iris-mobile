@@ -1,11 +1,38 @@
 import { Router } from 'express';
 import { handleImageRequest, saveIrisReferencePhoto } from '../image/imageHandler.js';
+import { IMAGE_PROVIDER_OPTIONS, loadUserImageProvider, saveUserImageProvider } from '../image/imageProvider.js';
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
 import { parseSupabaseStorageObjectUrl } from '../media/privateMedia.js';
 import { requireUserId } from '../middleware/auth.js';
 
 const router = Router();
+
+router.get('/iris/image-provider', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+    const provider = await loadUserImageProvider(req.supabase, userId);
+    return res.json({ provider, options: IMAGE_PROVIDER_OPTIONS });
+  } catch (error) {
+    console.error('[IMAGE_PROVIDER_GET_ERROR]', error?.message || error);
+    return res.status(500).json({ error: 'image_provider_load_failed' });
+  }
+});
+
+router.put('/iris/image-provider', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+    const provider = String(req.body?.provider || '').trim().toLowerCase();
+    if (!IMAGE_PROVIDER_OPTIONS.includes(provider)) return res.status(400).json({ error: 'invalid_image_provider' });
+    const saved = await saveUserImageProvider(req.supabase, userId, provider);
+    return res.json({ ok: true, provider: saved });
+  } catch (error) {
+    console.error('[IMAGE_PROVIDER_SAVE_ERROR]', error?.message || error);
+    return res.status(error?.message === 'invalid_image_provider' ? 400 : 500).json({ error: error?.message === 'invalid_image_provider' ? 'invalid_image_provider' : 'image_provider_save_failed' });
+  }
+});
 
 router.post('/iris/reference-photo', async (req, res) => {
   try {
