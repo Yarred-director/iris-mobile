@@ -63,6 +63,7 @@ const imageGenSource = fs.readFileSync(new URL('../server/image/imageGen.js', im
 assert.match(imageGenSource, /fal\.run\/fal-ai\/qwen-image-max\/edit/, 'Qwen Image Max must use the current Fal edit endpoint.');
 assert.match(imageGenSource, /image_urls: imageUrls/, 'All available face-pack references must be attached to the Fal request.');
 assert.match(imageGenSource, /QWEN_MAX_PROMPT_LIMIT = 800/, 'Qwen Image Max prompts must enforce the provider limit.');
+assert.match(imageGenSource, /enable_safety_checker: false/, 'Iris must not explicitly enable Qwen provider moderation.');
 assert.doesNotMatch(imageGenSource, /api\.openai\.com\/v1\/images/, 'Direct OpenAI image transport must not remain in the production runtime.');
 
 const workerSource = fs.readFileSync(new URL('../server/actions/scheduledActionWorker.js', import.meta.url), 'utf8');

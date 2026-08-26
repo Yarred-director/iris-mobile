@@ -335,6 +335,7 @@ All immediate, autonomous and scheduled Iris photos use **Qwen Image Max edit th
 - the private three-view identity pack is sent as `image_urls` and referenced as image 1, image 2 and image 3 in the prompt;
 - Qwen Image Max officially requires 1-3 references, so Iris's three-view pack is exactly within the provider schema;
 - requested aspect ratios are mapped to Qwen's `image_size` enum and output remains PNG;
+- Iris requests `enable_safety_checker=false` and does not add its own image moderation switch; Fal can still enforce provider/account-level checking when the account is not authorized to disable it;
 - generated Fal media is immediately copied into Iris private storage instead of treating the provider URL as durable storage.
 
 Observed production incident on 2026-08-25:
@@ -497,6 +498,8 @@ Engineering rules:
 - PR #25 / merge `71a2dfbb3ca5691f2db84104400a6941d4dd6226` — temporary production switch to Nano Banana 2 for all Iris photos.
 - PR #27 / merge `bd06233a459c74c1145fe4568d3aeeb48111fb25` — strict semantic intimacy routing, guaranteed heat 2/3 Grok routing, application-boundary removal and pre-persistence assistant-output guards.
 - PR #28 / merge `2a41bf827094d839c066481a5c24dcc36a60017f` — standalone image-scene isolation, structured OpenAI image diagnostics and narrowly gated output-moderation recovery.
+- PR #29 / merge `229e2d7a2118d7fcf8173a603de277098d670196` — Fal-only image routing with Kling O3 as the temporary canonical engine.
+- PR #30 / merge `b12839934c559f6a8c9f1d1f27fa8cebd71ee0f5` — Qwen Image Max routing, semantic 800-character prompt compaction, proactivity repair and self-healing push registration.
 
 ## 24. Current immediate engineering order
 
