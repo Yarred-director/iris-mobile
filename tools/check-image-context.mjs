@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { compactQwenMaxPrompt } from '../server/image/imageGen.js';
 import { extractImageIntent } from '../server/image/imageIntentDetector.js';
 import { parseImageRequestScopeResponse } from '../server/image/imageRequestScope.js';
-import { ACTIVE_IMAGE_PROVIDER, isFalImageProvider, resolveFalImageProvider } from '../server/image/imageProvider.js';
+import { ACTIVE_IMAGE_PROVIDER, IMAGE_PROVIDER_OPTIONS, isFalImageProvider, resolveFalImageProvider, resolveUserImageProvider } from '../server/image/imageProvider.js';
 
 let capturedInput = null;
 let capturedScopeInput = null;
@@ -165,13 +165,15 @@ assert.throws(() => parseImageRequestScopeResponse({
   output_text: '{"request_scope":"standalone"}',
 }), /image_scope_invalid_shape/, 'Incomplete image request scope must fail closed.');
 
-assert.equal(ACTIVE_IMAGE_PROVIDER, 'grok_imagine_2', 'Production image routing must default to Grok Imagine Image 2.0 through Fal.');
+assert.equal(ACTIVE_IMAGE_PROVIDER, 'kling_o3', 'Production image routing must default to Kling O3 through Fal.');
 assert.equal(isFalImageProvider(ACTIVE_IMAGE_PROVIDER), true, 'Active production image provider must be a Fal provider.');
 assert.equal(isFalImageProvider('openai'), false, 'Direct OpenAI must never be accepted as an active Fal provider.');
-assert.equal(resolveFalImageProvider('openai'), 'grok_imagine_2', 'Stale direct-OpenAI configuration must resolve to Grok Imagine Image 2.0.');
-assert.equal(resolveFalImageProvider('qwen2'), 'grok_imagine_2', 'Deprecated Qwen configuration must resolve to Grok Imagine Image 2.0.');
+assert.equal(resolveFalImageProvider('openai'), 'openai_gpt_image_2', 'OpenAI selection must resolve to GPT Image 2 through Fal.');
+assert.equal(resolveFalImageProvider('qwen2'), 'kling_o3', 'Deprecated Qwen configuration must resolve to Kling O3.');
 assert.equal(resolveFalImageProvider('kling'), 'kling_o3', 'Legacy Kling alias must resolve to the canonical Fal provider.');
 assert.equal(resolveFalImageProvider('grok'), 'grok_imagine_2', 'Grok alias must resolve to the canonical current xAI provider.');
+assert.deepEqual(IMAGE_PROVIDER_OPTIONS, ['openai_gpt_image_2', 'grok_imagine_2', 'kling_o3'], 'Only the three product-approved Fal engines may appear in the app switch.');
+assert.equal(resolveUserImageProvider('qwen_image_max'), 'kling_o3', 'Internal fallback providers must not become a user preference.');
 
 const qwenPrompt = compactQwenMaxPrompt(result.prompt, 3);
 assert.ok(qwenPrompt.length <= 800, 'Qwen Image Max prompt must stay within the provider limit.');

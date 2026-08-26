@@ -99,7 +99,7 @@ async function maybeGenerateIrisImage(reminder) {
       userId: reminder.user_id,
       supabase,
       prompt,
-      provider: reminder?.meta?.iris_image_provider || 'grok_imagine_2',
+      provider: reminder?.meta?.iris_image_provider || null,
     });
 
     if (result?.imageUrl) {
