@@ -55,14 +55,17 @@ assert.match(imageHandlerSource, /imageProvider\.js/, 'Production image handler 
 assert.match(imageHandlerSource, /physicalIdentitySource/, 'Image logs should expose whether persistent body identity was loaded.');
 
 const imageProviderSource = fs.readFileSync(new URL('../server/image/imageProvider.js', import.meta.url), 'utf8');
-assert.match(imageProviderSource, /'qwen_image_max'/, 'Production Iris photos must default to Qwen Image Max through Fal.');
+assert.match(imageProviderSource, /'grok_imagine_2'/, 'Production Iris photos must default to Grok Imagine Image 2.0 through Fal.');
 assert.match(imageProviderSource, /resolveFalImageProvider/, 'Legacy provider values must be normalized through the Fal-only resolver.');
 assert.match(imageProviderSource, /candidate === 'kling'/, 'Legacy Kling scheduled actions must resolve to canonical Kling O3.');
 
 const imageGenSource = fs.readFileSync(new URL('../server/image/imageGen.js', import.meta.url), 'utf8');
-assert.match(imageGenSource, /fal\.run\/fal-ai\/qwen-image-max\/edit/, 'Qwen Image Max must use the current Fal edit endpoint.');
+assert.match(imageGenSource, /fal\.run\/xai\/grok-imagine-image\/v2\.0\/edit/, 'Grok Imagine Image 2.0 must use the current Fal edit endpoint.');
 assert.match(imageGenSource, /image_urls: imageUrls/, 'All available face-pack references must be attached to the Fal request.');
-assert.match(imageGenSource, /QWEN_MAX_PROMPT_LIMIT = 800/, 'Qwen Image Max prompts must enforce the provider limit.');
+assert.match(imageGenSource, /resolution: '2k'/, 'Grok production images must use the high-resolution tier.');
+assert.match(imageGenSource, /quality: 'medium'/, 'Grok production images must use its highest current quality tier.');
+assert.match(imageGenSource, /Images 1-\$\{count\} are different facial views of the SAME/, 'Grok prompts must bind all identity views to one Iris.');
+assert.match(imageGenSource, /No plastic skin, excessive smoothing, glamour retouching/, 'Grok prompts must reject generic AI-glamour rendering.');
 assert.match(imageGenSource, /enable_safety_checker: false/, 'Iris must not explicitly enable Qwen provider moderation.');
 assert.doesNotMatch(imageGenSource, /api\.openai\.com\/v1\/images/, 'Direct OpenAI image transport must not remain in the production runtime.');
 

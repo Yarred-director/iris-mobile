@@ -327,15 +327,15 @@ The three references are views of the SAME adult Iris identity. They define faci
 ## 14. Current image-generation stack
 
 ### Production routing as of 2026-08-26
-All immediate, autonomous and scheduled Iris photos use **Qwen Image Max edit through Fal**:
-- active endpoint: `fal-ai/qwen-image-max/edit`;
+All immediate, autonomous and scheduled Iris photos use **Grok Imagine Image 2.0 Edit through Fal**:
+- active endpoint: `xai/grok-imagine-image/v2.0/edit`;
 - canonical routing lives in `server/image/imageProvider.js`;
-- production default is `qwen_image_max`;
-- only an explicitly supported Fal provider may be selected by `IRIS_IMAGE_PROVIDER`; stale values such as `openai` or `qwen2` resolve back to `qwen_image_max` and cannot silently restore direct OpenAI traffic;
-- the private three-view identity pack is sent as `image_urls` and referenced as image 1, image 2 and image 3 in the prompt;
-- Qwen Image Max officially requires 1-3 references, so Iris's three-view pack is exactly within the provider schema;
-- requested aspect ratios are mapped to Qwen's `image_size` enum and output remains PNG;
-- Iris requests `enable_safety_checker=false` and does not add its own image moderation switch; Fal can still enforce provider/account-level checking when the account is not authorized to disable it;
+- production default is `grok_imagine_2`;
+- only an explicitly supported Fal provider may be selected by `IRIS_IMAGE_PROVIDER`; stale values such as `openai` or `qwen2` resolve back to `grok_imagine_2` and cannot silently restore direct OpenAI traffic;
+- the private three-view identity pack is sent as `image_urls`; the prompt identifies them as different facial views of the same adult Iris and requires exactly one resulting person;
+- Grok Imagine Image 2.0 supports at most 3 references, matching Iris's pack exactly;
+- production requests use `2k`, `quality=medium`, requested aspect ratio and PNG output;
+- a provider-specific photographic profile asks for candid realism, authentic skin texture, plausible optics/light and no generic AI-glamour retouching;
 - generated Fal media is immediately copied into Iris private storage instead of treating the provider URL as durable storage.
 
 Observed production incident on 2026-08-25:
@@ -347,7 +347,8 @@ Observed production incident on 2026-08-25:
 The semantic `standalone` vs `scene_continuation` isolation from PR #28 remains active before the Fal request and continues to prevent stale scenes from contaminating later generic photos.
 
 Existing provider integrations still present in `server/image/imageGen.js`:
-- active Qwen Image Max through Fal;
+- active Grok Imagine Image 2.0 through Fal;
+- optional Qwen Image Max through Fal;
 - optional Kling O3 through Fal;
 - optional Nano Banana 2 through Fal.
 
@@ -462,7 +463,7 @@ Important regression checks now include:
 - server syntax;
 - image context continuity;
 - semantic standalone-vs-scene-continuation image scope;
-- Fal-only active-provider enforcement and Qwen Image Max default routing;
+- Fal-only active-provider enforcement and Grok Imagine Image 2.0 default routing;
 - live assistance;
 - strict semantic heat routing and fail-closed route parsing;
 - assistant final-output validation/meta-leak rejection with retry;
@@ -503,7 +504,7 @@ Engineering rules:
 
 ## 24. Current immediate engineering order
 
-1. Production-test Qwen Image Max through Fal on an ordinary Iris DnD-scene photo; verify the request and compact prompt appear in Fal history.
+1. Production-test Grok Imagine Image 2.0 through Fal on an ordinary Iris DnD-scene photo; verify the request appears in Fal history and compare face/skin/candid realism against Qwen Max.
 2. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
 3. Verify USER_DEFINED_PHYSICAL_IDENTITY bootstrap with an actual production DB row after a real user turn; do not infer success from prompt logs alone.
 4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
@@ -517,4 +518,4 @@ Engineering rules:
 
 ## 25. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, self-healing web/native push registration, and a private three-view face pack; production images use Qwen Image Max edit through Fal with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport is inactive.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, self-healing web/native push registration, and a private three-view face pack; production images use Grok Imagine Image 2.0 Edit through Fal with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport is inactive.
