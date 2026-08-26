@@ -1,2 +1,36 @@
-m«ëˆ"¶›ÿ
-+‘ùhÂÏÜ‹)¥6‹.râ•ê+v*ÞrÚ+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPO_PUBLIC_API_URL: https://example.invalid
+      EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix server
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run check:server
+      - run: npm run test:image-context
+      - run: npm run test:live-assistance
+      - run: npm run test:heat-routing
+      - run: npm run test:visual-state
+      - run: npm run test:memory-quality
+      - run: npm run test:cognition
+      - run: npm run test:notifications
+      - run: npm run test:companion-continuity
+      - run: npm run test:multimodal-chat
+      - run: npm run build:web
