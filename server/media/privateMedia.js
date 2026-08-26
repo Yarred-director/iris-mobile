@@ -44,7 +44,7 @@ export function isPrivateMediaBucket(bucket) {
 export function isUserOwnedMediaPath(bucket, path, userId) {
   if (bucket !== 'iris-photos' || !userId) return false;
   const parts = normalizePath(path).split('/');
-  return parts.length >= 3 && ['generated', 'iris-ref'].includes(parts[0]) && parts[1] === userId;
+  return parts.length >= 3 && ['generated', 'iris-ref', 'chat'].includes(parts[0]) && parts[1] === userId;
 }
 
 export async function createSignedMediaUrl({ bucket, path, expiresIn = DEFAULT_SIGNED_URL_SECONDS }) {
