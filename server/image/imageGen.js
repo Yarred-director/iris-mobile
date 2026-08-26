@@ -4,6 +4,7 @@ import { ACTIVE_IMAGE_PROVIDER, resolveFalImageProvider } from './imageProvider.
 const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-image';
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
 const FAL_API_URL_QWEN_IMAGE_MAX = 'https://fal.run/fal-ai/qwen-image-max/edit';
+const FAL_API_URL_GROK_IMAGINE_2 = 'https://fal.run/xai/grok-imagine-image/v2.0/edit';
 const DEFAULT_IMAGE_PROVIDER = ACTIVE_IMAGE_PROVIDER;
 const MAX_IDENTITY_REFERENCES = 3;
 const QWEN_MAX_PROMPT_LIMIT = 800;
@@ -50,6 +51,11 @@ function klingReferencePrefix(count) {
   const refs = Array.from({ length: count }, (_, index) => `@Image${index + 1}`).join(' ');
   if (count === 1) return `${refs} Preserve this woman's facial identity exactly. `;
   return `${refs} These ${count} references show the SAME adult woman from different face angles. Preserve one consistent facial identity from all views; do not duplicate or blend people. `;
+}
+function grokReferencePrefix(count) {
+  if (count <= 0) return '';
+  if (count === 1) return 'Image 1 is the facial identity reference for Iris, a clearly adult woman. Create exactly one Iris and preserve her recognizable face. ';
+  return `Images 1-${count} are different facial views of the SAME clearly adult woman, Iris. They are identity references, not separate people or a sequence. Create exactly one Iris; preserve one coherent recognizable face and never merge or duplicate people. `;
 }
 function extractDirective(prompt, label, terminator) {
   const start = prompt.indexOf(label);
@@ -153,9 +159,25 @@ export async function generateIrisImage({
   console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} prompt_chars=${String(prompt || '').length} resolved_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
 
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
+  if (resolvedProvider === 'grok_imagine_2') return generateGrokImagine2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   if (resolvedProvider === 'qwen_image_max') return generateQwenImageMax({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   if (resolvedProvider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+}
+
+async function generateGrokImagine2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
+  const photographicProfile = 'Natural candid documentary photograph with authentic skin texture and subtle real-world imperfections, physically plausible light, exposure and lens perspective. No plastic skin, excessive smoothing, glamour retouching, artificial HDR, fake bokeh or generic AI-influencer styling.';
+  const resolvedPrompt = clampPrompt(`${grokReferencePrefix(imageUrls.length)}${prompt} ${photographicProfile}`, 4500);
+  const data = await callFal(FAL_API_URL_GROK_IMAGINE_2, {
+    prompt: resolvedPrompt,
+    image_urls: imageUrls,
+    resolution: '2k',
+    quality: 'medium',
+    num_images: 1,
+    aspect_ratio: aspectRatio,
+    output_format: 'png',
+  }, 'GROK_IMAGINE_2');
+  return persistFalResult(data, { userId, signedUrlSeconds, provider: 'grok_imagine_2' });
 }
 
 async function generateQwenImageMax({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
