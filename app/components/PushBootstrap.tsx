@@ -1,20 +1,44 @@
 import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { useAuth } from '../../providers/AuthProvider';
 import { registerForPushToken } from '../lib/push';
 import { upsertPushTokenWithAccessToken } from '../lib/pushApi';
+import { restoreWebPush } from '../lib/webPush';
 
 export default function PushBootstrap() {
   const { accessToken } = useAuth();
   const registeredAccessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || !accessToken) return;
+    if (!accessToken) return;
+    if (Platform.OS === 'web') {
+      let cancelled = false;
+      const restore = async () => {
+        try {
+          const status = await restoreWebPush(accessToken);
+          if (!cancelled && status === 'enabled') console.log('[WEB_PUSH] subscription restored');
+        } catch (error: any) {
+          console.log('[WEB_PUSH] restore error:', error?.message ?? String(error));
+        }
+      };
+      void restore();
+      const onVisibility = () => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'visible') void restore();
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('pageshow', restore);
+      return () => {
+        cancelled = true;
+        document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('pageshow', restore);
+      };
+    }
     if (registeredAccessTokenRef.current === accessToken) return;
     let cancelled = false;
-    registeredAccessTokenRef.current = accessToken;
 
-    (async () => {
+    const register = async () => {
+      if (registeredAccessTokenRef.current === accessToken) return;
+      registeredAccessTokenRef.current = accessToken;
       try {
         const token = await registerForPushToken();
         if (!token || cancelled) return;
@@ -27,9 +51,19 @@ export default function PushBootstrap() {
         console.log('[PUSH] bootstrap error:', error?.message ?? String(error));
         registeredAccessTokenRef.current = null;
       }
-    })();
+    };
+    void register();
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        registeredAccessTokenRef.current = null;
+        void register();
+      }
+    });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      appStateSubscription.remove();
+    };
   }, [accessToken]);
 
   return null;

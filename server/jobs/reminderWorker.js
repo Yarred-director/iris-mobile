@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { Expo } from 'expo-server-sdk';
 import '../config/env.js';
 import { sendExpoPush } from '../push/expoPush.js';
-import { generateAutonomousIrisImage, getIrisReferencePhoto } from '../image/imageHandler.js';
+import { generateAutonomousIrisImage } from '../image/imageHandler.js';
 import { getAutonomousOccasionPrompt } from '../image/imageIntentDetector.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -99,7 +99,7 @@ async function maybeGenerateIrisImage(reminder) {
       userId: reminder.user_id,
       supabase,
       prompt,
-      provider: reminder?.meta?.iris_image_provider || 'kling',
+      provider: reminder?.meta?.iris_image_provider || 'qwen_image_max',
     });
 
     if (result?.imageUrl) {
@@ -182,8 +182,9 @@ async function processDuePending() {
   for (const r of reminders) {
     const { data: tokens, error: tokErr } = await supabase
       .from('push_tokens')
-      .select('expo_push_token, updated_at')
+      .select('id, expo_push_token, updated_at')
       .eq('user_id', r.user_id)
+      .is('disabled_at', null)
       .order('updated_at', { ascending: false })
       .limit(1);
 
@@ -207,7 +208,15 @@ async function processDuePending() {
       },
     });
 
-    if (!send?.ok) { await markFailed(r, send?.error || 'SEND_FAIL', send?.details || null); continue; }
+    if (!send?.ok) {
+      const deviceNotRegistered = send?.details?.tickets?.some((ticket) => ticket?.details?.error === 'DeviceNotRegistered');
+      if (deviceNotRegistered && tokens?.[0]?.id) {
+        const disabledAt = new Date().toISOString();
+        await supabase.from('push_tokens').update({ disabled_at: disabledAt, updated_at: disabledAt }).eq('id', tokens[0].id);
+      }
+      await markFailed(r, send?.error || 'SEND_FAIL', send?.details || null);
+      continue;
+    }
 
     const ticketIds = extractTicketIds(send);
     if (!ticketIds.length) { await markFailed(r, 'NO_TICKET_ID', send?.details || send || null); continue; }

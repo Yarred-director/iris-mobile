@@ -15,7 +15,7 @@ import ChatInput from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
 import RichText from '../components/RichText';
 import TypingIndicator from '../components/TypingIndicator';
-import { enableWebPush, getWebPushStatus, listenForWebPushReply, type WebPushStatus } from '../lib/webPush';
+import { enableWebPush, listenForWebPushReply, restoreWebPush, type WebPushStatus } from '../lib/webPush';
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com').trim().replace(/\/+$/, '').replace(/\/chat$/, '');
 const API_CHAT = `${API_BASE}/chat`;
@@ -228,10 +228,11 @@ export default function ChatScreen() {
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-    void getWebPushStatus().then(setPushStatus).catch(() => setPushStatus('disabled'));
+    void getToken().then((token) => token ? restoreWebPush(token) : 'disabled').then(setPushStatus).catch(() => setPushStatus('disabled'));
     const onVisibility = () => {
       if (document.visibilityState === 'hidden' && activeRequestRef.current) requestBackgroundedRef.current = true;
       if (document.visibilityState === 'visible') {
+        void getToken().then((token) => token ? restoreWebPush(token) : 'disabled').then(setPushStatus).catch(() => {});
         setTimeout(() => {
           if (pendingAssistantIdRef.current) void reconcilePendingReply();
           else void refreshServerHistory();
@@ -247,7 +248,7 @@ export default function ChatScreen() {
       document.removeEventListener('visibilitychange', onVisibility);
       stopPushListener();
     };
-  }, [reconcilePendingReply, refreshServerHistory]);
+  }, [getToken, reconcilePendingReply, refreshServerHistory]);
 
   useEffect(() => { if (historyReady && user?.id) void storageSet(storageKey(user.id), JSON.stringify(messages.slice(-MAX_MESSAGES))); }, [historyReady, messages, user?.id]);
   useEffect(() => {

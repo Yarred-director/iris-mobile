@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   applyTraitDeltas,
-  deterministicReachoutChance,
+  evaluateProactiveEligibility,
   formatCognitiveContinuityBlock,
   isWithinQuietHours,
   normalizeTraitState,
@@ -45,21 +45,23 @@ assert.equal(shouldAllowProactive({
   now: awakeMoment,
 }), false, 'Weak thoughts must not become notifications');
 
-let passingSeed = null;
-for (let i = 0; i < 10000; i += 1) {
-  const seed = `strong-${i}`;
-  if (deterministicReachoutChance(seed) < 0.70) { passingSeed = seed; break; }
-}
-assert.ok(passingSeed, 'Test should find a deterministic eligible seed');
 assert.equal(shouldAllowProactive({
   proactivityEnabled: true,
   timezone: 'Europe/Bratislava',
   lastInteractionAt: new Date(awakeMoment.getTime() - 30 * 3600000).toISOString(),
   lastProactiveAt: new Date(awakeMoment.getTime() - 48 * 3600000).toISOString(),
   urge: 100,
-  seed: passingSeed,
   now: awakeMoment,
 }), true, 'A strong, old, non-quiet thought may become a proactive reach-out');
+
+assert.deepEqual(evaluateProactiveEligibility({
+  proactivityEnabled: true,
+  timezone: 'Europe/Bratislava',
+  lastInteractionAt: new Date(awakeMoment.getTime() - 7 * 3600000).toISOString(),
+  lastProactiveAt: null,
+  urge: 60,
+  now: awakeMoment,
+}), { allowed: true, reason: 'eligible' }, 'A grounded semantic candidate must not be lost to a second random gate.');
 
 const block = formatCognitiveContinuityBlock({
   thoughts: [{ subject: 'Elden Ring', content: 'I wonder how that difficult run is going.' }],

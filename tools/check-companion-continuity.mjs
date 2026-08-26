@@ -55,14 +55,14 @@ assert.match(imageHandlerSource, /imageProvider\.js/, 'Production image handler 
 assert.match(imageHandlerSource, /physicalIdentitySource/, 'Image logs should expose whether persistent body identity was loaded.');
 
 const imageProviderSource = fs.readFileSync(new URL('../server/image/imageProvider.js', import.meta.url), 'utf8');
-assert.match(imageProviderSource, /'kling_o3'/, 'Production Iris photos must default to Kling O3 through Fal.');
+assert.match(imageProviderSource, /'qwen_image_max'/, 'Production Iris photos must default to Qwen Image Max through Fal.');
 assert.match(imageProviderSource, /resolveFalImageProvider/, 'Legacy provider values must be normalized through the Fal-only resolver.');
 assert.match(imageProviderSource, /candidate === 'kling'/, 'Legacy Kling scheduled actions must resolve to canonical Kling O3.');
 
 const imageGenSource = fs.readFileSync(new URL('../server/image/imageGen.js', import.meta.url), 'utf8');
-assert.match(imageGenSource, /fal\.run\/fal-ai\/kling-image\/o3\/image-to-image/, 'Kling O3 must use the current Fal image-to-image endpoint.');
+assert.match(imageGenSource, /fal\.run\/fal-ai\/qwen-image-max\/edit/, 'Qwen Image Max must use the current Fal edit endpoint.');
 assert.match(imageGenSource, /image_urls: imageUrls/, 'All available face-pack references must be attached to the Fal request.');
-assert.match(imageGenSource, /@Image\$\{index \+ 1\}/, 'Kling prompts must reference every identity image deterministically.');
+assert.match(imageGenSource, /QWEN_MAX_PROMPT_LIMIT = 800/, 'Qwen Image Max prompts must enforce the provider limit.');
 assert.doesNotMatch(imageGenSource, /api\.openai\.com\/v1\/images/, 'Direct OpenAI image transport must not remain in the production runtime.');
 
 const workerSource = fs.readFileSync(new URL('../server/actions/scheduledActionWorker.js', import.meta.url), 'utf8');

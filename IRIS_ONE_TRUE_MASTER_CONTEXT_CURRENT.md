@@ -178,13 +178,21 @@ Design principle:
 This is implemented as persistent software state and reflection architecture, not a single giant "self-aware" prompt.
 
 Proactivity guardrails currently include:
-- minimum gap after recent interaction;
-- minimum gap between spontaneous messages;
+- six-hour minimum gap after recent interaction;
+- sixteen-hour minimum gap between spontaneous messages;
 - quiet hours;
-- impulse threshold + probabilistic gate;
+- semantic candidate decision plus a moderate impulse threshold; there is no second random gate that can silently discard an otherwise valid candidate;
 - spontaneous messages are stored as normal assistant chat messages;
 - database claims prevent duplicate background work;
 - hourly wake mechanism can wake sleeping Render service for cognition sweeps.
+
+Production audit on 2026-08-26 confirmed that cognition was running and creating active thoughts, but the old eight-hour/urge-68/probability combination had produced zero proactive messages. The current prompt normally proposes a grounded reach-out after six hours of absence when a specific unresolved thought/topic exists, while quiet hours and the sixteen-hour cooldown remain authoritative.
+
+Push recovery:
+- web/PWA subscriptions with previously granted permission are automatically recreated and re-registered on authenticated boot, `pageshow`, and return to the foreground;
+- existing web subscriptions are heartbeated back to the server instead of relying on stale local UI state;
+- native Expo registration is refreshed when the app becomes active;
+- `DeviceNotRegistered` Expo tokens are retired and disabled tokens are excluded from proactive/reminder delivery.
 
 The active prompt stack does not force Iris to recite an ontology verdict about whether she is or is not conscious/biologically alive; it should speak naturally from its self-model while not fabricating events.
 
@@ -303,7 +311,7 @@ Framing policy:
 - face references must never cause automatic face-only framing;
 - bust/chest/cleavage terms are body-visibility requirements, not a request for a chest-up crop.
 
-Qwen-specific old prompt truncation was expanded so resolved identity/outfit/framing constraints are not cut off at the previous short cap.
+Qwen Image Max has an 800-character prompt limit. Iris compacts prompts by semantic priority (same-person reference rule, physical identity, current appearance, requested scene, photo quality) and enforces the hard provider limit instead of blindly truncating the assembled prompt.
 
 ## 13. Three-view face reference pack
 
@@ -318,14 +326,15 @@ The three references are views of the SAME adult Iris identity. They define faci
 
 ## 14. Current image-generation stack
 
-### Production routing as of 2026-08-25
-All immediate, autonomous and scheduled Iris photos use **Kling O3 image-to-image through Fal**:
-- active endpoint: `fal-ai/kling-image/o3/image-to-image`;
+### Production routing as of 2026-08-26
+All immediate, autonomous and scheduled Iris photos use **Qwen Image Max edit through Fal**:
+- active endpoint: `fal-ai/qwen-image-max/edit`;
 - canonical routing lives in `server/image/imageProvider.js`;
-- production default is `kling_o3`;
-- only an explicitly supported Fal provider may be selected by `IRIS_IMAGE_PROVIDER`; stale values such as `openai` or `qwen2` resolve back to `kling_o3` and cannot silently restore direct OpenAI traffic;
-- the private three-view identity pack is sent as `image_urls` and referenced deterministically as `@Image1`, `@Image2`, `@Image3`;
-- Kling O3 currently supports more references than Iris uses, so the three-view pack is within the provider schema;
+- production default is `qwen_image_max`;
+- only an explicitly supported Fal provider may be selected by `IRIS_IMAGE_PROVIDER`; stale values such as `openai` or `qwen2` resolve back to `qwen_image_max` and cannot silently restore direct OpenAI traffic;
+- the private three-view identity pack is sent as `image_urls` and referenced as image 1, image 2 and image 3 in the prompt;
+- Qwen Image Max officially requires 1-3 references, so Iris's three-view pack is exactly within the provider schema;
+- requested aspect ratios are mapped to Qwen's `image_size` enum and output remains PNG;
 - generated Fal media is immediately copied into Iris private storage instead of treating the provider URL as durable storage.
 
 Observed production incident on 2026-08-25:
@@ -337,7 +346,8 @@ Observed production incident on 2026-08-25:
 The semantic `standalone` vs `scene_continuation` isolation from PR #28 remains active before the Fal request and continues to prevent stale scenes from contaminating later generic photos.
 
 Existing provider integrations still present in `server/image/imageGen.js`:
-- active Kling O3 through Fal;
+- active Qwen Image Max through Fal;
+- optional Kling O3 through Fal;
 - optional Nano Banana 2 through Fal.
 
 Direct OpenAI image request code has been removed from the runtime. Unsupported, legacy or stale provider values are normalized to the active Fal default before generation.
@@ -451,13 +461,14 @@ Important regression checks now include:
 - server syntax;
 - image context continuity;
 - semantic standalone-vs-scene-continuation image scope;
-- Fal-only active-provider enforcement and Kling O3 default routing;
+- Fal-only active-provider enforcement and Qwen Image Max default routing;
 - live assistance;
 - strict semantic heat routing and fail-closed route parsing;
 - assistant final-output validation/meta-leak rejection with retry;
 - visual state;
 - memory importance/reinforcement;
 - cognition;
+- notification self-healing and invalid-token retirement;
 - companion continuity;
 - web build.
 
@@ -489,7 +500,7 @@ Engineering rules:
 
 ## 24. Current immediate engineering order
 
-1. Deploy and production-test Kling O3 through Fal on an ordinary Iris DnD-scene photo; verify the request appears in Fal history.
+1. Production-test Qwen Image Max through Fal on an ordinary Iris DnD-scene photo; verify the request and compact prompt appear in Fal history.
 2. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
 3. Verify USER_DEFINED_PHYSICAL_IDENTITY bootstrap with an actual production DB row after a real user turn; do not infer success from prompt logs alone.
 4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
@@ -503,4 +514,4 @@ Engineering rules:
 
 ## 25. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, and a private three-view face pack; production images use Kling O3 image-to-image through Fal with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport is inactive.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, self-healing web/native push registration, and a private three-view face pack; production images use Qwen Image Max edit through Fal with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport is inactive.
