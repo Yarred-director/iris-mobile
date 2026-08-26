@@ -233,7 +233,7 @@ export async function extractImageIntent({
       requestScope: requestScope.request_scope,
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio(parsed.aspect_ratio, framed.framing),
-      provider: 'kling_o3',
+      provider: 'qwen_image_max',
     };
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
@@ -248,7 +248,7 @@ export async function extractImageIntent({
       requestScope: requestScope.request_scope,
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio('auto', framed.framing),
-      provider: 'kling_o3',
+      provider: 'qwen_image_max',
     };
   }
 }

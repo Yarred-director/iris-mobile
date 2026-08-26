@@ -31,7 +31,33 @@ async function serviceWorkerRegistration() {
   return registration;
 }
 
-export async function getWebPushStatus(): Promise<WebPushStatus> {
+async function registerSubscriptionWithBackend(accessToken: string, subscription: PushSubscription) {
+  const response = await fetch(`${apiBase()}/push/web/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ subscription: subscription.toJSON() }),
+  });
+  if (!response.ok) throw new Error(`Push registration failed (${response.status}).`);
+}
+
+async function ensureWebPushSubscription(accessToken: string, createIfMissing: boolean): Promise<WebPushStatus> {
+  const registration = await serviceWorkerRegistration();
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription && createIfMissing) {
+    const keyResponse = await fetch(`${apiBase()}/push/web/public-key`);
+    if (!keyResponse.ok) throw new Error('Web push public key is unavailable.');
+    const payload = await keyResponse.json();
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(String(payload?.public_key || '')),
+    });
+  }
+  if (!subscription) return 'disabled';
+  await registerSubscriptionWithBackend(accessToken, subscription);
+  return 'enabled';
+}
+
+export async function getWebPushStatus(accessToken?: string | null): Promise<WebPushStatus> {
   if (Platform.OS !== 'web' || typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     return 'unsupported';
   }
@@ -40,10 +66,23 @@ export async function getWebPushStatus(): Promise<WebPushStatus> {
   if (Notification.permission !== 'granted') return 'disabled';
   try {
     const registration = await serviceWorkerRegistration();
-    return (await registration.pushManager.getSubscription()) ? 'enabled' : 'disabled';
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return 'disabled';
+    if (accessToken) await registerSubscriptionWithBackend(accessToken, subscription);
+    return 'enabled';
   } catch {
     return 'disabled';
   }
+}
+
+export async function restoreWebPush(accessToken: string): Promise<WebPushStatus> {
+  if (Platform.OS !== 'web' || typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    return 'unsupported';
+  }
+  if (isIosLike() && !isStandalone()) return 'needs_home_screen';
+  if (Notification.permission === 'denied') return 'blocked';
+  if (Notification.permission !== 'granted') return 'disabled';
+  return ensureWebPushSubscription(accessToken, true);
 }
 
 export async function enableWebPush(accessToken: string): Promise<WebPushStatus> {
@@ -57,25 +96,7 @@ export async function enableWebPush(accessToken: string): Promise<WebPushStatus>
   if (permission === 'denied') return 'blocked';
   if (permission !== 'granted') return 'disabled';
 
-  const registration = await serviceWorkerRegistration();
-  let subscription = await registration.pushManager.getSubscription();
-  if (!subscription) {
-    const keyResponse = await fetch(`${apiBase()}/push/web/public-key`);
-    if (!keyResponse.ok) throw new Error('Web push public key is unavailable.');
-    const payload = await keyResponse.json();
-    subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(String(payload?.public_key || '')),
-    });
-  }
-
-  const response = await fetch(`${apiBase()}/push/web/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ subscription: subscription.toJSON() }),
-  });
-  if (!response.ok) throw new Error(`Push registration failed (${response.status}).`);
-  return 'enabled';
+  return ensureWebPushSubscription(accessToken, true);
 }
 
 export function listenForWebPushReply(callback: () => void) {

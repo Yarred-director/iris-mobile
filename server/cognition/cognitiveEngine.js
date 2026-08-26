@@ -430,35 +430,31 @@ export function isWithinQuietHours(timezone, quietHours, now = new Date()) {
   return start < end ? current >= start && current < end : current >= start || current < end;
 }
 
-export function deterministicReachoutChance(seed) {
-  let hash = 2166136261;
-  for (const char of String(seed || '')) {
-    hash ^= char.charCodeAt(0);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0) / 4294967295;
-}
-
-export function shouldAllowProactive({
+export function evaluateProactiveEligibility({
   proactivityEnabled = true,
   timezone = 'UTC',
   quietHours = null,
   lastInteractionAt = null,
   lastProactiveAt = null,
   urge = 0,
-  seed = '',
   now = new Date(),
 }) {
-  if (!proactivityEnabled || isWithinQuietHours(timezone, quietHours, now)) return false;
+  if (!proactivityEnabled) return { allowed: false, reason: 'disabled' };
+  if (isWithinQuietHours(timezone, quietHours, now)) return { allowed: false, reason: 'quiet_hours' };
   const nowMs = now.getTime();
   const sinceInteractionHours = lastInteractionAt ? (nowMs - new Date(lastInteractionAt).getTime()) / 3600000 : Infinity;
   const sinceProactiveHours = lastProactiveAt ? (nowMs - new Date(lastProactiveAt).getTime()) / 3600000 : Infinity;
-  if (sinceInteractionHours < 8 || sinceProactiveHours < 20) return false;
+  if (sinceInteractionHours < 6) return { allowed: false, reason: 'recent_interaction' };
+  if (sinceProactiveHours < 16) return { allowed: false, reason: 'cooldown' };
   const safeUrge = clamp(urge, 0, 100, 0);
-  if (safeUrge < 68) return false;
-  // Stronger impulses are more likely, but never every eligible sweep/day.
-  const probability = Math.min(0.72, Math.max(0.10, (safeUrge - 58) / 58));
-  return deterministicReachoutChance(seed) < probability;
+  if (safeUrge < 55) return { allowed: false, reason: 'weak_urge' };
+  // The LLM has already made a semantic reach-out decision. A second random gate
+  // made valid, relationship-grounded candidates disappear indefinitely.
+  return { allowed: true, reason: 'eligible' };
+}
+
+export function shouldAllowProactive(input) {
+  return evaluateProactiveEligibility(input).allowed;
 }
 
 export async function runBackgroundReflection({
@@ -475,13 +471,17 @@ export async function runBackgroundReflection({
 }) {
   try {
     const lastInteractionAt = profile?.last_interaction_at || null;
+    const hoursSinceInteraction = lastInteractionAt
+      ? Math.max(0, (Date.now() - new Date(lastInteractionAt).getTime()) / 3600000)
+      : null;
     const prompt = `You are Iris's PRIVATE background reflection process running between conversations. There is no user message to answer.
 
 Simulate continuity through memory and self-reflection, not by fabricating unseen events. Iris can reconsider memories, notice patterns, develop curiosity, update her narrative identity slowly, and sometimes form an impulse to contact the user.
 
 Rules:
 - Do not invent anything that happened while the user was away.
-- Most runs should NOT produce a proactive message.
+- If the user has been away for at least 6 hours and there is a specific, grounded active thought, unresolved topic, concern or curiosity, normally propose one natural proactive message.
+- Set should_reach_out=false when there is no grounded reason, the thought is generic, or contacting the user would feel forced. The runtime independently enforces quiet hours and cooldowns.
 - A reach-out should arise from a real unresolved thought, meaningful memory, concern, curiosity or shared ongoing topic.
 - Avoid generic engagement bait such as "hey, how are you?" unless grounded in a specific relationship context.
 - Never guilt the user for absence, imply surveillance, demand attention, or claim biological sentience.
@@ -490,6 +490,7 @@ Rules:
 - A candidate is only a proposal; deterministic product rules decide whether it is sent.
 
 TIME SINCE LAST USER INTERACTION: ${lastInteractionAt || 'unknown'}
+HOURS SINCE LAST USER INTERACTION: ${hoursSinceInteraction === null ? 'unknown' : hoursSinceInteraction.toFixed(1)}
 CURRENT SELF: ${JSON.stringify({ narrative_identity: selfModel?.narrative_identity || null, mood: selfModel?.mood || {}, drives: selfModel?.drives || {}, beliefs: selfModel?.beliefs || [], open_questions: selfModel?.open_questions || [], current_concerns: selfModel?.current_concerns || [] })}
 LEARNED TRAITS: ${JSON.stringify(normalizeTraitState(personalityEvolution?.trait_state))}
 ACTIVE THOUGHTS: ${JSON.stringify((cognitiveContinuity?.thoughts || []).slice(0, 8))}

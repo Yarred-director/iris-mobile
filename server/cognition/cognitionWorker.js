@@ -11,14 +11,13 @@ import { loadSelfModel } from '../memory/selfAwareness.js';
 import { sendExpoPush } from '../push/expoPush.js';
 import {
   loadCognitiveContinuity,
+  evaluateProactiveEligibility,
   markThoughtSent,
   runBackgroundReflection,
-  shouldAllowProactive,
 } from './cognitiveEngine.js';
 
-const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
-const DEFAULT_COGNITION_INTERVAL_MINUTES = 240;
-const DEFAULT_PROACTIVE_INTERVAL_HOURS = 20;
+const DEFAULT_COGNITION_INTERVAL_MINUTES = 180;
+const DEFAULT_PROACTIVE_INTERVAL_HOURS = 16;
 const DEFAULT_ACTIVE_WINDOW_DAYS = 14;
 const DEFAULT_SWEEP_LIMIT = 25;
 
@@ -63,19 +62,27 @@ async function sendExpoProactivePush(supabase, userId, message) {
   try {
     const { data, error } = await supabase
       .from('push_tokens')
-      .select('expo_push_token')
+      .select('id, expo_push_token')
       .eq('user_id', userId)
       .is('disabled_at', null)
       .order('last_seen_at', { ascending: false })
-      .limit(1);
-    if (error || !data?.[0]?.expo_push_token) return;
-    const result = await sendExpoPush({
-      to: data[0].expo_push_token,
-      title: 'Iris',
-      body: message,
-      data: { type: 'iris_proactive_message' },
-    });
-    if (!result?.ok) console.log('[COGNITION_EXPO_PUSH_FAILED]', result?.error || 'unknown');
+      .limit(5);
+    if (error || !data?.length) return;
+    for (const token of data) {
+      const result = await sendExpoPush({
+        to: token.expo_push_token,
+        title: 'Iris',
+        body: message,
+        data: { type: 'iris_proactive_message' },
+      });
+      if (result?.ok) return;
+      console.log('[COGNITION_EXPO_PUSH_FAILED]', result?.error || 'unknown');
+      const deviceNotRegistered = result?.details?.tickets?.some((ticket) => ticket?.details?.error === 'DeviceNotRegistered');
+      if (deviceNotRegistered) {
+        const now = new Date().toISOString();
+        await supabase.from('push_tokens').update({ disabled_at: now, updated_at: now }).eq('id', token.id);
+      }
+    }
   } catch (error) {
     console.log('[COGNITION_EXPO_PUSH_ERROR]', error?.message);
   }
@@ -125,27 +132,24 @@ async function processUser({ supabase, profile, llmClient, model }) {
   if (!candidate?.should_reach_out || !candidate.message) return { claimed: true, sent: false };
 
   const now = new Date();
-  const localDate = (() => {
-    try { return now.toLocaleDateString('en-CA', { timeZone: profile?.user_timezone || 'UTC' }); }
-    catch { return now.toISOString().slice(0, 10); }
-  })();
-  const seed = `${userId}|${candidate.subject || candidate.thought_id || candidate.message}|${localDate}`;
-  const allowed = shouldAllowProactive({
+  const eligibility = evaluateProactiveEligibility({
     proactivityEnabled: profile?.proactivity_enabled !== false,
     timezone: profile?.user_timezone || 'UTC',
     quietHours: profile?.proactivity_quiet_hours || null,
     lastInteractionAt: profile?.last_interaction_at || null,
     lastProactiveAt: selfModel?.last_proactive_at || null,
     urge: candidate.urge,
-    seed,
     now,
   });
-  if (!allowed) return { claimed: true, sent: false };
+  if (!eligibility.allowed) {
+    console.log('[COGNITION_PROACTIVE_SKIPPED]', { userId, reason: eligibility.reason, urge: candidate.urge });
+    return { claimed: true, sent: false };
+  }
 
   const proactiveIntervalHours = intEnv(
     'IRIS_PROACTIVE_MIN_INTERVAL_HOURS',
     DEFAULT_PROACTIVE_INTERVAL_HOURS,
-    8,
+    6,
     168,
   );
   const { data: proactiveClaimed, error: proactiveClaimError } = await supabase.rpc('claim_iris_proactive_reachout', {

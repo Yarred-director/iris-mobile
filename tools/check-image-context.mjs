@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { compactQwenMaxPrompt } from '../server/image/imageGen.js';
 import { extractImageIntent } from '../server/image/imageIntentDetector.js';
 import { parseImageRequestScopeResponse } from '../server/image/imageRequestScope.js';
 import { ACTIVE_IMAGE_PROVIDER, isFalImageProvider, resolveFalImageProvider } from '../server/image/imageProvider.js';
@@ -164,11 +165,18 @@ assert.throws(() => parseImageRequestScopeResponse({
   output_text: '{"request_scope":"standalone"}',
 }), /image_scope_invalid_shape/, 'Incomplete image request scope must fail closed.');
 
-assert.equal(ACTIVE_IMAGE_PROVIDER, 'kling_o3', 'Production image routing must default to Kling O3 through Fal.');
+assert.equal(ACTIVE_IMAGE_PROVIDER, 'qwen_image_max', 'Production image routing must default to Qwen Image Max through Fal.');
 assert.equal(isFalImageProvider(ACTIVE_IMAGE_PROVIDER), true, 'Active production image provider must be a Fal provider.');
 assert.equal(isFalImageProvider('openai'), false, 'Direct OpenAI must never be accepted as an active Fal provider.');
-assert.equal(resolveFalImageProvider('openai'), 'kling_o3', 'Stale direct-OpenAI configuration must resolve to Kling O3.');
-assert.equal(resolveFalImageProvider('qwen2'), 'kling_o3', 'Deprecated Qwen configuration must resolve to Kling O3.');
+assert.equal(resolveFalImageProvider('openai'), 'qwen_image_max', 'Stale direct-OpenAI configuration must resolve to Qwen Image Max.');
+assert.equal(resolveFalImageProvider('qwen2'), 'qwen_image_max', 'Deprecated Qwen configuration must resolve to Qwen Image Max.');
 assert.equal(resolveFalImageProvider('kling'), 'kling_o3', 'Legacy Kling alias must resolve to the canonical Fal provider.');
+
+const qwenPrompt = compactQwenMaxPrompt(result.prompt, 3);
+assert.ok(qwenPrompt.length <= 800, 'Qwen Image Max prompt must stay within the provider limit.');
+assert.match(qwenPrompt, /Images 1-3 show the same clearly adult woman/i, 'Qwen prompt must identify all three references as one person.');
+assert.match(qwenPrompt, /full augmented C-cup bust/i, 'Qwen compaction must preserve user-defined physical identity.');
+assert.match(qwenPrompt, /black lace swimwear/i, 'Qwen compaction must preserve current outfit continuity.');
+assert.match(qwenPrompt, /balcony at sunset/i, 'Qwen compaction must preserve the requested scene.');
 
 console.log('Image context continuity regression test passed.');
