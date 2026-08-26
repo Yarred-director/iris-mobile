@@ -166,7 +166,9 @@ async function generateQwenImageMax({ prompt, imageUrls, aspectRatio, userId, si
     negative_prompt: 'low resolution, blurry, deformed anatomy, malformed hands, duplicate person, multiple people, inconsistent face, childlike proportions',
     image_urls: imageUrls,
     enable_prompt_expansion: true,
-    enable_safety_checker: true,
+    // Do not add an Iris-side moderation switch. Fal may still enforce its
+    // account-level checker when disabling it is not authorized for the account.
+    enable_safety_checker: false,
     num_images: 1,
     output_format: 'png',
   };
