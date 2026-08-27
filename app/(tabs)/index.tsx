@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
-import ChatInput from '../components/ChatInput';
+import ChatInput, { type ChatDraft } from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
 import RichText from '../components/RichText';
 import TypingIndicator from '../components/TypingIndicator';
@@ -19,6 +19,7 @@ import { enableWebPush, listenForWebPushReply, restoreWebPush, type WebPushStatu
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? 'https://iris-mobile.onrender.com').trim().replace(/\/+$/, '').replace(/\/chat$/, '');
 const API_CHAT = `${API_BASE}/chat`;
+const API_ATTACHMENTS = `${API_CHAT}/attachments`;
 const API_HISTORY = `${API_BASE}/chat/history`;
 const API_MEDIA_SIGN = `${API_BASE}/media/sign`;
 const API_REF_PHOTO = `${API_BASE}/iris/reference-photo`;
@@ -27,10 +28,21 @@ const IRIS_AVATAR_BUCKET = 'iris-photos';
 const MAX_MESSAGES = 50;
 const REQUEST_TIMEOUT_MS = 300000;
 
-type Message = { id?: string; role: 'user' | 'iris'; text: string; imageUrl?: string | null; imageBucket?: string | null; imagePath?: string | null; createdAt?: string | null; clientMessageId?: string | null };
+type ChatAttachment = {
+  id: string;
+  imageUrl: string;
+  imageBucket?: string | null;
+  imagePath?: string | null;
+  contentType?: string | null;
+  retention: 'temporary' | 'user_appearance';
+  expiresAt?: string | null;
+};
+type Message = { id?: string; role: 'user' | 'iris'; text: string; imageUrl?: string | null; imageBucket?: string | null; imagePath?: string | null; attachments?: ChatAttachment[]; createdAt?: string | null; clientMessageId?: string | null };
 type BackgroundConfig = { image_url: string; overlay?: number; blur?: number };
 type UIManifest = { chatBackground?: BackgroundConfig; avatar?: { image_url?: string } };
-type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; created_at?: string | null; client_message_id?: string | null };
+type ServerAttachment = { id: string; image_url: string; bucket?: string | null; path?: string | null; content_type?: string | null; retention?: 'temporary' | 'user_appearance'; expires_at?: string | null };
+type ServerMessage = { id: string; role: 'user' | 'assistant'; content: string; image_url?: string | null; image_bucket?: string | null; image_path?: string | null; attachments?: ServerAttachment[]; created_at?: string | null; client_message_id?: string | null };
+type PreparedAttachment = { id: string; bucket: string; path: string; token: string; content_type: string; retention: 'temporary' | 'user_appearance' };
 type FaceReferenceSlot = 'front' | 'three-quarter' | 'side';
 type ImageProvider = 'openai_gpt_image_2' | 'grok_imagine_2' | 'kling_o3';
 
@@ -39,6 +51,7 @@ const IMAGE_PROVIDER_OPTIONS: { value: ImageProvider; label: string }[] = [
   { value: 'grok_imagine_2', label: 'Grok' },
   { value: 'kling_o3', label: 'Kling' },
 ];
+const IMAGE_PROVIDER_LABELS = Object.fromEntries(IMAGE_PROVIDER_OPTIONS.map((option) => [option.value, option.label])) as Record<ImageProvider, string>;
 
 const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; label: string; hint: string }[] = [
   { slot: 'front', label: 'Spredu', hint: 'Tvár rovno ku kamere' },
@@ -76,7 +89,7 @@ function parseStoredLocation(imageUrl: string | null | undefined, userId: string
     const bucket = decodeURIComponent(match[1]);
     const path = decodeURIComponent(match[2]);
     const parts = path.split('/');
-    if (bucket !== 'iris-photos' || parts[1] !== userId || !['generated', 'iris-ref'].includes(parts[0])) return null;
+    if (bucket !== 'iris-photos' || parts[1] !== userId || !['generated', 'iris-ref', 'chat'].includes(parts[0])) return null;
     return { bucket, path };
   } catch { return null; }
 }
@@ -85,11 +98,35 @@ function localMessages(value: unknown, userId: string): Message[] {
   return value.slice(-MAX_MESSAGES).flatMap((item: any) => {
     if (!item || !['user', 'iris'].includes(item.role)) return [];
     const location = parseStoredLocation(item.imageUrl, userId);
-    return [{ ...item, text: String(item.text || ''), imageBucket: item.imageBucket || location?.bucket || null, imagePath: item.imagePath || location?.path || null } as Message];
+    const attachments = Array.isArray(item.attachments)
+      ? item.attachments.slice(0, 4).flatMap((attachment: any) => {
+        if (!attachment?.imageUrl) return [];
+        const attachmentLocation = parseStoredLocation(attachment.imageUrl, userId);
+        return [{
+          id: String(attachment.id || Crypto.randomUUID()),
+          imageUrl: String(attachment.imageUrl),
+          imageBucket: attachment.imageBucket || attachmentLocation?.bucket || null,
+          imagePath: attachment.imagePath || attachmentLocation?.path || null,
+          contentType: attachment.contentType || null,
+          retention: attachment.retention === 'user_appearance' ? 'user_appearance' : 'temporary',
+          expiresAt: attachment.expiresAt || null,
+        } as ChatAttachment];
+      })
+      : [];
+    return [{ ...item, text: String(item.text || ''), imageBucket: item.imageBucket || location?.bucket || null, imagePath: item.imagePath || location?.path || null, attachments } as Message];
   });
 }
 function mapServer(item: ServerMessage): Message {
-  return { id: item.id, role: item.role === 'assistant' ? 'iris' : 'user', text: item.content || '', imageUrl: item.image_url || null, imageBucket: item.image_bucket || null, imagePath: item.image_path || null, createdAt: item.created_at || null, clientMessageId: item.client_message_id || null };
+  const attachments = Array.isArray(item.attachments) ? item.attachments.flatMap((attachment) => attachment?.image_url ? [{
+    id: attachment.id,
+    imageUrl: attachment.image_url,
+    imageBucket: attachment.bucket || null,
+    imagePath: attachment.path || null,
+    contentType: attachment.content_type || null,
+    retention: attachment.retention === 'user_appearance' ? 'user_appearance' : 'temporary',
+    expiresAt: attachment.expires_at || null,
+  } as ChatAttachment] : []) : [];
+  return { id: item.id, role: item.role === 'assistant' ? 'iris' : 'user', text: item.content || '', imageUrl: item.image_url || null, imageBucket: item.image_bucket || null, imagePath: item.image_path || null, attachments, createdAt: item.created_at || null, clientMessageId: item.client_message_id || null };
 }
 
 function Bubble({ message, themeMode }: { message: Message; themeMode: IrisThemeMode }) {
@@ -138,6 +175,49 @@ function ImageBubble({ message, refreshUrl, themeMode }: { message: Message; ref
   );
 }
 
+function AttachmentBubble({ message, refreshUrl, themeMode }: { message: Message; refreshUrl: (attachment: ChatAttachment) => Promise<string | null>; themeMode: IrisThemeMode }) {
+  const theme = getIrisTheme(themeMode);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [urls, setUrls] = useState<Record<string, string>>(() => Object.fromEntries((message.attachments || []).map((attachment) => [attachment.id, attachment.imageUrl])));
+  const refreshing = useRef(new Set<string>());
+  useEffect(() => {
+    setUrls(Object.fromEntries((message.attachments || []).map((attachment) => [attachment.id, attachment.imageUrl])));
+  }, [message.attachments]);
+  const refresh = async (attachment: ChatAttachment) => {
+    if (refreshing.current.has(attachment.id)) return;
+    refreshing.current.add(attachment.id);
+    try {
+      const next = await refreshUrl(attachment);
+      if (next) setUrls((current) => ({ ...current, [attachment.id]: next }));
+    } finally {
+      refreshing.current.delete(attachment.id);
+    }
+  };
+  const active = (message.attachments || []).find((attachment) => attachment.id === openId) || null;
+  return (
+    <View style={styles.userBubble}>
+      <LinearGradient colors={theme.userBubbleGradient} style={[styles.bubble, styles.userBubble, styles.attachmentBubble, { borderColor: theme.bubbleBorder, shadowColor: theme.shadow }]}>
+        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={16} /></View>
+        <View style={styles.attachmentGrid}>
+          {(message.attachments || []).map((attachment) => (
+            <Pressable key={attachment.id} accessibilityRole="button" accessibilityLabel="Otvoriť priložený obrázok" onPress={() => setOpenId(attachment.id)}>
+              <Image source={{ uri: urls[attachment.id] || attachment.imageUrl }} style={[styles.attachmentImage, { backgroundColor: theme.surfaceSoft }]} contentFit="cover" onError={() => void refresh(attachment)} />
+              {attachment.retention === 'user_appearance' && <View style={styles.permanentBadge}><Text style={styles.permanentBadgeText}>vzhľad ✓</Text></View>}
+            </Pressable>
+          ))}
+        </View>
+        {!!message.text && <RichText text={message.text} style={[styles.text, styles.attachmentCaption, { color: theme.text }]} />}
+      </LinearGradient>
+      <Modal visible={!!active} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setOpenId(null)}>
+        <Pressable style={styles.fullscreen} onPress={() => setOpenId(null)}>
+          {!!active && <Image source={{ uri: urls[active.id] || active.imageUrl }} style={styles.fullscreenImage} contentFit="contain" onError={() => void refresh(active)} />}
+          <Text style={styles.close}>✕</Text>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
 export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -172,7 +252,7 @@ export default function ChatScreen() {
       const token = await getToken();
       if (!token) return;
       try {
-        const response = await fetchTimed(API_IMAGE_PROVIDER, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
         if (!response.ok) return;
         const provider = (await response.json())?.provider;
         if (!cancelled && IMAGE_PROVIDER_OPTIONS.some((option) => option.value === provider)) setImageProvider(provider);
@@ -183,8 +263,6 @@ export default function ChatScreen() {
 
   const selectImageProvider = async (provider: ImageProvider) => {
     if (imageProviderSaving || provider === imageProvider) return;
-    const previous = imageProvider;
-    setImageProvider(provider);
     setImageProviderSaving(true);
     try {
       const token = await getToken();
@@ -196,9 +274,14 @@ export default function ChatScreen() {
       });
       if (!response.ok) throw new Error(`Uloženie zlyhalo (${response.status}).`);
       const saved = (await response.json())?.provider;
-      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === saved)) setImageProvider(saved);
+      if (saved !== provider) throw new Error('Server nepotvrdil zvolený model.');
+      const verifyResponse = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+      if (!verifyResponse.ok) throw new Error(`Overenie zlyhalo (${verifyResponse.status}).`);
+      const verified = (await verifyResponse.json())?.provider;
+      if (verified !== provider) throw new Error('Uložený model sa nezhoduje so zvoleným.');
+      setImageProvider(provider);
+      setMenuOpen(false);
     } catch (error: any) {
-      setImageProvider(previous);
       Alert.alert('Iris', `Generátor fotiek sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
     } finally {
       setImageProviderSaving(false);
@@ -440,26 +523,73 @@ export default function ChatScreen() {
     setMessages([{ role: 'iris', text: 'Ahoj. Som Iris.' }]);
   };
 
-  const sendMessage = async (value: string) => {
-    const text = value.trim();
-    if (!text || isTyping) return;
+  const discardPendingAttachments = useCallback(async (token: string, clientMessageId: string, attachmentIds: string[]) => {
+    if (!attachmentIds.length) return;
+    await fetchTimed(API_ATTACHMENTS, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ client_message_id: clientMessageId, attachment_ids: attachmentIds }),
+    }).catch(() => null);
+  }, []);
+
+  const sendMessage = async (draft: ChatDraft) => {
+    const text = draft.text.trim();
+    if ((!text && !draft.attachments.length) || isTyping) return;
     const clientId = Crypto.randomUUID();
     const assistantClientId = `${clientId}:assistant`;
+    const optimisticAttachments: ChatAttachment[] = draft.attachments.map((attachment) => ({
+      id: attachment.localId,
+      imageUrl: attachment.uri,
+      contentType: attachment.mimeType,
+      retention: attachment.retention,
+    }));
     setMenuOpen(false);
     Keyboard.dismiss();
-    setMessages((old) => [...old, { id: clientId, role: 'user', text, createdAt: new Date().toISOString(), clientMessageId: clientId }]);
+    setMessages((old) => [...old, { id: clientId, role: 'user', text, attachments: optimisticAttachments, createdAt: new Date().toISOString(), clientMessageId: clientId }]);
     pendingAssistantIdRef.current = assistantClientId;
     requestBackgroundedRef.current = false;
     activeRequestRef.current = true;
     setIsTyping(true);
+    let prepared: PreparedAttachment[] = [];
+    let chatDispatched = false;
     try {
       const token = await getToken();
       if (!token) { router.replace('/auth'); throw new Error('HTTP 401'); }
+      if (draft.attachments.length) {
+        const fileBodies = await Promise.all(draft.attachments.map(async (attachment) => {
+          const response = await fetch(attachment.uri);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength < 1 || bytes.byteLength > 8 * 1024 * 1024) throw new Error('ATTACHMENT_SIZE');
+          return bytes;
+        }));
+        const prepareResponse = await fetchTimed(`${API_ATTACHMENTS}/prepare`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            client_message_id: clientId,
+            files: draft.attachments.map((attachment, index) => ({ content_type: attachment.mimeType, byte_size: fileBodies[index].byteLength, retention: attachment.retention })),
+          }),
+        });
+        const prepareRaw = await prepareResponse.text();
+        let preparePayload: any = {};
+        try { preparePayload = prepareRaw ? JSON.parse(prepareRaw) : {}; } catch {}
+        if (!prepareResponse.ok || !Array.isArray(preparePayload?.attachments)) throw new Error(`ATTACHMENT_PREPARE:${prepareResponse.status}:${prepareRaw.slice(0, 120)}`);
+        prepared = preparePayload.attachments;
+        if (prepared.length !== fileBodies.length) throw new Error('ATTACHMENT_PREPARE_COUNT');
+        await Promise.all(prepared.map(async (attachment, index) => {
+          const { error } = await supabase.storage.from(attachment.bucket).uploadToSignedUrl(attachment.path, attachment.token, fileBodies[index], {
+            contentType: attachment.content_type,
+            cacheControl: '3600',
+          });
+          if (error) throw new Error(`ATTACHMENT_UPLOAD:${error.message}`);
+        }));
+      }
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      chatDispatched = true;
       const response = await fetchTimed(API_CHAT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'x-timezone': timezone },
-        body: JSON.stringify({ message: text, client_message_id: clientId }),
+        body: JSON.stringify({ message: text, client_message_id: clientId, attachment_ids: prepared.map((attachment) => attachment.id) }),
       });
       const raw = await response.text();
       let payload: any = {};
@@ -468,9 +598,12 @@ export default function ChatScreen() {
         if (response.status === 429) throw new Error(`LIMIT:${payload?.used ?? '?'}:${payload?.limit ?? '?'}`);
         throw new Error(`HTTP ${response.status}: ${raw.slice(0, 180)}`);
       }
+      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === payload.image_provider)) setImageProvider(payload.image_provider);
       pendingAssistantIdRef.current = null;
       setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString(), clientMessageId: assistantClientId }]);
     } catch (error: any) {
+      const cleanupToken = await getToken().catch(() => null);
+      if (!chatDispatched && cleanupToken && prepared.length) void discardPendingAttachments(cleanupToken, clientId, prepared.map((attachment) => attachment.id));
       const backgroundInterrupted = requestBackgroundedRef.current || (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState !== 'visible');
       if (backgroundInterrupted) {
         if (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState === 'visible') void reconcilePendingReply();
@@ -482,6 +615,8 @@ export default function ChatScreen() {
       let errorText = 'Nastala chyba pri spojení s Iris.';
       if (message.startsWith('LIMIT:')) { const [, used, limit] = message.split(':'); errorText = `Dnešný limit je vyčerpaný (${used}/${limit}).`; }
       else if (message.includes('401')) errorText = 'Prihlásenie neprešlo (401).';
+      else if (message.includes('ATTACHMENT_SIZE')) errorText = 'Obrázok je väčší než 8 MB.';
+      else if (message.includes('ATTACHMENT_')) errorText = 'Obrázok sa nepodarilo bezpečne nahrať. Skús ho pridať znova.';
       else if (message.includes('HTTP 5')) errorText = 'Backend je dočasne nedostupný.';
       else if (error?.name === 'AbortError') errorText = 'Odpoveď trvala príliš dlho. Skús to znova.';
       setMessages((old) => [...old, { role: 'iris', text: errorText }]);
@@ -494,6 +629,7 @@ export default function ChatScreen() {
   const lastIris = useMemo(() => messages.map((m) => m.role).lastIndexOf('iris'), [messages]);
   const chat = (
     <View style={[styles.container, { backgroundColor: 'transparent' }]}> 
+      {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
       <View style={[styles.header, glassWeb, { borderBottomColor: theme.headerBorder, backgroundColor: theme.header, shadowColor: theme.shadow }]}> 
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
         <View><Text style={[styles.headerName, { color: theme.text }]}>Iris</Text><Text style={[styles.headerStatus, { color: theme.textMuted }]}>with you</Text></View>
@@ -522,6 +658,7 @@ export default function ChatScreen() {
                 );
               })}
             </View>
+            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? 'Ukladám…' : `Aktívny: ${IMAGE_PROVIDER_LABELS[imageProvider]}`}</Text>
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
@@ -531,7 +668,6 @@ export default function ChatScreen() {
           </View>}
         </View>
       </View>
-      {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
 
       <Modal visible={facePackOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!facePackUploading) setFacePackOpen(false); }}>
         <View style={styles.facePackBackdrop}>
@@ -577,7 +713,9 @@ export default function ChatScreen() {
       <ScrollView ref={scrollRef} style={styles.messages} contentContainerStyle={styles.messagesContent} keyboardShouldPersistTaps="handled" onScrollBeginDrag={() => setMenuOpen(false)}>
         {messages.map((message, index) => message.role === 'iris' && message.imageUrl
           ? <ImageBubble key={message.id || `img-${index}`} message={message} themeMode={themeMode} refreshUrl={() => refreshImage(message.imageBucket, message.imagePath)} />
-          : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} themeMode={themeMode} />)}
+          : message.role === 'user' && !!message.attachments?.length
+            ? <AttachmentBubble key={message.id || `attachment-${index}`} message={message} themeMode={themeMode} refreshUrl={(attachment) => refreshImage(attachment.imageBucket, attachment.imagePath)} />
+            : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} themeMode={themeMode} />)}
         {isTyping && <View style={styles.typing}><TypingIndicator themeMode={themeMode} /></View>}
       </ScrollView>
       <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} themeMode={themeMode} /></View>
@@ -598,24 +736,25 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   container: { flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, zIndex: 5, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.10, shadowRadius: 18, elevation: 4 },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, zIndex: 20, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.10, shadowRadius: 18, elevation: 20 },
   avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12 },
   headerName: { fontSize: 18, fontWeight: '700' },
   headerStatus: { fontSize: 12, marginTop: 2 },
-  menuWrap: { marginLeft: 'auto' },
+  menuWrap: { marginLeft: 'auto', zIndex: 30 },
   menuBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1 },
   menuDots: { fontSize: 18 },
-  menu: { position: 'absolute', right: 0, top: 42, minWidth: 228, padding: 9, borderRadius: 16, borderWidth: 1, zIndex: 6, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 10 },
+  menu: { position: 'absolute', right: 0, top: 42, minWidth: 228, padding: 9, borderRadius: 16, borderWidth: 1, zIndex: 40, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 30 },
   menuLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', paddingHorizontal: 8, paddingTop: 4, paddingBottom: 7 },
   themeSwitch: { flexDirection: 'row', borderRadius: 12, padding: 3, borderWidth: 1, marginHorizontal: 3, marginBottom: 7 },
   themeOption: { flex: 1, minHeight: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   themeOptionText: { fontSize: 13, fontWeight: '700' },
   providerOptionText: { fontSize: 12, fontWeight: '700' },
   providerOptionSaving: { opacity: 0.65 },
+  providerActiveText: { fontSize: 11, fontWeight: '600', paddingHorizontal: 8, paddingBottom: 4 },
   menuDivider: { height: 1, marginVertical: 5, marginHorizontal: 4 },
   menuItem: { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 9 },
   menuText: { fontSize: 14 },
-  menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 4 },
+  menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10 },
   facePackBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center', padding: 18 },
   facePackCard: { width: '100%', maxWidth: 520, borderWidth: 1, borderRadius: 22, padding: 18, shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.24, shadowRadius: 32, elevation: 14 },
   facePackHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
@@ -642,6 +781,12 @@ const styles = StyleSheet.create({
   generatedImage: { width: 240, height: 240, borderRadius: 12 },
   imageHint: { fontSize: 11, textAlign: 'center', marginTop: 4 },
   imageCaption: { marginTop: 8, paddingHorizontal: 4 },
+  attachmentBubble: { padding: 8, maxWidth: '92%' },
+  attachmentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, maxWidth: 274 },
+  attachmentImage: { width: 132, height: 132, borderRadius: 11 },
+  attachmentCaption: { marginTop: 8, paddingHorizontal: 4 },
+  permanentBadge: { position: 'absolute', left: 6, bottom: 6, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.72)', paddingHorizontal: 6, paddingVertical: 3 },
+  permanentBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
   fullscreen: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   fullscreenImage: { width: '100%', height: '88%' },
   close: { position: 'absolute', top: Platform.OS === 'web' ? 24 : 50, right: 24, color: '#fff', fontSize: 28, fontWeight: '700' },

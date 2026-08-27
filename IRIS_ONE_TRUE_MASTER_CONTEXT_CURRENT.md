@@ -5,7 +5,7 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-08-25, Europe/Bratislava  
+**Consolidated:** 2026-08-26, Europe/Bratislava
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
@@ -59,15 +59,16 @@ Canonical model config: `server/lib/llmModels.js`
 
 - Main OpenAI chat: `gpt-5.6-terra`
 - OpenAI utility/classifier/memory/image-prompt/background cognition helper: `gpt-5.6-luna`
-- xAI intimate route: `grok-4.5-latest`
+- xAI intimate/vision route: `grok-4.6` (explicit stable production slug)
 - Embeddings: `text-embedding-3-small`
 
 Routing:
 - heat 0 → Terra
 - heat 1 → Terra
-- heat 2 → Grok 4.5
-- heat 3 → Grok 4.5
+- heat 2 → Grok 4.6
+- heat 3 → Grok 4.6
 - current factual/live web assistance at heat 0/1 → OpenAI/Terra
+- factual/live web assistance and exact user-provided links at heat 2/3 remain on Grok 4.6 and use xAI web search; browsing never downgrades an intimate route to Terra
 - Luna handles cheaper semantic classification/governance/background cognition/helper work
 
 Routing integrity:
@@ -84,6 +85,7 @@ Product decision: keep Terra before beta unless real tester data justifies a swi
 ## 4. Language and personality rules
 
 - mirror language of latest substantive user message;
+- heat 2/3 runtime instructions explicitly require native, idiomatic grammar, correct diacritics and natural word order rather than English drift or literal translation;
 - language-neutral short replies continue recent language;
 - no hardcoded Slovak or English default;
 - semantic heat/preference/nickname logic must work in any language/script;
@@ -118,6 +120,18 @@ Major behavior guarantees:
 
 ### Recent chat
 Immediate conversation continuity and short follow-ups.
+
+### User image attachments and exact links
+- chat accepts up to four JPG, PNG or WebP images, maximum 8 MB each;
+- images use private `iris-photos/chat/{userId}/...` paths and server-issued one-time signed uploads; clients never receive the Supabase service role;
+- the backend verifies that the uploaded object exists and checks its MIME type and exact byte size before attaching it to a persisted user turn;
+- images are delivered to the selected conversational model as native `input_image` vision parts and recent images can remain in short model history;
+- an attached photo is treated as something Iris should inspect, not as an implicit request to run the separate Iris-photo generator;
+- default retention is 30 days, after which a background sweep deletes both the Storage object and attachment metadata via the Supabase Storage API;
+- pending/abandoned uploads expire after two hours;
+- only an image explicitly marked by the user as **Môj vzhľad · trvalo** receives `user_appearance` retention and no automatic expiry;
+- deleting chat history deletes temporary attachments; explicitly permanent user-appearance images survive that action;
+- messages containing an HTTP(S) URL force browsing of the exact supplied URL; Iris must disclose retrieval failure instead of pretending to have read it.
 
 ### User profile
 Durable user facts and preferences.
@@ -217,6 +231,18 @@ Priority:
 5. fallback inference only if state is unknown.
 
 A photo request alone never changes a known outfit.
+
+Image scene grounding:
+- a newly and explicitly specified setting/location/room/action is a replacement scene and outranks older conversation, scene place/room and activity context;
+- for such self-contained scene requests, the image composer receives persistent identity and visual state but not older chat turns or stale activity/place details;
+- recently discussed vehicles, props, landmarks, people, animals and locations are never imported merely for narrative continuity; they require an explicit current mention/reference or an immediately accepted planned image;
+- spatial plausibility is mandatory (for example, an apartment-interior request must not pull a previously discussed car into or beside the composition unless explicitly requested).
+
+Image provider selection integrity:
+- provider selection is stored and read server-side against the authenticated user's exact `iris_profiles` row;
+- the client does not accept an optimistic selection as final: it verifies the write with a non-cached authoritative read;
+- every immediate generated-image response reports the provider actually used so the UI reconciles to runtime truth;
+- the menu displays the confirmed active provider and its touch layer must remain above the dismiss overlay.
 
 Long-term visual preferences are separate from current appearance state.
 Examples include nail color, colors/materials, hair/makeup/accessories, clothing/style preferences.
@@ -384,6 +410,7 @@ Current UI includes:
 - push notifications/background reply reconciliation;
 - custom Iris header avatar separate from image-generation reference identity;
 - three-slot face reference pack UI.
+- up to four user image attachments per turn with previews, full-screen viewing and an explicit per-image 30-day/permanent-appearance retention control.
 
 Avatar rule:
 - UI avatar is only the small profile image in the app header;
@@ -448,6 +475,8 @@ Required before broader beta/monetization:
 
 For active Fal image generation, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Do not claim these controls are implemented until verified.
 
+User-uploaded chat images have a separate implemented lifecycle: temporary by default with a 30-day expiry, two-hour cleanup for abandoned uploads, and indefinite retention only after an explicit per-image user-appearance choice.
+
 ## 21. Monetization direction
 
 - PWA/web-first monetization;
@@ -474,6 +503,7 @@ Important regression checks now include:
 - cognition;
 - notification self-healing and invalid-token retirement;
 - companion continuity;
+- multimodal chat, signed uploads, exact-link browsing, explicit attachment retention and Grok 4.6 pinning;
 - web build.
 
 Engineering rules:

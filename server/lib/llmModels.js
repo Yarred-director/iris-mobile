@@ -5,6 +5,6 @@ export const MODELS = {
   openai: 'gpt-5.6-terra',
   // Cheap current-family model for classifiers/governance helpers.
   openaiUtility: 'gpt-5.6-luna',
-  // xAI recommends Grok 4.5 for chat/tool workflows; -latest follows stable upgrades.
-  grok: 'grok-4.5-latest',
+  // Current xAI frontier chat model. Pin the documented production slug so upgrades are explicit and testable.
+  grok: 'grok-4.6',
 };

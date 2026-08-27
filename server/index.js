@@ -4,6 +4,7 @@ import './config/env.js';
 
 import { startScheduledActionLoop } from './actions/scheduledActionWorker.js';
 import { startCognitionLoop } from './cognition/cognitionWorker.js';
+import { startAttachmentCleanupLoop } from './media/attachmentCleanupWorker.js';
 import { createIpRateLimit } from './middleware/rateLimit.js';
 import { sessionMiddleware } from './middleware/session.js';
 import chatRouter from './routes/chat.js';
@@ -67,4 +68,5 @@ app.listen(port, () => {
   console.log(`Iris backend running on port ${port}`);
   startCognitionLoop();
   startScheduledActionLoop();
+  startAttachmentCleanupLoop();
 });

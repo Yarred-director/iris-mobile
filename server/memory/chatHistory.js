@@ -1,5 +1,6 @@
 import { notifyWebPushReply } from '../lib/webPush.js';
 import { safeAssistantText } from '../lib/assistantReplyGuard.js';
+import { deleteAttachmentsForMessage, deleteTemporaryAttachmentsForUser, loadAttachmentsForMessages } from '../media/chatAttachments.js';
 import { createSignedMediaUrl, isUserOwnedMediaPath } from '../media/privateMedia.js';
 
 const DEFAULT_MODEL_HISTORY_LIMIT = 14;
@@ -28,14 +29,41 @@ export async function loadRecentChatMessages(supabase, userId, limit = DEFAULT_M
     console.log('[CHAT_HISTORY] load error:', error.message);
     return [];
   }
-  return (data || []).reverse();
+  const ordered = (data || []).reverse();
+  const attachments = await loadAttachmentsForMessages({ userId, messageIds: ordered.map((message) => message.id) });
+  return ordered.map((message) => ({ ...message, attachments: attachments.get(message.id) || [] }));
 }
 
 export function toModelHistory(messages) {
+  const includedAttachmentIds = new Set();
+  let remainingImages = 4;
+  for (let index = (messages || []).length - 1; index >= 0 && remainingImages > 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    for (const attachment of message.attachments || []) {
+      if (!attachment?.image_url || remainingImages <= 0) continue;
+      includedAttachmentIds.add(attachment.id);
+      remainingImages -= 1;
+    }
+  }
   return (messages || []).flatMap((message) => {
     const content = cleanContent(message.content);
     if (message.role === 'assistant' && !safeAssistantText(content)) return [];
     const imageNote = message.image_path ? '\n[An image was sent in this turn.]' : '';
+    const imageParts = message.role === 'user'
+      ? (message.attachments || [])
+        .filter((attachment) => includedAttachmentIds.has(attachment.id) && attachment.image_url)
+        .map((attachment) => ({ type: 'input_image', image_url: attachment.image_url, detail: 'auto' }))
+      : [];
+    if (imageParts.length) {
+      return [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: `${content || '[User shared an image.]'}${imageNote}`.trim() },
+          ...imageParts,
+        ],
+      }];
+    }
     return [{
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: `${content}${imageNote}`.trim() || '[empty message]',
@@ -71,6 +99,7 @@ export async function saveChatMessage(supabase, { userId, role, content, imageBu
 
 export async function deleteUserChatMessageById(supabase, { userId, messageId }) {
   if (!userId || !messageId) return false;
+  await deleteAttachmentsForMessage({ userId, messageId });
   const { error } = await supabase
     .from('chat_messages')
     .delete()
@@ -105,7 +134,12 @@ export async function listChatHistory(supabase, userId, limit = DEFAULT_CLIENT_H
     .order('created_at', { ascending: false })
     .limit(safeLimit);
   if (error) throw new Error(error.message);
-  return Promise.all((data || []).reverse().map((message) => signHistoryMessage(message, userId)));
+  const ordered = (data || []).reverse();
+  const attachments = await loadAttachmentsForMessages({ userId, messageIds: ordered.map((message) => message.id) });
+  return Promise.all(ordered.map(async (message) => ({
+    ...await signHistoryMessage(message, userId),
+    attachments: attachments.get(message.id) || [],
+  })));
 }
 
 export function assistantClientMessageId(clientMessageId) {
@@ -130,6 +164,7 @@ export async function loadExistingAssistantResponse(supabase, userId, clientMess
 }
 
 export async function clearChatHistory(supabase, userId) {
+  await deleteTemporaryAttachmentsForUser(userId);
   const { error } = await supabase.from('chat_messages').delete().eq('user_id', userId);
   if (error) throw new Error(error.message);
   return true;

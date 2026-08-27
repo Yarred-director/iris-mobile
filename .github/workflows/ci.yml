@@ -32,4 +32,5 @@ jobs:
       - run: npm run test:cognition
       - run: npm run test:notifications
       - run: npm run test:companion-continuity
+      - run: npm run test:multimodal-chat
       - run: npm run build:web

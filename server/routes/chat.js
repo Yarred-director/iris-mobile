@@ -10,6 +10,7 @@ import { intentJudgeLLM } from '../behavior/intentJudge.js';
 import { loadCognitiveContinuity, reflectOnExchange } from '../cognition/cognitiveEngine.js';
 import { looksLikeFactualQuestion } from '../helpers/factualDetector.js';
 import { buildLiveAssistanceDirective, looksLikeLiveAssistanceRequest } from '../helpers/liveAssistance.js';
+import { buildExactLinkDirective, extractHttpUrls } from '../helpers/linkAccess.js';
 import { assemblePrompt } from '../helpers/promptAssembler.js';
 import { handleImageRequest } from '../image/imageHandler.js';
 import { createValidatedAssistantReply, safeAssistantText } from '../lib/assistantReplyGuard.js';
@@ -36,6 +37,7 @@ import { getSceneFacts } from '../memory/sceneFacts.js';
 import { loadSelfModel } from '../memory/selfAwareness.js';
 import { beginOrTouchTemporalSession, touchLastPhotoSent } from '../memory/timeContext.js';
 import { loadVisualState, persistVisualSignals, selectPotentialVisualPreferences } from '../memory/visualState.js';
+import { attachChatAttachments, discardChatAttachments, prepareChatAttachments } from '../media/chatAttachments.js';
 
 const router = Router();
 const MAX_USER_MESSAGE_CHARS = 8000;
@@ -76,12 +78,47 @@ function shouldRunCognitiveReflection(userText, irisReply) {
     || shouldRunPersonalityEvolution(userText);
 }
 
+router.post('/chat/attachments/prepare', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+    const attachments = await prepareChatAttachments({
+      userId,
+      clientMessageId: req.body?.client_message_id,
+      files: req.body?.files,
+    });
+    return res.json({ attachments, expires_in_seconds: 7200 });
+  } catch (error) {
+    console.error('[CHAT_ATTACHMENT_PREPARE_ERROR]', error?.code || error?.message || error);
+    const clientError = ['invalid_client_message_id', 'invalid_attachment_count', 'unsupported_attachment_type', 'invalid_attachment_size'].includes(error?.code || error?.message);
+    return res.status(clientError ? 400 : 500).json({ error: clientError ? (error?.code || error?.message) : 'attachment_prepare_failed' });
+  }
+});
+
+router.delete('/chat/attachments', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+    const deleted = await discardChatAttachments({
+      userId,
+      clientMessageId: req.body?.client_message_id || null,
+      attachmentIds: req.body?.attachment_ids || [],
+    });
+    return res.json({ ok: true, deleted });
+  } catch (error) {
+    console.error('[CHAT_ATTACHMENT_DELETE_ERROR]', error?.code || error?.message || error);
+    return res.status(500).json({ error: 'attachment_delete_failed' });
+  }
+});
+
 router.post('/chat', async (req, res) => {
   let rollbackUserMessage = null;
   let assistantPersisted = false;
   try {
-    const message = String(req.body?.message || '').trim();
-    if (!message) return res.json({ reply: '…' });
+    const rawMessage = String(req.body?.message || '').trim();
+    const attachmentIds = Array.isArray(req.body?.attachment_ids) ? req.body.attachment_ids : [];
+    if (!rawMessage && !attachmentIds.length) return res.json({ reply: '…' });
+    const message = rawMessage || 'Pozri sa na priložený obrázok a reaguj naň prirodzene.';
     if (message.length > MAX_USER_MESSAGE_CHARS) return res.status(413).json({ error: 'message_too_long', max_chars: MAX_USER_MESSAGE_CHARS });
 
     const userId = await requireUserId(req, res);
@@ -134,8 +171,11 @@ router.post('/chat', async (req, res) => {
     const emptyRecall = { memories: [], meta: { confident: false, reason: 'policy_skipped' } };
     const recallSharedTask = queryEmbedding ? recallSharedExperiences(req.supabase, message, userId, queryEmbedding) : Promise.resolve([]);
     const recallEpisodicTask = queryEmbedding ? recallEpisodicMemory(req.supabase, message, userId, queryEmbedding) : Promise.resolve(emptyRecall);
-    const liveAssistanceRequested = looksLikeLiveAssistanceRequest(message);
-    const imageRequested = looksLikeImageRequest(message);
+    const providedUrls = extractHttpUrls(message);
+    const liveAssistanceRequested = looksLikeLiveAssistanceRequest(message) || providedUrls.length > 0;
+    // A photo plus words such as "fotka" normally asks Iris to inspect the attachment,
+    // not to launch the separate Iris-photo generation pipeline.
+    const imageRequested = attachmentIds.length === 0 && looksLikeImageRequest(message);
     const factualTask = (couldBeFactualQuestion(message) || liveAssistanceRequested)
       ? looksLikeFactualQuestion(message, openaiClient, utilityModel)
       : Promise.resolve(false);
@@ -177,10 +217,13 @@ router.post('/chat', async (req, res) => {
     ]).then((results) => results.map((item) => item.status === 'fulfilled' ? item.value : null));
 
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
-    const savedUserMessage = await saveChatMessage(req.supabase, { userId, role: 'user', content: message, clientMessageId });
+    const savedUserMessage = await saveChatMessage(req.supabase, { userId, role: 'user', content: rawMessage, clientMessageId });
     if (savedUserMessage?.id) {
       rollbackUserMessage = { supabase: req.supabase, userId, messageId: savedUserMessage.id };
     }
+    const currentAttachments = savedUserMessage?.id
+      ? await attachChatAttachments({ userId, clientMessageId, attachmentIds, messageId: savedUserMessage.id })
+      : [];
 
     const resolvedPhysicalIdentity = await bootstrapPhysicalIdentityFromUserHistory({
       supabase: req.supabase,
@@ -250,7 +293,7 @@ router.post('/chat', async (req, res) => {
 
     const heatLevel = Number.isInteger(intent?.heat_level) ? intent.heat_level : 0;
     const requestedWebSearch = Boolean(liveAssistanceRequested || isFactual);
-    const useWebSearch = requestedWebSearch && heatLevel < 2;
+    const useWebSearch = requestedWebSearch;
     const engine = engineForHeat(heatLevel, { useWebSearch });
 
     let systemPrompt = assemblePrompt({
@@ -273,6 +316,7 @@ router.post('/chat', async (req, res) => {
       isFactual: Boolean(isFactual && heatLevel < 2 && !useWebSearch),
     });
     if (useWebSearch) systemPrompt = `${systemPrompt}\n\n${buildLiveAssistanceDirective(sceneContext)}`;
+    if (providedUrls.length) systemPrompt = `${systemPrompt}\n\n${buildExactLinkDirective(providedUrls)}`;
     systemPrompt = `${systemPrompt}\n\n${buildHeatDirective({ heatLevel, intensityStyle: intent?.intensity_style })}`;
 
     let scheduledAction = null;
@@ -351,21 +395,32 @@ router.post('/chat', async (req, res) => {
           image_url: imageResult.imageUrl || null,
           image_bucket: imageResult.imageBucket || null,
           image_path: imageResult.imagePath || null,
+          image_provider: imageResult.provider || null,
           usage: { chat: chatUsage, image: imageResult.usage || null },
         });
       }
     }
 
     const client = getLLMClient(engine);
+    const currentUserInput = currentAttachments.length
+      ? {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: message },
+            ...currentAttachments.map((attachment) => ({ type: 'input_image', image_url: attachment.image_url, detail: 'auto' })),
+          ],
+        }
+      : { role: 'user', content: message };
     const responseArgs = {
       model: MODELS[engine],
-      input: [{ role: 'system', content: systemPrompt }, ...toModelHistory(recentChat), { role: 'user', content: message }],
+      input: [{ role: 'system', content: systemPrompt }, ...toModelHistory(recentChat), currentUserInput],
     };
     if (engine === 'openai') {
       responseArgs.reasoning = { effort: useWebSearch ? 'low' : 'none' };
       if (useWebSearch) responseArgs.tools = [{ type: 'web_search' }];
     } else if (engine === 'grok') {
       responseArgs.reasoning = { effort: 'low' };
+      if (useWebSearch) responseArgs.tools = [{ type: 'web_search' }];
     }
 
     const validateReply = heatLevel >= 2

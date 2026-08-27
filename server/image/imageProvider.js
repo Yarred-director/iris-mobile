@@ -44,15 +44,22 @@ export async function loadUserImageProvider(supabase, userId) {
 }
 
 export async function saveUserImageProvider(supabase, userId, provider) {
+  if (!supabase || !userId) throw new Error('image_provider_store_unavailable');
   const candidate = String(provider || '').trim().toLowerCase();
   if (!USER_SELECTABLE_IMAGE_PROVIDERS.has(candidate)) throw new Error('invalid_image_provider');
   const resolved = resolveUserImageProvider(candidate);
   const now = new Date().toISOString();
-  const { error } = await supabase.from('iris_profiles').upsert({
-    user_id: userId,
-    image_provider: resolved,
-    updated_at: now,
-  }, { onConflict: 'user_id' });
+  const { data, error } = await supabase
+    .from('iris_profiles')
+    .upsert({
+      user_id: userId,
+      image_provider: resolved,
+      updated_at: now,
+    }, { onConflict: 'user_id' })
+    .select('image_provider')
+    .single();
   if (error) throw new Error(error.message);
-  return resolved;
+  const persisted = resolveUserImageProvider(data?.image_provider);
+  if (persisted !== resolved) throw new Error('image_provider_verify_failed');
+  return persisted;
 }

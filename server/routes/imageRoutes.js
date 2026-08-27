@@ -12,7 +12,8 @@ router.get('/iris/image-provider', async (req, res) => {
   try {
     const userId = await requireUserId(req, res);
     if (!userId) return;
-    const provider = await loadUserImageProvider(req.supabase, userId);
+    res.setHeader('Cache-Control', 'no-store');
+    const provider = await loadUserImageProvider(req.supabaseAdmin, userId);
     return res.json({ provider, options: IMAGE_PROVIDER_OPTIONS });
   } catch (error) {
     console.error('[IMAGE_PROVIDER_GET_ERROR]', error?.message || error);
@@ -26,7 +27,9 @@ router.put('/iris/image-provider', async (req, res) => {
     if (!userId) return;
     const provider = String(req.body?.provider || '').trim().toLowerCase();
     if (!IMAGE_PROVIDER_OPTIONS.includes(provider)) return res.status(400).json({ error: 'invalid_image_provider' });
-    const saved = await saveUserImageProvider(req.supabase, userId, provider);
+    const saved = await saveUserImageProvider(req.supabaseAdmin, userId, provider);
+    res.setHeader('Cache-Control', 'no-store');
+    console.log('[IMAGE_PROVIDER_SAVED]', { userId, provider: saved });
     return res.json({ ok: true, provider: saved });
   } catch (error) {
     console.error('[IMAGE_PROVIDER_SAVE_ERROR]', error?.message || error);
@@ -75,6 +78,7 @@ router.post('/iris/generate-image', async (req, res) => {
       image_bucket: result.imageBucket || null,
       image_path: result.imagePath || null,
       usage: result.usage || null,
+      image_provider: result.provider || null,
     });
   } catch (error) {
     console.error('[GENERATE_IMAGE_ERROR]', error?.message || error);
