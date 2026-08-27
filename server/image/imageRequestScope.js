@@ -6,6 +6,12 @@ request_scope:
 - scene_continuation: the latest message explicitly requests this/that/same scene or photo, describes an action/pose/outfit/location to depict, corrects a planned image, or directly accepts a specific image scene proposed in the immediately preceding assistant turn.
 - standalone: the latest message is a generic request for a photo/selfie of Iris and the immediately preceding assistant turn does not contain a specific proposed image scene. An error message is not a proposed scene. Do not inherit an older intimate scene through one or more generation errors.
 
+signal distinction:
+- specified_scene: the latest message itself supplies a new concrete setting, location, room, action or subject without referring back to an older proposed image. A recent topic such as a car does not become part of this new scene unless the latest message mentions or clearly references it.
+- explicit_scene_reference / accepted_immediate_scene: the latest message uses a real reference such as this/that/same/there or directly accepts the immediately preceding proposed scene.
+- correction: the latest message explicitly corrects a generated or immediately proposed image while keeping its other details.
+- generic_photo: no concrete scene and no immediate-scene reference.
+
 sexualized:
 - true when the requested image itself includes nudity, erotic exposure, sexual touching, a sexual act, sexualized posing, or an inherited immediate scene with such content.
 - false for an ordinary portrait, selfie, outfit photo, swimwear/fashion photo, or other nonsexual personal photo.

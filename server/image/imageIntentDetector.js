@@ -42,6 +42,9 @@ CONVERSATION CONTINUITY RULES:
 - Use recent conversation to resolve references such as "that scene", "that outfit", "show me", "send me a photo", "pošli mi tú fotku", or short approval such as "yes, exactly".
 - If the immediately preceding assistant turn clearly described a specific image and the user accepts it or asks for "that photo", inherit that planned scene as the authoritative image specification.
 - If the latest message corrects a just-generated/planned image, preserve every unspecified scene/outfit/detail and change only what the user corrected.
+- The latest explicit setting, location, room, action and requested subjects always outrank older conversation. Treat a newly specified scene as a replacement scene, not as an invitation to assemble every recently mentioned object into one image.
+- Never import a vehicle, prop, landmark, building exterior, person or animal merely because it was discussed recently. Include it only when the latest request explicitly mentions it, clearly refers back to it, or the immediately accepted image plan requires it.
+- Respect spatial plausibility. An indoor apartment photo must remain an apartment interior; do not place a car or unrelated exterior subject inside, beside or compositionally attached to a skyscraper/apartment unless the latest request explicitly asks for that view.
 - Prefer CURRENT_VISUAL_STATE over genuinely older conflicting chat details, but never let stale state erase an explicit immediate planned-scene change.
 - CURRENT_ACTIVITY_STATE is authoritative for what Iris is doing/planning. The image and caption must not invent a beach, sea trip, coffee, shower, workout, return-home event, or other activity that is not supported by current activity continuity/recent conversation.
 
@@ -100,18 +103,19 @@ function compactObject(value) {
   return output;
 }
 
-function contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences) {
+function contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences, requestScope) {
+  const latestDefinesNewScene = requestScope?.signal === 'specified_scene';
   return {
     scene: {
       city: sceneContext?.location_city || sceneContext?._resolved?.city || null,
       country: sceneContext?.location_country || sceneContext?._resolved?.country || null,
-      place: sceneContext?.place || null,
-      room: sceneContext?.room || null,
+      place: latestDefinesNewScene ? null : sceneContext?.place || null,
+      room: latestDefinesNewScene ? null : sceneContext?.room || null,
       time_of_day: sceneContext?.time_of_day || null,
     },
     CURRENT_VISUAL_STATE: compactObject(visualState?.state || visualState || {}),
     USER_DEFINED_PHYSICAL_IDENTITY: compactObject(physicalIdentity || {}),
-    CURRENT_ACTIVITY_STATE: activityState || {},
+    CURRENT_ACTIVITY_STATE: latestDefinesNewScene ? {} : activityState || {},
     USER_VISUAL_PREFERENCES: (Array.isArray(visualPreferences) ? visualPreferences : [])
       .map((item) => String(item || '').trim().slice(0, 400))
       .filter(Boolean)
@@ -200,13 +204,21 @@ export async function extractImageIntent({
     console.log('[IMAGE_SCOPE_ERROR]', error?.code || error?.message);
   }
 
-  const history = cleanHistory(requestScope.request_scope === 'scene_continuation' ? conversationHistory : []);
+  // A fully specified current scene is self-contained. Identity and outfit continuity
+  // come from their authoritative state layers, so older turns must not leak vivid
+  // props/vehicles/locations into the new composition.
+  const shouldUseHistory = requestScope.request_scope === 'scene_continuation' && requestScope.signal !== 'specified_scene';
+  const history = cleanHistory(shouldUseHistory ? conversationHistory : []);
   try {
-    const context = contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences);
+    const context = contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences, requestScope);
+    const sceneAuthority = requestScope.signal === 'specified_scene'
+      ? 'SCENE AUTHORITY: The latest user message defines a new self-contained visual scene. Use older context only through the supplied identity and visual-state blocks. Do not add any older vehicle, prop, landmark, person, animal, building exterior, location or action unless the latest message itself explicitly requests it.'
+      : 'SCENE AUTHORITY: Resolve only explicit references to the immediate planned scene. Never add unrelated entities merely because they appeared earlier in conversation.';
     const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
       ...history,
       { role: 'system', content: `IMAGE_REQUEST_SCOPE: ${requestScope.request_scope}. REQUEST_IS_SEXUALIZED: ${requestScope.sexualized}. For standalone requests, do not import actions, poses or interaction from older conversation.` },
+      { role: 'system', content: sceneAuthority },
       { role: 'system', content: `Resolved visual/activity context for this image:\n${JSON.stringify(context)}` },
       { role: 'user', content: String(text || '').trim() },
     ];

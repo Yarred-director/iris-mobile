@@ -232,6 +232,18 @@ Priority:
 
 A photo request alone never changes a known outfit.
 
+Image scene grounding:
+- a newly and explicitly specified setting/location/room/action is a replacement scene and outranks older conversation, scene place/room and activity context;
+- for such self-contained scene requests, the image composer receives persistent identity and visual state but not older chat turns or stale activity/place details;
+- recently discussed vehicles, props, landmarks, people, animals and locations are never imported merely for narrative continuity; they require an explicit current mention/reference or an immediately accepted planned image;
+- spatial plausibility is mandatory (for example, an apartment-interior request must not pull a previously discussed car into or beside the composition unless explicitly requested).
+
+Image provider selection integrity:
+- provider selection is stored and read server-side against the authenticated user's exact `iris_profiles` row;
+- the client does not accept an optimistic selection as final: it verifies the write with a non-cached authoritative read;
+- every immediate generated-image response reports the provider actually used so the UI reconciles to runtime truth;
+- the menu displays the confirmed active provider and its touch layer must remain above the dismiss overlay.
+
 Long-term visual preferences are separate from current appearance state.
 Examples include nail color, colors/materials, hair/makeup/accessories, clothing/style preferences.
 A narrow preference must never be generalized without evidence.

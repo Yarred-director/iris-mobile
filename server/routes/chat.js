@@ -395,6 +395,7 @@ router.post('/chat', async (req, res) => {
           image_url: imageResult.imageUrl || null,
           image_bucket: imageResult.imageBucket || null,
           image_path: imageResult.imagePath || null,
+          image_provider: imageResult.provider || null,
           usage: { chat: chatUsage, image: imageResult.usage || null },
         });
       }

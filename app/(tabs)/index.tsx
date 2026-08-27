@@ -51,6 +51,7 @@ const IMAGE_PROVIDER_OPTIONS: { value: ImageProvider; label: string }[] = [
   { value: 'grok_imagine_2', label: 'Grok' },
   { value: 'kling_o3', label: 'Kling' },
 ];
+const IMAGE_PROVIDER_LABELS = Object.fromEntries(IMAGE_PROVIDER_OPTIONS.map((option) => [option.value, option.label])) as Record<ImageProvider, string>;
 
 const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; label: string; hint: string }[] = [
   { slot: 'front', label: 'Spredu', hint: 'Tvár rovno ku kamere' },
@@ -251,7 +252,7 @@ export default function ChatScreen() {
       const token = await getToken();
       if (!token) return;
       try {
-        const response = await fetchTimed(API_IMAGE_PROVIDER, { headers: { Authorization: `Bearer ${token}` } });
+        const response = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
         if (!response.ok) return;
         const provider = (await response.json())?.provider;
         if (!cancelled && IMAGE_PROVIDER_OPTIONS.some((option) => option.value === provider)) setImageProvider(provider);
@@ -262,8 +263,6 @@ export default function ChatScreen() {
 
   const selectImageProvider = async (provider: ImageProvider) => {
     if (imageProviderSaving || provider === imageProvider) return;
-    const previous = imageProvider;
-    setImageProvider(provider);
     setImageProviderSaving(true);
     try {
       const token = await getToken();
@@ -275,9 +274,14 @@ export default function ChatScreen() {
       });
       if (!response.ok) throw new Error(`Uloženie zlyhalo (${response.status}).`);
       const saved = (await response.json())?.provider;
-      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === saved)) setImageProvider(saved);
+      if (saved !== provider) throw new Error('Server nepotvrdil zvolený model.');
+      const verifyResponse = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+      if (!verifyResponse.ok) throw new Error(`Overenie zlyhalo (${verifyResponse.status}).`);
+      const verified = (await verifyResponse.json())?.provider;
+      if (verified !== provider) throw new Error('Uložený model sa nezhoduje so zvoleným.');
+      setImageProvider(provider);
+      setMenuOpen(false);
     } catch (error: any) {
-      setImageProvider(previous);
       Alert.alert('Iris', `Generátor fotiek sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
     } finally {
       setImageProviderSaving(false);
@@ -594,6 +598,7 @@ export default function ChatScreen() {
         if (response.status === 429) throw new Error(`LIMIT:${payload?.used ?? '?'}:${payload?.limit ?? '?'}`);
         throw new Error(`HTTP ${response.status}: ${raw.slice(0, 180)}`);
       }
+      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === payload.image_provider)) setImageProvider(payload.image_provider);
       pendingAssistantIdRef.current = null;
       setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString(), clientMessageId: assistantClientId }]);
     } catch (error: any) {
@@ -624,6 +629,7 @@ export default function ChatScreen() {
   const lastIris = useMemo(() => messages.map((m) => m.role).lastIndexOf('iris'), [messages]);
   const chat = (
     <View style={[styles.container, { backgroundColor: 'transparent' }]}> 
+      {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
       <View style={[styles.header, glassWeb, { borderBottomColor: theme.headerBorder, backgroundColor: theme.header, shadowColor: theme.shadow }]}> 
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
         <View><Text style={[styles.headerName, { color: theme.text }]}>Iris</Text><Text style={[styles.headerStatus, { color: theme.textMuted }]}>with you</Text></View>
@@ -652,6 +658,7 @@ export default function ChatScreen() {
                 );
               })}
             </View>
+            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? 'Ukladám…' : `Aktívny: ${IMAGE_PROVIDER_LABELS[imageProvider]}`}</Text>
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
@@ -661,7 +668,6 @@ export default function ChatScreen() {
           </View>}
         </View>
       </View>
-      {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
 
       <Modal visible={facePackOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!facePackUploading) setFacePackOpen(false); }}>
         <View style={styles.facePackBackdrop}>
@@ -730,24 +736,25 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   container: { flex: 1, width: '100%', maxWidth: 900, alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, zIndex: 5, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.10, shadowRadius: 18, elevation: 4 },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, zIndex: 20, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.10, shadowRadius: 18, elevation: 20 },
   avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12 },
   headerName: { fontSize: 18, fontWeight: '700' },
   headerStatus: { fontSize: 12, marginTop: 2 },
-  menuWrap: { marginLeft: 'auto' },
+  menuWrap: { marginLeft: 'auto', zIndex: 30 },
   menuBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1 },
   menuDots: { fontSize: 18 },
-  menu: { position: 'absolute', right: 0, top: 42, minWidth: 228, padding: 9, borderRadius: 16, borderWidth: 1, zIndex: 6, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 10 },
+  menu: { position: 'absolute', right: 0, top: 42, minWidth: 228, padding: 9, borderRadius: 16, borderWidth: 1, zIndex: 40, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 28, elevation: 30 },
   menuLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', paddingHorizontal: 8, paddingTop: 4, paddingBottom: 7 },
   themeSwitch: { flexDirection: 'row', borderRadius: 12, padding: 3, borderWidth: 1, marginHorizontal: 3, marginBottom: 7 },
   themeOption: { flex: 1, minHeight: 34, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   themeOptionText: { fontSize: 13, fontWeight: '700' },
   providerOptionText: { fontSize: 12, fontWeight: '700' },
   providerOptionSaving: { opacity: 0.65 },
+  providerActiveText: { fontSize: 11, fontWeight: '600', paddingHorizontal: 8, paddingBottom: 4 },
   menuDivider: { height: 1, marginVertical: 5, marginHorizontal: 4 },
   menuItem: { paddingVertical: 10, paddingHorizontal: 10, borderRadius: 9 },
   menuText: { fontSize: 14 },
-  menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 4 },
+  menuOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10 },
   facePackBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.48)', alignItems: 'center', justifyContent: 'center', padding: 18 },
   facePackCard: { width: '100%', maxWidth: 520, borderWidth: 1, borderRadius: 22, padding: 18, shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.24, shadowRadius: 32, elevation: 14 },
   facePackHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },

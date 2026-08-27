@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { compactQwenMaxPrompt } from '../server/image/imageGen.js';
 import { extractImageIntent } from '../server/image/imageIntentDetector.js';
 import { parseImageRequestScopeResponse } from '../server/image/imageRequestScope.js';
-import { ACTIVE_IMAGE_PROVIDER, IMAGE_PROVIDER_OPTIONS, isFalImageProvider, resolveFalImageProvider, resolveUserImageProvider } from '../server/image/imageProvider.js';
+import { ACTIVE_IMAGE_PROVIDER, IMAGE_PROVIDER_OPTIONS, isFalImageProvider, loadUserImageProvider, resolveFalImageProvider, resolveUserImageProvider, saveUserImageProvider } from '../server/image/imageProvider.js';
 
 let capturedInput = null;
 let capturedScopeInput = null;
@@ -123,6 +123,39 @@ assert.equal(emotionPortrait.framing, 'close_up', 'Explicit emotional face detai
 assert.equal(emotionPortrait.aspect_ratio, '1:1', 'Close-up portrait should default to square framing.');
 
 mockResponse = {
+  prompt: 'Photorealistic photo of Iris relaxing inside a modern apartment, natural interior light.',
+  explicit: false,
+  framing: 'three_quarter',
+  aspect_ratio: 'auto',
+};
+mockScope = {
+  request_scope: 'scene_continuation',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'specified_scene',
+};
+const apartmentAfterSkyline = await extractImageIntent({
+  text: 'vytvor mi fotku v apartmáne',
+  conversationHistory: [
+    { role: 'user', content: 'Ten Nissan Skyline, ktorý sme si požičali, je úplne brutálny.' },
+    { role: 'assistant', content: 'Je nádherný, ešte sa s ním pôjdeme previezť mestom.' },
+  ],
+  sceneContext: { location_city: 'Dubai', place: 'outside the skyscraper beside the Nissan Skyline', room: null, time_of_day: 'evening' },
+  visualState: { state: { outfit: 'black satin lounge set', nails: 'glossy black nail polish' } },
+  physicalIdentity: { body_description: 'adult woman with natural adult proportions' },
+  activityState: { current_activity: 'driving the rented Nissan Skyline around the skyscrapers' },
+  llmClient,
+  model: 'mock-model',
+});
+const apartmentJoined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
+assert.doesNotMatch(apartmentJoined, /nissan|skyline|rented|driving the/, 'A newly specified apartment scene must not receive stale vehicle/activity context.');
+assert.doesNotMatch(apartmentJoined, /outside the skyscraper/, 'A newly specified indoor scene must not receive the old place/room context.');
+assert.match(apartmentJoined, /latest user message defines a new self-contained visual scene/, 'Specified scenes need an explicit authority directive.');
+assert.match(apartmentJoined, /black satin lounge set/, 'Removing stale scene context must preserve authoritative visual state.');
+assert.match(apartmentAfterSkyline.prompt.toLowerCase(), /inside a modern apartment/, 'The requested apartment scene must remain the final image scene.');
+assert.match(apartmentAfterSkyline.prompt.toLowerCase(), /black satin lounge set/, 'The final prompt must preserve the established outfit after scene reset.');
+
+mockResponse = {
   prompt: 'Ordinary nonsexual personal photo of Iris alone in a relaxed neutral pose and tasteful casual clothing.',
   explicit: false,
   framing: 'three_quarter',
@@ -174,6 +207,26 @@ assert.equal(resolveFalImageProvider('kling'), 'kling_o3', 'Legacy Kling alias m
 assert.equal(resolveFalImageProvider('grok'), 'grok_imagine_2', 'Grok alias must resolve to the canonical current xAI provider.');
 assert.deepEqual(IMAGE_PROVIDER_OPTIONS, ['openai_gpt_image_2', 'grok_imagine_2', 'kling_o3'], 'Only the three product-approved Fal engines may appear in the app switch.');
 assert.equal(resolveUserImageProvider('qwen_image_max'), 'kling_o3', 'Internal fallback providers must not become a user preference.');
+
+let persistedProvider = 'kling_o3';
+const providerStore = {
+  from: (table) => {
+    assert.equal(table, 'iris_profiles');
+    return {
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { image_provider: persistedProvider }, error: null }) }) }),
+      upsert: (payload) => ({
+        select: () => ({
+          single: async () => {
+            persistedProvider = payload.image_provider;
+            return { data: { image_provider: persistedProvider }, error: null };
+          },
+        }),
+      }),
+    };
+  },
+};
+assert.equal(await saveUserImageProvider(providerStore, 'user-1', 'grok_imagine_2'), 'grok_imagine_2', 'Provider save must return the database-confirmed engine.');
+assert.equal(await loadUserImageProvider(providerStore, 'user-1'), 'grok_imagine_2', 'Provider load must observe the engine that was just persisted.');
 
 const qwenPrompt = compactQwenMaxPrompt(result.prompt, 3);
 assert.ok(qwenPrompt.length <= 800, 'Qwen Image Max prompt must stay within the provider limit.');
