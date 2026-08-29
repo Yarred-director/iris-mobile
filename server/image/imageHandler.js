@@ -4,6 +4,7 @@ import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 import { loadUserImageProvider } from './imageProvider.js';
+import { persistVisualSignals } from '../memory/visualState.js';
 
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
@@ -101,6 +102,22 @@ export async function handleImageRequest({
     model,
   });
   if (!intent) return { handled: false };
+
+  if (intent.outfitOverride) {
+    await persistVisualSignals({
+      supabase,
+      userId,
+      intent: {
+        visual_change: 'explicit',
+        appearance_patch: { outfit: intent.outfitOverride },
+        clear_appearance_fields: intent.resetsSceneDetails ? ['other_details'] : [],
+        appearance_confidence: 0.99,
+        image_delivery_mode: 'immediate',
+        visual_preference_updates: [],
+      },
+      currentVisualState: visualState,
+    });
+  }
 
   const references = await getIrisReferencePhotos(supabase, userId);
   if (!references.length) {

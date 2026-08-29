@@ -59,6 +59,8 @@ VISUAL CONTINUITY:
 - If the latest user message only praises a look/style, learn the preference but do not automatically alter CURRENT_VISUAL_STATE unless the message also establishes a current change.
 - Resolve references like "those shorts", "the dress we bought", or equivalents using recent conversation and MEMORY_HINTS. Do not invent a remembered item when the hints do not support it.
 - appearance_patch contains only fields that actually change or need initialization. Allowed conceptual fields are outfit, footwear, nails, hair, makeup, accessories, other_details. Values are concise natural-language visual descriptions, not codes.
+- When the latest user explicitly requests a complete garment/look such as a robe, dress, swimsuit, lingerie set or suit, appearance_patch.outfit must be the COMPLETE replacement outfit based only on that request. Do not merge it with the old outfit or preserve an old visible underlayer unless the user explicitly says over/under/with/layered.
+- other_details is only for person-specific temporary visible styling that fits no other field. Never store a vehicle, location, room, pose, action or activity in other_details.
 - clear_appearance_fields contains fields that should genuinely become unknown/not applicable; otherwise leave it empty.
 - If is_image_request=true and CURRENT_VISUAL_STATE already has an outfit, preserve it unless the user explicitly changes it for the CURRENT moment or a strong current transition requires a change.
 - If an IMMEDIATE image is requested and CURRENT_VISUAL_STATE has no outfit, infer one plausible complete outfit from current context and mark visual_change="contextual" so it persists.

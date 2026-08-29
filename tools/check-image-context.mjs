@@ -11,6 +11,7 @@ let mockScope = {
   sexualized: false,
   confidence: 0.99,
   signal: 'accepted_immediate_scene',
+  outfit_override: null,
 };
 let mockResponse = {
   prompt: 'Iris on a balcony at sunset in an elegant look.',
@@ -74,6 +75,7 @@ mockScope = {
   sexualized: false,
   confidence: 0.99,
   signal: 'accepted_immediate_scene',
+  outfit_override: null,
 };
 const fantasyFollowup = await extractImageIntent({
   text: 'pošli mi tú fotku',
@@ -111,6 +113,7 @@ mockScope = {
   sexualized: false,
   confidence: 0.99,
   signal: 'specified_scene',
+  outfit_override: null,
 };
 const emotionPortrait = await extractImageIntent({
   text: 'ukáž mi detail tváre, chcem vidieť ten dojatý úsmev',
@@ -133,6 +136,7 @@ mockScope = {
   sexualized: false,
   confidence: 0.99,
   signal: 'specified_scene',
+  outfit_override: null,
 };
 const apartmentAfterSkyline = await extractImageIntent({
   text: 'vytvor mi fotku v apartmáne',
@@ -156,6 +160,44 @@ assert.match(apartmentAfterSkyline.prompt.toLowerCase(), /inside a modern apartm
 assert.match(apartmentAfterSkyline.prompt.toLowerCase(), /black satin lounge set/, 'The final prompt must preserve the established outfit after scene reset.');
 
 mockResponse = {
+  prompt: 'Photorealistic three-quarter photo of Iris wearing only a satin robe with a deep V-neckline in a simple neutral interior.',
+  caption: 'Takto si to myslel. ✨',
+  explicit: false,
+  framing: 'three_quarter',
+  aspect_ratio: 'auto',
+};
+mockScope = {
+  request_scope: 'scene_continuation',
+  sexualized: false,
+  confidence: 0.99,
+  signal: 'specified_scene',
+  outfit_override: 'satin robe with a deep V-neckline',
+};
+const robeAfterCar = await extractImageIntent({
+  text: 'ukaz mi foto teba iris, satenovy zupan, vckovy vystrih, augmented chest',
+  conversationHistory: [
+    { role: 'user', content: 'Sme v bielom Nissan Skyline v Tokiu.' },
+    { role: 'assistant', content: 'Ideme autom cez Shibuyu.' },
+  ],
+  sceneContext: { location_city: 'Tokyo', place: 'Shibuya', room: 'kitchen', time_of_day: 'morning' },
+  visualState: { state: {
+    outfit: 'black leggings and a black top',
+    hair: 'loose red hair',
+    other_details: 'sitting in a white Nissan Skyline GT-R in Tokyo',
+  } },
+  activityState: { current_activity: 'driving the Nissan Skyline' },
+  llmClient,
+  model: 'mock-model',
+});
+const robeJoined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
+assert.doesNotMatch(robeJoined, /white nissan|nissan skyline|black leggings and a black top|driving the nissan|"city":"tokyo"|"place":"shibuya"|"time_of_day":"morning"/, 'A new outfit photo must not receive stale vehicle, outfit, activity, location or time context.');
+assert.match(robeJoined, /satin robe with a deep v-neckline/, 'The latest explicit outfit must replace the stored outfit in composer context.');
+assert.doesNotMatch(robeAfterCar.prompt.toLowerCase(), /nissan|skyline|black leggings|black top/, 'The final provider prompt must not re-inject stale vehicle or clothing layers.');
+assert.match(robeAfterCar.prompt.toLowerCase(), /outfit=satin robe with a deep v-neckline/, 'The final provider prompt must carry the exhaustive replacement outfit.');
+assert.doesNotMatch(robeAfterCar.caption.toLowerCase(), /dobré ráno|good morning/, 'A stale time-of-day greeting must not appear in the caption.');
+assert.equal(robeAfterCar.outfitOverride, 'satin robe with a deep V-neckline', 'The persistence layer must receive the normalized replacement outfit.');
+
+mockResponse = {
   prompt: 'Ordinary nonsexual personal photo of Iris alone in a relaxed neutral pose and tasteful casual clothing.',
   explicit: false,
   framing: 'three_quarter',
@@ -166,6 +208,7 @@ mockScope = {
   sexualized: false,
   confidence: 0.99,
   signal: 'generic_photo',
+  outfit_override: null,
 };
 const neutralAfterErrors = await extractImageIntent({
   text: 'Iris, pošli mi fotku teba',
