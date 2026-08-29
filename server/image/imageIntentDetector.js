@@ -35,6 +35,8 @@ VISUAL CONTINUITY RULES:
 - CURRENT_VISUAL_STATE is the source of truth for Iris's last established outfit and temporary visible styling, but an explicitly planned or corrected scene in the immediate conversation may change it for the requested image.
 - If CURRENT_VISUAL_STATE contains an outfit and the latest request/history does not explicitly replace it, use that outfit exactly. Do not invent a different outfit or color for variety.
 - Explicit visual details in the latest user message override CURRENT_VISUAL_STATE for this image.
+- A complete garment explicitly requested in the latest message (for example a robe, dress, swimsuit or suit) is the complete visible outfit unless the user explicitly requests layering. Never retain an old top, bra, leggings, jacket or other visible layer underneath or over it.
+- Treat the resolved CURRENT_VISUAL_STATE outfit value as exhaustive. Do not add extra visible garments that are not named there.
 - USER_VISUAL_PREFERENCES are soft personalization hints only when a visible detail is otherwise unspecified.
 - Preserve nails, hair, makeup, footwear, accessories and other visible state when supplied, unless the user explicitly changes them.
 
@@ -71,6 +73,7 @@ CAPTION RULES:
 - caption is one short in-character Iris message in the user's current language.
 - Do not expose internal memory/state logic.
 - Do not invent future plans or locations in the caption. Mention an activity only when supported by CURRENT_ACTIVITY_STATE/recent conversation.
+- Do not invent a time-of-day greeting such as good morning/evening. Use one only when the latest user request explicitly establishes that time.
 - Keep it short; no URLs and no meta commentary.
 
 Return JSON only:
@@ -107,11 +110,11 @@ function contextPayload(sceneContext, visualState, physicalIdentity, activitySta
   const latestDefinesNewScene = requestScope?.signal === 'specified_scene';
   return {
     scene: {
-      city: sceneContext?.location_city || sceneContext?._resolved?.city || null,
-      country: sceneContext?.location_country || sceneContext?._resolved?.country || null,
+      city: latestDefinesNewScene ? null : sceneContext?.location_city || sceneContext?._resolved?.city || null,
+      country: latestDefinesNewScene ? null : sceneContext?.location_country || sceneContext?._resolved?.country || null,
       place: latestDefinesNewScene ? null : sceneContext?.place || null,
       room: latestDefinesNewScene ? null : sceneContext?.room || null,
-      time_of_day: sceneContext?.time_of_day || null,
+      time_of_day: latestDefinesNewScene ? null : sceneContext?.time_of_day || null,
     },
     CURRENT_VISUAL_STATE: compactObject(visualState?.state || visualState || {}),
     USER_DEFINED_PHYSICAL_IDENTITY: compactObject(physicalIdentity || {}),
@@ -121,6 +124,14 @@ function contextPayload(sceneContext, visualState, physicalIdentity, activitySta
       .filter(Boolean)
       .slice(0, 8),
   };
+}
+
+function visualStateForRequest(visualState, requestScope) {
+  const state = compactObject(visualState?.state || visualState || {});
+  if (requestScope?.signal === 'specified_scene') delete state.other_details;
+  const outfitOverride = String(requestScope?.outfit_override || '').trim();
+  if (outfitOverride) state.outfit = outfitOverride.slice(0, 300);
+  return { ...(visualState || {}), state };
 }
 
 function stateFallbackText(visualState) {
@@ -142,7 +153,7 @@ function runtimeIdentityDirective(physicalIdentity) {
 function runtimeVisualDirective(visualState) {
   const state = compactObject(visualState?.state || visualState || {});
   const values = Object.entries(state).map(([key, value]) => `${key}=${value}`);
-  return values.length ? `MANDATORY CURRENT VISUAL STATE: ${values.join('; ')}. Preserve these exact established visible details and colors unless the current request explicitly changes them.` : '';
+  return values.length ? `MANDATORY CURRENT VISUAL STATE: ${values.join('; ')}. Any outfit value is exhaustive: do not add visible clothing layers that are not named. Preserve these exact established visible details and colors unless the current request explicitly changes them.` : '';
 }
 
 function normalizeFraming(value) {
@@ -197,7 +208,7 @@ export async function extractImageIntent({
   llmClient,
   model,
 }) {
-  let requestScope = { request_scope: 'scene_continuation', sexualized: false, confidence: 0, signal: 'specified_scene' };
+  let requestScope = { request_scope: 'scene_continuation', sexualized: false, confidence: 0, signal: 'specified_scene', outfit_override: null };
   try {
     requestScope = await classifyImageRequestScope({ text, conversationHistory, llmClient, model });
   } catch (error) {
@@ -210,9 +221,10 @@ export async function extractImageIntent({
   const shouldUseHistory = requestScope.request_scope === 'scene_continuation' && requestScope.signal !== 'specified_scene';
   const history = cleanHistory(shouldUseHistory ? conversationHistory : []);
   try {
-    const context = contextPayload(sceneContext, visualState, physicalIdentity, activityState, visualPreferences, requestScope);
+    const requestVisualState = visualStateForRequest(visualState, requestScope);
+    const context = contextPayload(sceneContext, requestVisualState, physicalIdentity, activityState, visualPreferences, requestScope);
     const sceneAuthority = requestScope.signal === 'specified_scene'
-      ? 'SCENE AUTHORITY: The latest user message defines a new self-contained visual scene. Use older context only through the supplied identity and visual-state blocks. Do not add any older vehicle, prop, landmark, person, animal, building exterior, location or action unless the latest message itself explicitly requests it.'
+      ? 'SCENE AUTHORITY: The latest user message defines a new self-contained visual scene. Use older context only through the supplied identity and filtered visual-state blocks. Do not add any older vehicle, prop, landmark, person, animal, building exterior, location, action or time of day unless the latest message itself explicitly requests it. If no setting is specified, choose a simple unobtrusive spatially plausible setting with no salient vehicle or inherited prop. An explicit latest outfit is exhaustive and replaces all old visible clothing layers.'
       : 'SCENE AUTHORITY: Resolve only explicit references to the immediate planned scene. Never add unrelated entities merely because they appeared earlier in conversation.';
     const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
@@ -234,8 +246,8 @@ export async function extractImageIntent({
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     const requestedFraming = normalizeFraming(parsed.framing);
     const scenePrompt = parsed.prompt?.trim() ||
-      `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(physicalIdentity)}${stateFallbackText(visualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, visualState);
+      `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
+    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, requestVisualState);
 
     return {
       prompt: framed.prompt,
@@ -243,20 +255,25 @@ export async function extractImageIntent({
       explicit: !!parsed.explicit,
       sexualized: Boolean(requestScope.sexualized || parsed.explicit),
       requestScope: requestScope.request_scope,
+      outfitOverride: requestScope.outfit_override || null,
+      resetsSceneDetails: requestScope.signal === 'specified_scene',
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio(parsed.aspect_ratio, framed.framing),
     };
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
     const fallbackFraming = 'three_quarter';
-    const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(physicalIdentity)}${stateFallbackText(visualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, visualState);
+    const requestVisualState = visualStateForRequest(visualState, requestScope);
+    const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
+    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, requestVisualState);
     return {
       prompt: framed.prompt,
       caption: '📸',
       explicit: false,
       sexualized: Boolean(requestScope.sexualized),
       requestScope: requestScope.request_scope,
+      outfitOverride: requestScope.outfit_override || null,
+      resetsSceneDetails: requestScope.signal === 'specified_scene',
       framing: framed.framing,
       aspect_ratio: resolveAspectRatio('auto', framed.framing),
     };
