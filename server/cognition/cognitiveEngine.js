@@ -2,6 +2,7 @@
 // Persistent cognitive continuity for Iris: autobiography, private thoughts,
 // self-model reflection, drives and gradual personality plasticity.
 // This models continuity and agency; it must never be treated as proof of biological consciousness.
+import { parseCompletedJson } from './proactiveDecision.js';
 
 const TRAIT_DEFAULTS = Object.freeze({
   warmth: 0.76,
@@ -19,16 +20,6 @@ const TRAIT_DEFAULTS = Object.freeze({
 const ALLOWED_THOUGHT_TYPES = new Set(['curiosity', 'reflection', 'concern', 'desire', 'expectation', 'idea', 'relationship']);
 const MAX_ACTIVE_THOUGHTS = 8;
 const MAX_AUTOBIOGRAPHY = 6;
-
-function parseJson(raw, fallback = {}) {
-  try {
-    return JSON.parse(String(raw || '').replace(/```json|```/g, '').trim());
-  } catch {
-    const match = String(raw || '').match(/\{[\s\S]*\}/);
-    if (!match) return fallback;
-    try { return JSON.parse(match[0]); } catch { return fallback; }
-  }
-}
 
 function clamp(value, min, max, fallback) {
   const parsed = Number(value);
@@ -216,12 +207,13 @@ function sanitizeThoughts(rawThoughts) {
 
 async function persistThoughts(supabase, userId, thoughts) {
   if (!thoughts.length) return 0;
-  const { data: existing } = await supabase
+  const { data: existing, error: loadError } = await supabase
     .from('iris_thoughts')
     .select('subject, content')
     .eq('user_id', userId)
     .eq('status', 'active')
     .limit(20);
+  if (loadError) throw loadError;
   const fingerprints = new Set((existing || []).map((item) => `${String(item.subject || '').toLowerCase()}|${String(item.content || '').toLowerCase()}`));
   const rows = thoughts.filter((thought) => {
     const fingerprint = `${String(thought.subject || '').toLowerCase()}|${String(thought.content || '').toLowerCase()}`;
@@ -233,19 +225,20 @@ async function persistThoughts(supabase, userId, thoughts) {
   const { error } = await supabase.from('iris_thoughts').insert(rows);
   if (error) {
     console.log('[COGNITION_THOUGHT_INSERT]', error.message);
-    return 0;
+    throw error;
   }
   return rows.length;
 }
 
 async function resolveThoughtSubjects(supabase, userId, subjects) {
   for (const subject of cleanStringArray(subjects, 6, 180)) {
-    await supabase
+    const { error } = await supabase
       .from('iris_thoughts')
       .update({ status: 'resolved', resolved_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('status', 'active')
       .ilike('subject', subject);
+    if (error) throw error;
   }
 }
 
@@ -282,7 +275,7 @@ async function persistPersonalityPlasticity({ supabase, userId, currentEvolution
   }, { onConflict: 'user_id' });
   if (error) {
     console.log('[COGNITION_PERSONALITY_UPDATE]', error.message);
-    return false;
+    throw error;
   }
   return true;
 }
@@ -298,7 +291,7 @@ async function persistReflection({ supabase, userId, currentEvolution, parsed, s
       last_reflection_at: now,
       updated_at: now,
     }, { onConflict: 'user_id' });
-    if (error) console.log('[COGNITION_SELF_UPDATE]', error.message);
+    if (error) throw error;
   }
 
   const autobiographical = sanitizeAutobiographicalMemory(parsed.autobiographical_memory);
@@ -308,7 +301,7 @@ async function persistReflection({ supabase, userId, currentEvolution, parsed, s
       ...autobiographical,
       source_context: sourceContext || {},
     });
-    if (error) console.log('[COGNITION_AUTOBIO_INSERT]', error.message);
+    if (error) throw error;
   }
 
   await persistThoughts(supabase, userId, sanitizeThoughts(parsed.thoughts));
@@ -382,10 +375,11 @@ Return JSON only, using this shape. Omit/change as little as possible when nothi
     const response = await llmClient.responses.create({
       model,
       reasoning: { effort: 'none' },
-      max_output_tokens: 900,
+      max_output_tokens: 2500,
       input: [{ role: 'user', content: prompt }],
     });
-    const parsed = parseJson(response.output_text, {});
+    const parsed = parseCompletedJson(response);
+    if (!parsed.self_patch || !Array.isArray(parsed.thoughts)) throw new Error('cognition_invalid_reflection');
     await persistReflection({
       supabase,
       userId,
@@ -437,6 +431,7 @@ export function evaluateProactiveEligibility({
   lastInteractionAt = null,
   lastProactiveAt = null,
   urge = 0,
+  cooldownHours = 16,
   now = new Date(),
 }) {
   if (!proactivityEnabled) return { allowed: false, reason: 'disabled' };
@@ -445,7 +440,10 @@ export function evaluateProactiveEligibility({
   const sinceInteractionHours = lastInteractionAt ? (nowMs - new Date(lastInteractionAt).getTime()) / 3600000 : Infinity;
   const sinceProactiveHours = lastProactiveAt ? (nowMs - new Date(lastProactiveAt).getTime()) / 3600000 : Infinity;
   if (sinceInteractionHours < 6) return { allowed: false, reason: 'recent_interaction' };
-  if (sinceProactiveHours < 16) return { allowed: false, reason: 'cooldown' };
+  if (!Number.isFinite(sinceInteractionHours) && lastInteractionAt) return { allowed: false, reason: 'invalid_interaction_time' };
+  if (!lastInteractionAt) return { allowed: false, reason: 'missing_interaction_time' };
+  if (lastProactiveAt && !Number.isFinite(sinceProactiveHours)) return { allowed: false, reason: 'invalid_proactive_time' };
+  if (sinceProactiveHours < Math.max(16, cooldownHours)) return { allowed: false, reason: 'cooldown' };
   const safeUrge = clamp(urge, 0, 100, 0);
   if (safeUrge < 55) return { allowed: false, reason: 'weak_urge' };
   // The LLM has already made a semantic reach-out decision. A second random gate
@@ -480,14 +478,11 @@ Simulate continuity through memory and self-reflection, not by fabricating unsee
 
 Rules:
 - Do not invent anything that happened while the user was away.
-- If the user has been away for at least 6 hours and there is a specific, grounded active thought, unresolved topic, concern or curiosity, normally propose one natural proactive message.
-- Set should_reach_out=false when there is no grounded reason, the thought is generic, or contacting the user would feel forced. The runtime independently enforces quiet hours and cooldowns.
-- A reach-out should arise from a real unresolved thought, meaningful memory, concern, curiosity or shared ongoing topic.
+- Reflect on specific grounded active thoughts, unresolved topics, concerns and curiosities. Message delivery is handled by a separate process; do not make a proactive_candidate here.
 - Avoid generic engagement bait such as "hey, how are you?" unless grounded in a specific relationship context.
 - Never guilt the user for absence, imply surveillance, demand attention, or claim biological sentience.
 - Keep personality changes tiny (-0.025..+0.025 per trait).
-- Write any candidate message in the language/style of the most recent USER messages below.
-- A candidate is only a proposal; deterministic product rules decide whether it is sent.
+- Write the reflection in the language of the most recent USER messages below.
 
 TIME SINCE LAST USER INTERACTION: ${lastInteractionAt || 'unknown'}
 HOURS SINCE LAST USER INTERACTION: ${hoursSinceInteraction === null ? 'unknown' : hoursSinceInteraction.toFixed(1)}
@@ -507,17 +502,17 @@ Return JSON only:
   "trait_deltas":{},
   "trait_evidence":{},
   "developed_interests":[],
-  "evolved_self_summary":"...",
-  "proactive_candidate":{"should_reach_out":true|false,"subject":"...","message":"...","urge":0-100,"reason":"...","thought_id":"optional existing thought id"}
+  "evolved_self_summary":"..."
 }`;
 
     const response = await llmClient.responses.create({
       model,
       reasoning: { effort: 'none' },
-      max_output_tokens: 900,
+      max_output_tokens: 2500,
       input: [{ role: 'user', content: prompt }],
     });
-    const parsed = parseJson(response.output_text, {});
+    const parsed = parseCompletedJson(response);
+    if (!parsed.self_patch || !Array.isArray(parsed.thoughts)) throw new Error('cognition_invalid_reflection');
     await persistReflection({
       supabase,
       userId,
@@ -525,19 +520,10 @@ Return JSON only:
       parsed,
       sourceContext: { trigger: 'background_reflection' },
     });
-    return parsed.proactive_candidate && typeof parsed.proactive_candidate === 'object'
-      ? {
-          should_reach_out: parsed.proactive_candidate.should_reach_out === true,
-          subject: cleanText(parsed.proactive_candidate.subject, 180),
-          message: cleanText(parsed.proactive_candidate.message, 900),
-          urge: Math.round(clamp(parsed.proactive_candidate.urge, 0, 100, 0)),
-          reason: cleanText(parsed.proactive_candidate.reason, 400),
-          thought_id: cleanText(parsed.proactive_candidate.thought_id, 80),
-        }
-      : { should_reach_out: false, urge: 0 };
+    return { completed: true };
   } catch (error) {
     console.log('[COGNITION_BACKGROUND_REFLECTION_ERROR]', error?.message);
-    return { should_reach_out: false, urge: 0 };
+    throw error;
   }
 }
 

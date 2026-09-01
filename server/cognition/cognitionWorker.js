@@ -5,14 +5,14 @@
 import { getSupabaseAdmin } from '../lib/supabaseAdmin.js';
 import { getLLMClient } from '../lib/llmClient.js';
 import { MODELS } from '../lib/llmModels.js';
-import { loadRecentChatMessages, saveChatMessage } from '../memory/chatHistory.js';
+import { loadRecentChatMessages } from '../memory/chatHistory.js';
+import { notifyWebPushReply } from '../lib/webPush.js';
+import { processProactiveUser, deliverPendingProactiveNotifications } from './proactiveDelivery.js';
 import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
 import { loadSelfModel } from '../memory/selfAwareness.js';
 import { sendExpoPush } from '../push/expoPush.js';
 import {
   loadCognitiveContinuity,
-  evaluateProactiveEligibility,
-  markThoughtSent,
   runBackgroundReflection,
 } from './cognitiveEngine.js';
 
@@ -24,6 +24,7 @@ const DEFAULT_SWEEP_LIMIT = 25;
 let timer = null;
 let firstRunTimer = null;
 let sweepRunning = false;
+let sweepCursor = null;
 
 function intEnv(name, fallback, min, max) {
   const parsed = Number(process.env[name]);
@@ -33,12 +34,6 @@ function intEnv(name, fallback, min, max) {
 
 function cognitionEnabled() {
   return String(process.env.IRIS_COGNITION_ENABLED || 'true').toLowerCase() !== 'false';
-}
-
-function safeClientId(userId, subject, now = new Date()) {
-  const day = now.toISOString().slice(0, 10);
-  const suffix = Buffer.from(`${userId}|${subject || 'thought'}|${day}`).toString('base64url').slice(0, 48);
-  return `proactive:${day}:${suffix}`;
 }
 
 async function loadRecentEpisodicMemories(supabase, userId) {
@@ -59,6 +54,7 @@ async function loadRecentEpisodicMemories(supabase, userId) {
 }
 
 async function sendExpoProactivePush(supabase, userId, message) {
+  const summary = { subscriptions: 0, accepted: 0, failed: 0 };
   try {
     const { data, error } = await supabase
       .from('push_tokens')
@@ -67,15 +63,17 @@ async function sendExpoProactivePush(supabase, userId, message) {
       .is('disabled_at', null)
       .order('last_seen_at', { ascending: false })
       .limit(5);
-    if (error || !data?.length) return;
-    for (const token of data) {
+    if (error) throw error;
+    summary.subscriptions = data?.length || 0;
+    for (const token of data || []) {
       const result = await sendExpoPush({
         to: token.expo_push_token,
         title: 'Iris',
         body: message,
         data: { type: 'iris_proactive_message' },
       });
-      if (result?.ok) return;
+      if (result?.ok) { summary.accepted += 1; continue; }
+      summary.failed += 1;
       console.log('[COGNITION_EXPO_PUSH_FAILED]', result?.error || 'unknown');
       const deviceNotRegistered = result?.details?.tickets?.some((ticket) => ticket?.details?.error === 'DeviceNotRegistered');
       if (deviceNotRegistered) {
@@ -84,8 +82,10 @@ async function sendExpoProactivePush(supabase, userId, message) {
       }
     }
   } catch (error) {
+    summary.failed += 1;
     console.log('[COGNITION_EXPO_PUSH_ERROR]', error?.message);
   }
+  return summary;
 }
 
 async function processUser({ supabase, profile, llmClient, model }) {
@@ -104,9 +104,8 @@ async function processUser({ supabase, profile, llmClient, model }) {
   });
   if (claimError) {
     console.log('[COGNITION_CLAIM_ERROR]', userId, claimError.message);
-    return { claimed: false, sent: false };
+    // Reflection failure must not prevent independent outreach evaluation.
   }
-  if (claimed !== true) return { claimed: false, sent: false };
 
   const [selfModel, personalityEvolution, cognitiveContinuity, recentEpisodicMemories, recentChat] = await Promise.all([
     loadSelfModel(supabase, userId),
@@ -116,7 +115,7 @@ async function processUser({ supabase, profile, llmClient, model }) {
     loadRecentChatMessages(supabase, userId, 10),
   ]);
 
-  const candidate = await runBackgroundReflection({
+  const context = {
     supabase,
     userId,
     profile,
@@ -127,53 +126,16 @@ async function processUser({ supabase, profile, llmClient, model }) {
     recentChat,
     llmClient,
     model,
-  });
-
-  if (!candidate?.should_reach_out || !candidate.message) return { claimed: true, sent: false };
-
-  const now = new Date();
-  const eligibility = evaluateProactiveEligibility({
-    proactivityEnabled: profile?.proactivity_enabled !== false,
-    timezone: profile?.user_timezone || 'UTC',
-    quietHours: profile?.proactivity_quiet_hours || null,
-    lastInteractionAt: profile?.last_interaction_at || null,
-    lastProactiveAt: selfModel?.last_proactive_at || null,
-    urge: candidate.urge,
-    now,
-  });
-  if (!eligibility.allowed) {
-    console.log('[COGNITION_PROACTIVE_SKIPPED]', { userId, reason: eligibility.reason, urge: candidate.urge });
-    return { claimed: true, sent: false };
-  }
-
-  const proactiveIntervalHours = intEnv(
-    'IRIS_PROACTIVE_MIN_INTERVAL_HOURS',
-    DEFAULT_PROACTIVE_INTERVAL_HOURS,
-    6,
-    168,
-  );
-  const { data: proactiveClaimed, error: proactiveClaimError } = await supabase.rpc('claim_iris_proactive_reachout', {
-    p_user_id: userId,
-    p_min_interval_hours: proactiveIntervalHours,
-  });
-  if (proactiveClaimError || proactiveClaimed !== true) {
-    if (proactiveClaimError) console.log('[COGNITION_PROACTIVE_CLAIM_ERROR]', userId, proactiveClaimError.message);
-    return { claimed: true, sent: false };
-  }
-
-  const saved = await saveChatMessage(supabase, {
-    userId,
-    role: 'assistant',
-    content: candidate.message,
-    clientMessageId: safeClientId(userId, candidate.subject || candidate.thought_id, now),
-  });
-  if (!saved) return { claimed: true, sent: false };
-
-  await markThoughtSent(supabase, userId, candidate.thought_id, candidate.subject);
-  // saveChatMessage already triggers Web Push; Expo is only an additional native-app path.
-  sendExpoProactivePush(supabase, userId, candidate.message).catch(() => {});
-  console.log('[COGNITION_PROACTIVE_SENT]', { userId, subject: candidate.subject || null, urge: candidate.urge });
-  return { claimed: true, sent: true };
+    cooldownHours: intEnv('IRIS_PROACTIVE_MIN_INTERVAL_HOURS', DEFAULT_PROACTIVE_INTERVAL_HOURS, 16, 168),
+  };
+  // Outreach is not gated by reflection success or its three-hour claim.
+  const outreach = processProactiveUser(context);
+  const reflection = claimed === true ? runBackgroundReflection(context).catch((error) => {
+    console.log('[COGNITION_REFLECTION_FAILED]', { userId, code: error.code || 'reflection_failed' });
+  }) : Promise.resolve();
+  const [result] = await Promise.all([outreach, reflection]);
+  console.log('[COGNITION_PROACTIVE_RESULT]', { userId, ...result });
+  return { claimed: claimed === true, ...result };
 }
 
 export async function runCognitionSweep() {
@@ -184,18 +146,30 @@ export async function runCognitionSweep() {
     const supabase = getSupabaseAdmin();
     const llmClient = getLLMClient('openai');
     const model = MODELS.openaiUtility || MODELS.openai;
+    const notify = async (userId, message) => {
+      const summaries = await Promise.all([notifyWebPushReply(userId), sendExpoProactivePush(supabase, userId, message)]);
+      return summaries.reduce((total, item) => ({
+        subscriptions: total.subscriptions + (item?.subscriptions || 0),
+        accepted: total.accepted + (item?.accepted || 0), failed: total.failed + (item?.failed || 0),
+      }), { subscriptions: 0, accepted: 0, failed: 0 });
+    };
+    await deliverPendingProactiveNotifications({ supabase, notify });
     const activeDays = intEnv('IRIS_COGNITION_ACTIVE_WINDOW_DAYS', DEFAULT_ACTIVE_WINDOW_DAYS, 1, 90);
     const limit = intEnv('IRIS_COGNITION_SWEEP_LIMIT', DEFAULT_SWEEP_LIMIT, 1, 100);
     const cutoff = new Date(Date.now() - activeDays * 86400000).toISOString();
 
-    const { data: profiles, error } = await supabase
+    let query = supabase
       .from('iris_profiles')
       .select('user_id, user_timezone, last_interaction_at, proactivity_enabled, proactivity_quiet_hours')
       .not('last_interaction_at', 'is', null)
       .gte('last_interaction_at', cutoff)
-      .order('last_interaction_at', { ascending: false })
+      .order('user_id', { ascending: true })
       .limit(limit);
+    if (sweepCursor) query = query.gt('user_id', sweepCursor);
+    const { data: profiles, error } = await query;
     if (error) throw error;
+    // Rotate batches instead of considering only the 25 most recent users forever.
+    sweepCursor = profiles?.length === limit ? profiles[profiles.length - 1].user_id : null;
 
     let processed = 0;
     let sent = 0;
@@ -208,6 +182,7 @@ export async function runCognitionSweep() {
         console.log('[COGNITION_USER_ERROR]', profile?.user_id, error?.message || error);
       }
     }
+    await deliverPendingProactiveNotifications({ supabase, notify });
     console.log('[COGNITION_SWEEP_DONE]', { candidates: profiles?.length || 0, processed, sent });
     return { processed, sent };
   } catch (error) {
@@ -220,7 +195,7 @@ export async function runCognitionSweep() {
 
 export function startCognitionLoop() {
   if (!cognitionEnabled() || timer || firstRunTimer) return false;
-  const sweepMs = intEnv('IRIS_COGNITION_SWEEP_MINUTES', 60, 15, 360) * 60000;
+  const sweepMs = intEnv('IRIS_COGNITION_SWEEP_MINUTES', 15, 5, 360) * 60000;
   firstRunTimer = setTimeout(() => {
     firstRunTimer = null;
     runCognitionSweep().catch(() => {});

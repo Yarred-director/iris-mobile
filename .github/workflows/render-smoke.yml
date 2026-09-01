@@ -32,7 +32,7 @@ jobs:
           for attempt in $(seq 1 40); do
             echo "Render health attempt ${attempt}/40"
             body="$(curl --silent --show-error --fail --max-time 20 https://iris-mobile.onrender.com/health 2>/dev/null || true)"
-            if echo "$body" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+            if printf '%s' "$body" | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{try{const h=JSON.parse(s);process.exit(h.ok===true&&h.revision===process.env.GITHUB_SHA?0:1)}catch{process.exit(1)}})'; then
               echo "Render is serving the hardened backend: $body"
               exit 0
             fi

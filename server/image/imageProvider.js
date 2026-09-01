@@ -30,7 +30,7 @@ export function resolveUserImageProvider(provider) {
 }
 
 export async function loadUserImageProvider(supabase, userId) {
-  if (!supabase || !userId) return ACTIVE_IMAGE_PROVIDER;
+  if (!supabase || !userId) throw new Error('image_provider_store_unavailable');
   const { data, error } = await supabase
     .from('iris_profiles')
     .select('image_provider')
@@ -38,9 +38,10 @@ export async function loadUserImageProvider(supabase, userId) {
     .maybeSingle();
   if (error) {
     console.log('[IMAGE_PROVIDER_LOAD_ERROR]', error.message);
-    return ACTIVE_IMAGE_PROVIDER;
+    throw new Error('image_provider_store_unavailable');
   }
-  return resolveUserImageProvider(data?.image_provider);
+  if (!USER_SELECTABLE_IMAGE_PROVIDERS.has(data?.image_provider)) throw new Error('image_provider_not_configured');
+  return data.image_provider;
 }
 
 export async function saveUserImageProvider(supabase, userId, provider) {
@@ -59,7 +60,7 @@ export async function saveUserImageProvider(supabase, userId, provider) {
     .select('image_provider')
     .single();
   if (error) throw new Error(error.message);
-  const persisted = resolveUserImageProvider(data?.image_provider);
+  const persisted = data?.image_provider;
   if (persisted !== resolved) throw new Error('image_provider_verify_failed');
   return persisted;
 }

@@ -234,8 +234,11 @@ export default function ChatScreen() {
   const [background, setBackground] = useState<BackgroundConfig | null>(null);
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR_URL);
   const [pushStatus, setPushStatus] = useState<WebPushStatus>('disabled');
-  const [imageProvider, setImageProvider] = useState<ImageProvider>('kling_o3');
+  const [imageProvider, setImageProvider] = useState<ImageProvider | null>(null);
   const [imageProviderSaving, setImageProviderSaving] = useState(false);
+  const [imageProviderError, setImageProviderError] = useState(false);
+  const providerRequestRef = useRef(0);
+  const providerSavingRef = useRef(false);
   const [themeMode, setThemeMode] = useState<IrisThemeMode>(initialThemeMode);
   const activeRequestRef = useRef(false);
   const requestBackgroundedRef = useRef(false);
@@ -246,23 +249,43 @@ export default function ChatScreen() {
   const getToken = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token || accessToken, [accessToken]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    setImageProvider(null);
+    setImageProviderSaving(false);
+    providerSavingRef.current = false;
+    providerRequestRef.current += 1;
+    return () => { providerRequestRef.current += 1; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || providerSavingRef.current) return;
     let cancelled = false;
+    const request = ++providerRequestRef.current;
     (async () => {
-      const token = await getToken();
-      if (!token) return;
       try {
+        const token = await getToken();
+        if (!token) throw new Error('Chýba prihlásenie.');
         const response = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error('Provider unavailable');
         const provider = (await response.json())?.provider;
-        if (!cancelled && IMAGE_PROVIDER_OPTIONS.some((option) => option.value === provider)) setImageProvider(provider);
-      } catch {}
+        if (!IMAGE_PROVIDER_OPTIONS.some((option) => option.value === provider)) throw new Error('Invalid provider');
+        if (!cancelled && request === providerRequestRef.current) {
+          setImageProvider(provider);
+          setImageProviderError(false);
+        }
+      } catch {
+        if (!cancelled && request === providerRequestRef.current) {
+          setImageProvider(null);
+          setImageProviderError(true);
+        }
+      }
     })();
     return () => { cancelled = true; };
-  }, [getToken, user?.id]);
+  }, [getToken, user?.id, menuOpen]);
 
   const selectImageProvider = async (provider: ImageProvider) => {
-    if (imageProviderSaving || provider === imageProvider) return;
+    if (providerSavingRef.current) return;
+    providerSavingRef.current = true;
+    const request = ++providerRequestRef.current;
     setImageProviderSaving(true);
     try {
       const token = await getToken();
@@ -279,12 +302,20 @@ export default function ChatScreen() {
       if (!verifyResponse.ok) throw new Error(`Overenie zlyhalo (${verifyResponse.status}).`);
       const verified = (await verifyResponse.json())?.provider;
       if (verified !== provider) throw new Error('Uložený model sa nezhoduje so zvoleným.');
+      if (request !== providerRequestRef.current) return;
       setImageProvider(provider);
+      setImageProviderError(false);
       setMenuOpen(false);
     } catch (error: any) {
+      if (request !== providerRequestRef.current) return;
+      setImageProvider(null);
+      setImageProviderError(true);
       Alert.alert('Iris', `Generátor fotiek sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
     } finally {
-      setImageProviderSaving(false);
+      if (request === providerRequestRef.current) {
+        providerSavingRef.current = false;
+        setImageProviderSaving(false);
+      }
     }
   };
   const signCustomAvatar = useCallback(async (userId: string) => {
@@ -598,7 +629,7 @@ export default function ChatScreen() {
         if (response.status === 429) throw new Error(`LIMIT:${payload?.used ?? '?'}:${payload?.limit ?? '?'}`);
         throw new Error(`HTTP ${response.status}: ${raw.slice(0, 180)}`);
       }
-      if (IMAGE_PROVIDER_OPTIONS.some((option) => option.value === payload.image_provider)) setImageProvider(payload.image_provider);
+      // A completed image reports its request's provider, not the current preference.
       pendingAssistantIdRef.current = null;
       setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString(), clientMessageId: assistantClientId }]);
     } catch (error: any) {
@@ -658,7 +689,7 @@ export default function ChatScreen() {
                 );
               })}
             </View>
-            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? 'Ukladám…' : `Aktívny: ${IMAGE_PROVIDER_LABELS[imageProvider]}`}</Text>
+            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? 'Ukladám…' : imageProvider ? `Aktívny: ${IMAGE_PROVIDER_LABELS[imageProvider]}` : imageProviderError ? 'Model sa nepodarilo načítať. Vyber ho znova.' : 'Načítavam model…'}</Text>
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
