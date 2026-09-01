@@ -50,7 +50,7 @@ app.use(createIpRateLimit({ windowMs: 60000, max: 120 }));
 app.use(sessionMiddleware);
 
 app.get('/', (_req, res) => res.json({ ok: true, service: 'iris-backend' }));
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, revision: process.env.RENDER_GIT_COMMIT || null }));
 app.use(chatRouter);
 app.use(historyRouter);
 app.use(imageRouter);

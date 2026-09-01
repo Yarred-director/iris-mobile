@@ -17,7 +17,7 @@
     "test:heat-routing": "node tools/check-heat-routing.mjs",
     "test:visual-state": "node tools/check-visual-state.mjs",
     "test:memory-quality": "node tools/check-memory-quality.mjs",
-    "test:cognition": "node tools/check-cognition.mjs",
+    "test:cognition": "node tools/check-cognition.mjs && node tools/check-proactive-delivery.mjs",
     "test:notifications": "node tools/check-notifications.mjs",
     "test:companion-continuity": "node tools/check-companion-continuity.mjs",
     "test:multimodal-chat": "node tools/check-multimodal-chat.mjs",

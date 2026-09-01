@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { getSupabaseAdmin } from './supabaseAdmin.js';
 
 const P256_ORDER = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551');
@@ -77,12 +78,14 @@ async function sendEmptyWebPush(endpoint) {
       Authorization: `vapid t=${token}, k=${keys.publicKey}`,
       'Content-Length': '0',
     },
+    signal: AbortSignal.timeout(15000),
   });
   return { ok: response.ok, status: response.status, reason: response.ok ? null : (await response.text()).slice(0, 180) };
 }
 
 export async function notifyWebPushReply(userId) {
-  if (!userId) return;
+  const summary = { subscriptions: 0, accepted: 0, failed: 0 };
+  if (!userId) return summary;
   try {
     const admin = getSupabaseAdmin();
     const { data, error } = await admin
@@ -91,22 +94,27 @@ export async function notifyWebPushReply(userId) {
       .eq('user_id', userId)
       .is('disabled_at', null);
     if (error) throw error;
-    if (!data?.length) return;
+    summary.subscriptions = data?.length || 0;
+    if (!data?.length) return summary;
 
     const now = new Date().toISOString();
     await Promise.allSettled(data.map(async (subscription) => {
       try {
         const result = await sendEmptyWebPush(subscription.endpoint);
-        if (result.ok) return;
+        if (result.ok) { summary.accepted += 1; return; }
+        summary.failed += 1;
         console.log('[WEB_PUSH_SEND_FAILED]', result.status, result.reason || '');
         if (result.status === 404 || result.status === 410) {
           await admin.from('web_push_subscriptions').update({ disabled_at: now, updated_at: now }).eq('id', subscription.id);
         }
       } catch (error) {
+        summary.failed += 1;
         console.log('[WEB_PUSH_SEND_ERROR]', error?.message || error);
       }
     }));
   } catch (error) {
+    summary.failed += 1;
     console.log('[WEB_PUSH_NOTIFY_ERROR]', error?.message || error);
   }
+  return summary;
 }

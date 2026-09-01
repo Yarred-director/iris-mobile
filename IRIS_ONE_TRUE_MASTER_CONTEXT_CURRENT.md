@@ -5,7 +5,7 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-08-26, Europe/Bratislava
+**Consolidated:** 2026-09-01, Europe/Bratislava
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
@@ -198,9 +198,13 @@ Proactivity guardrails currently include:
 - semantic candidate decision plus a moderate impulse threshold; there is no second random gate that can silently discard an otherwise valid candidate;
 - spontaneous messages are stored as normal assistant chat messages;
 - database claims prevent duplicate background work;
-- hourly wake mechanism can wake sleeping Render service for cognition sweeps.
+- ten-minute GitHub wake workflow can wake a sleeping Render service; in-process sweeps default to fifteen minutes and rotate user batches.
 
-Production audit on 2026-08-26 confirmed that cognition was running and creating active thoughts, but the old eight-hour/urge-68/probability combination had produced zero proactive messages. The current prompt normally proposes a grounded reach-out after six hours of absence when a specific unresolved thought/topic exists, while quiet hours and the sixteen-hour cooldown remain authoritative.
+Production audit on 2026-09-01 still found active thoughts but no proactive chat messages. A reproduced code defect silently treated truncated reflection JSON as a decision not to contact; its exact production frequency was not observable. Outreach is now a separate strict-schema decision with bounded format recovery, independent of reflection success. Reflection parsing and persistence failures are explicit errors, not successful no-ops. The six-hour inactivity rule, quiet hours and sixteen-hour cooldown remain authoritative.
+
+`iris_proactive_runs` records decision leases, retries, skip/error outcomes, the committed chat message and push status. Service-only RPCs atomically save the message with its cooldown and recheck current preferences/timing under a per-user lock. Retried finalization cannot duplicate the same message. Push delivery has its own bounded retry/lease; `accepted` means a push service accepted a request, not proof the phone displayed it. Push is at-least-once after an interrupted network attempt. A run may be skipped because no grounded reason exists; proactivity is not a promise of daily contact. Actual production delivery must still be verified after release, not inferred from passing tests.
+
+September 1 migrations also remove explicit anon/authenticated execution grants from the two legacy cognition claim RPCs; only the backend may advance those clocks. RLS with no end-user policy on `iris_proactive_runs` is intentional (service-only). Other pre-existing database advisor warnings remain separate audit work: https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable .
 
 Push recovery:
 - web/PWA subscriptions with previously granted permission are automatically recreated and re-registered on authenticated boot, `pageshow`, and return to the foreground;
@@ -380,7 +384,9 @@ Existing provider integrations still present in `server/image/imageGen.js`:
 - optional Qwen Image Max through Fal;
 - optional Nano Banana 2 through Fal.
 
-Direct OpenAI image request code has been removed from the runtime. Unsupported, legacy or stale user preference values are normalized to Kling O3 before generation. Qwen and Nano Banana remain internal integrations and cannot be selected as a user preference.
+Direct OpenAI image request code has been removed from the runtime. Persisted user preferences are validated strictly: unavailable/missing database state fails explicitly rather than silently switching providers. Qwen and Nano Banana remain internal integrations and cannot be selected as a user preference. The menu starts with unknown state, guards stale GET/PUT responses, allows reselecting the same provider and never overwrites the saved preference from a completed image request. Provider-specific generation failures still require their own request logs; fixing menu state does not prove those failures resolved.
+
+Release verification: `/health` includes Render's `RENDER_GIT_COMMIT`; the deployment smoke workflow requires an exact match with its target SHA. An HTTP 200 from an older instance no longer counts as successful deployment.
 
 The old `fal-ai/qwen-image-2/edit` integration was removed because Fal marks that endpoint deprecated and unsupported. Do not re-enable it.
 

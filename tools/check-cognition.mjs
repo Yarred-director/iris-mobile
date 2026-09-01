@@ -85,8 +85,9 @@ assert.match(indexSource, /startCognitionLoop/);
 
 const workerSource = fs.readFileSync(new URL('../server/cognition/cognitionWorker.js', import.meta.url), 'utf8');
 assert.match(workerSource, /claim_iris_cognition/);
-assert.match(workerSource, /claim_iris_proactive_reachout/);
-assert.match(workerSource, /saveChatMessage/);
+assert.match(workerSource, /processProactiveUser/);
+assert.match(workerSource, /deliverPendingProactiveNotifications/);
+assert.doesNotMatch(workerSource, /claim_iris_proactive_reachout|saveChatMessage/);
 assert.match(workerSource, /IRIS_COGNITION_ENABLED/);
 
 console.log('Cognition checks passed.');
