@@ -16,6 +16,7 @@ export function cognitionError(code, retryable = false) {
 }
 
 export function parseCompletedJson(response) {
+  if (response?.incomplete_details?.reason === 'content_filter') throw cognitionError('cognition_refused');
   if ((response?.output || []).some((item) => (item.content || []).some((part) => part.type === 'refusal'))) {
     throw cognitionError('cognition_refused');
   }

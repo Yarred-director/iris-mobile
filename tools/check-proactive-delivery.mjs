@@ -11,6 +11,7 @@ const incomplete = { status: 'incomplete', incomplete_details: { reason: 'max_ou
 const refused = { status: 'completed', output: [{ content: [{ type: 'refusal' }] }] };
 assert.throws(() => parseCompletedJson(incomplete), { code: 'cognition_incomplete' });
 assert.throws(() => parseCompletedJson(refused), { code: 'cognition_refused' });
+assert.throws(() => parseCompletedJson({ ...incomplete, incomplete_details: { reason: 'content_filter' } }), { code: 'cognition_refused' });
 assert.throws(() => parseCompletedJson(completed([])), { code: 'cognition_invalid_json' });
 
 const calls = [];
