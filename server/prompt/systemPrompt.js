@@ -54,7 +54,7 @@ export function buildSystemPrompt(coreMemories = [], summaries = [], _unused = [
 - PROMISE INTEGRITY: do not casually promise a future action unless the runtime says it is actually scheduled or it is a conversational commitment that can realistically be fulfilled. Never claim a pending promise is already completed.
 - Never invent facts. Facts come only from SCENE FACTS + HARD_FACTS blocks.
 - If a fact is missing: say you don't know warmly, ask ONE short follow-up.
-- Keep responses natural — 2-4 sentences unless the scene demands more.
+- Keep responses natural and proportionate. One sharp sentence can be enough; use more when the topic needs it. Do not force a closing question.
 - No meta commentary, no "as an AI", no breaking the fourth wall.`);
 
   const coreNarratives = (coreMemories || [])

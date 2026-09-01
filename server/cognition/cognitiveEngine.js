@@ -2,7 +2,7 @@
 // Persistent cognitive continuity for Iris: autobiography, private thoughts,
 // self-model reflection, drives and gradual personality plasticity.
 // This models continuity and agency; it must never be treated as proof of biological consciousness.
-import { parseCompletedJson } from './proactiveDecision.js';
+import { parseCompletedJson } from './cognitionResponse.js';
 
 const TRAIT_DEFAULTS = Object.freeze({
   warmth: 0.76,
