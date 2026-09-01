@@ -166,7 +166,7 @@ assert.match(systemPromptSource, /canonical versioned iris-core/);
 assert.doesNotMatch(systemPromptSource, /\/etc\/secrets\/master_iris_core\.yaml/);
 
 const coreYaml = readFileSync(new URL('../server/master_iris_core.yaml', import.meta.url), 'utf8');
-assert.match(coreYaml, /MASTER_1\.11_ADULT_INTIMACY_UNLOCKED/);
+assert.match(coreYaml, /MASTER_1\.12_DISTINCT_VOICE/);
 assert.doesNotMatch(coreYaml, /^\s*boundaries:/m);
 assert.doesNotMatch(coreYaml, /post_climax_cooldown/);
 

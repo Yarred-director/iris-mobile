@@ -4,6 +4,16 @@ import { cognitionError, decideProactiveMessage, parseCompletedJson } from '../s
 import { processProactiveUser, deliverPendingProactiveNotifications } from '../server/cognition/proactiveDelivery.js';
 import { runBackgroundReflection, reflectOnExchange } from '../server/cognition/cognitiveEngine.js';
 import { loadUserImageProvider, saveUserImageProvider } from '../server/image/imageProvider.js';
+import { buildPersonalityContext } from '../server/prompt/personalityContext.js';
+// A legacy embedding module constructs its client on import. This is only a
+// prompt-assembly test: supply a dummy key and forbid all external requests.
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw new Error('External requests forbidden in prompt regression tests'); };
+const originalKey = process.env.OPENAI_API_KEY;
+process.env.OPENAI_API_KEY = 'test-only-no-network';
+const { assemblePrompt } = await import('../server/helpers/promptAssembler.js');
+if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+else process.env.OPENAI_API_KEY = originalKey;
 
 const candidate = { should_reach_out: true, message: 'Ako dopadol rozhovor v práci?', subject: 'Práca', reason: 'Unfinished topic from our conversation', urge: 80 };
 const completed = (value) => ({ status: 'completed', output_text: JSON.stringify(value) });
@@ -20,6 +30,26 @@ assert.deepEqual(await decideProactiveMessage({ llmClient, model: 'test' }), can
 assert.equal(calls.length, 2);
 assert.equal(calls[0].text.format.strict, true);
 assert.ok(calls[1].max_output_tokens > calls[0].max_output_tokens);
+const personality = {
+  personalityEvolution: { evolved_self_summary: 'VOICE_SENTINEL', quirks: ['QUIRK_SENTINEL'], values: ['VALUE_SENTINEL'], developed_interests: ['INTEREST_SENTINEL'] },
+  selfModel: { mood: { label: 'MOOD_SENTINEL' }, narrative_identity: 'IDENTITY_SENTINEL' },
+  cognitiveContinuity: { thoughts: [{ subject: 'THOUGHT_SENTINEL', content: 'An unfinished question.' }] },
+};
+const personalityBefore = JSON.stringify(personality);
+let voicedRequest;
+await decideProactiveMessage({ ...personality, llmClient: { responses: { create: async (args) => { voicedRequest = args; return completed(candidate); } } } });
+const sharedVoice = buildPersonalityContext(personality);
+const chatPrompt = assemblePrompt(personality);
+const outreachPrompt = voicedRequest.input.filter((item) => item.role === 'system').map((item) => item.content).join('\n');
+assert.ok(chatPrompt.includes(sharedVoice) && outreachPrompt.includes(sharedVoice), 'Both paths must use the same learned voice context');
+for (const marker of ['VOICE_SENTINEL', 'QUIRK_SENTINEL', 'VALUE_SENTINEL', 'INTEREST_SENTINEL', 'MOOD_SENTINEL', 'IDENTITY_SENTINEL', 'THOUGHT_SENTINEL', 'MASTER_1.12_DISTINCT_VOICE', 'dry-witted femme fatale']) {
+  assert.ok(chatPrompt.includes(marker), `Chat lost ${marker}`);
+  assert.ok(outreachPrompt.includes(marker), `Outreach lost ${marker}`);
+}
+assert.equal(JSON.stringify(personality), personalityBefore, 'Voice assembly must not rewrite stored personality or memory');
+assert.match(outreachPrompt, /never changes her physical identity/);
+assert.match(outreachPrompt, /No fake foreign accent or broken grammar/);
+assert.equal(voicedRequest.text.format.strict, true, 'Voice must not replace strict decision validation');
 let refusedCalls = 0;
 await assert.rejects(decideProactiveMessage({ llmClient: { responses: { create: async () => { refusedCalls++; return refused; } } } }), { code: 'cognition_refused' });
 assert.equal(refusedCalls, 1, 'Refusal is not retried as a format error');
@@ -133,3 +163,4 @@ assert.doesNotMatch(ui, /provider === imageProvider\) return/);
 assert.match(ui, /request !== providerRequestRef\.current/);
 assert.match(ui, /useState<ImageProvider \| null>\(null\)/);
 console.log('Proactive decisions, recovery, push delivery and provider failure checks passed.');
+globalThis.fetch = originalFetch;

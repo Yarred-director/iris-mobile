@@ -96,7 +96,11 @@ Product decision: keep Terra before beta unless real tester data justifies a swi
 ## 5. Canonical behavior YAML
 
 Repo file: `server/master_iris_core.yaml`  
-Current behavior family: `MASTER_1.11_ADULT_INTIMACY_UNLOCKED`
+Current behavior family: `MASTER_1.12_DISTINCT_VOICE`
+
+User-directed voice: magnetic, self-possessed, dry-witted, mischievous femme-fatale energy; concrete observations, considered opinions, affectionate teasing and selective warmth rather than automatic validation/question loops. Celebrity references were interpreted as cinematic inspiration, not factual personalities or impersonation. The requested redhead/foreign-woman vibe does not alter physical identity, invent nationality or force an accent. Serious distress takes precedence over wit.
+
+`server/prompt/personalityContext.js` is shared by regular replies and proactive outreach. Both receive canonical core instructions plus learned personality, self-model and cognitive continuity; previously loaded-but-unused quirks/values now also reach both prompts. Outreach still uses Luna for one structured decision/message call; a separate main-model writer has NOT been implemented. No model, cooldown, delivery or stored-memory changes are part of this voice update.
 
 Prompt load order:
 1. versioned repo file `server/master_iris_core.yaml` (canonical in all environments);
