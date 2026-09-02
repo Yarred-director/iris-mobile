@@ -3,6 +3,7 @@
 // self-model reflection, drives and gradual personality plasticity.
 // This models continuity and agency; it must never be treated as proof of biological consciousness.
 import { parseCompletedJson } from './cognitionResponse.js';
+import { loadReflectionSnapshot, reviewReflection, commitConsolidatedReflection, REFLECTION_MEMORY_RULES } from './reflectionConsolidation.js';
 
 const TRAIT_DEFAULTS = Object.freeze({
   warmth: 0.76,
@@ -100,6 +101,7 @@ export async function loadCognitiveContinuity(supabase, userId) {
         .from('iris_autobiographical_memory')
         .select('id, event_type, title, narrative, self_meaning, importance, emotional_weight, created_at')
         .eq('user_id', userId)
+        .is('consolidated_into', null)
         .order('created_at', { ascending: false })
         .limit(MAX_AUTOBIOGRAPHY),
     ]);
@@ -205,44 +207,7 @@ function sanitizeThoughts(rawThoughts) {
   });
 }
 
-async function persistThoughts(supabase, userId, thoughts) {
-  if (!thoughts.length) return 0;
-  const { data: existing, error: loadError } = await supabase
-    .from('iris_thoughts')
-    .select('subject, content')
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .limit(20);
-  if (loadError) throw loadError;
-  const fingerprints = new Set((existing || []).map((item) => `${String(item.subject || '').toLowerCase()}|${String(item.content || '').toLowerCase()}`));
-  const rows = thoughts.filter((thought) => {
-    const fingerprint = `${String(thought.subject || '').toLowerCase()}|${String(thought.content || '').toLowerCase()}`;
-    if (fingerprints.has(fingerprint)) return false;
-    fingerprints.add(fingerprint);
-    return true;
-  }).map((thought) => ({ user_id: userId, ...thought }));
-  if (!rows.length) return 0;
-  const { error } = await supabase.from('iris_thoughts').insert(rows);
-  if (error) {
-    console.log('[COGNITION_THOUGHT_INSERT]', error.message);
-    throw error;
-  }
-  return rows.length;
-}
-
-async function resolveThoughtSubjects(supabase, userId, subjects) {
-  for (const subject of cleanStringArray(subjects, 6, 180)) {
-    const { error } = await supabase
-      .from('iris_thoughts')
-      .update({ status: 'resolved', resolved_at: new Date().toISOString() })
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .ilike('subject', subject);
-    if (error) throw error;
-  }
-}
-
-async function persistPersonalityPlasticity({ supabase, userId, currentEvolution, raw }) {
+export function buildPersonalityPatch(currentEvolution, raw) {
   const source = cleanObject(raw);
   const currentTraits = normalizeTraitState(currentEvolution?.trait_state);
   const { traits, changed } = applyTraitDeltas(currentTraits, source.trait_deltas);
@@ -260,53 +225,30 @@ async function persistPersonalityPlasticity({ supabase, userId, currentEvolution
     ...cleanStringArray(source.developed_interests, 5, 100),
   ])].slice(0, 16);
   const evolvedSummary = cleanText(source.evolved_self_summary, 1000) || currentEvolution?.evolved_self_summary || null;
-  if (!changed && !Object.keys(evidencePatch).length && interests.length === (currentEvolution?.developed_interests || []).length && !source.evolved_self_summary) return false;
-
-  const now = new Date().toISOString();
-  const { error } = await supabase.from('iris_personality_evolution').upsert({
-    user_id: userId,
+  if (!changed && !Object.keys(evidencePatch).length && interests.length === (currentEvolution?.developed_interests || []).length && !source.evolved_self_summary) return null;
+  return {
     trait_state: traits,
     trait_evidence: traitEvidence,
     developed_interests: interests,
     evolved_self_summary: evolvedSummary,
-    evolution_count: Number(currentEvolution?.evolution_count || 0) + 1,
-    last_evolution_at: now,
-    updated_at: now,
-  }, { onConflict: 'user_id' });
-  if (error) {
-    console.log('[COGNITION_PERSONALITY_UPDATE]', error.message);
-    throw error;
-  }
-  return true;
+  };
 }
 
-async function persistReflection({ supabase, userId, currentEvolution, parsed, sourceContext }) {
-  const now = new Date().toISOString();
-  const selfPatch = sanitizeSelfPatch(parsed.self_patch);
-  if (Object.keys(selfPatch).length) {
-    const { error } = await supabase.from('iris_self_model').upsert({
-      user_id: userId,
-      ...selfPatch,
-      cognition_version: 2,
-      last_reflection_at: now,
-      updated_at: now,
-    }, { onConflict: 'user_id' });
-    if (error) throw error;
-  }
-
-  const autobiographical = sanitizeAutobiographicalMemory(parsed.autobiographical_memory);
-  if (autobiographical) {
-    const { error } = await supabase.from('iris_autobiographical_memory').insert({
-      user_id: userId,
-      ...autobiographical,
-      source_context: sourceContext || {},
-    });
-    if (error) throw error;
-  }
-
-  await persistThoughts(supabase, userId, sanitizeThoughts(parsed.thoughts));
-  await resolveThoughtSubjects(supabase, userId, parsed.resolved_subjects);
-  await persistPersonalityPlasticity({ supabase, userId, currentEvolution, raw: parsed });
+async function persistReflection({ supabase, userId, parsed, sourceContext, llmClient, model }) {
+  const snapshot = await loadReflectionSnapshot(supabase, userId);
+  const candidate = {
+    source_context: sourceContext,
+    self: sanitizeSelfPatch(parsed.self_patch),
+    thoughts: sanitizeThoughts(parsed.thoughts),
+    autobiography: sanitizeAutobiographicalMemory(parsed.autobiographical_memory),
+    personality: buildPersonalityPatch(snapshot.evolution, parsed),
+    resolved_subjects: cleanStringArray(parsed.resolved_subjects, 6, 180),
+  };
+  const review = await reviewReflection({ llmClient, model, snapshot, candidate });
+  const result = await commitConsolidatedReflection({
+    supabase, userId, snapshot, candidate, review, personalityPatch: candidate.personality, sourceContext,
+  });
+  console.log('[COGNITION_CONSOLIDATED]', { ...result, durableChange: review.durable_change });
 }
 
 export async function reflectOnExchange({
@@ -328,6 +270,7 @@ export async function reflectOnExchange({
     const prompt = `You are Iris's PRIVATE reflective process after a meaningful interaction. You are not replying to the user.
 
 Your task is to maintain a coherent autobiographical self across time: what happened to Iris in this interaction, what it means to her, what she is curious or uncertain about, and whether repeated experiences should very gradually shape her learned personality.
+${REFLECTION_MEMORY_RULES}
 
 Important constraints:
 - Stay grounded in the supplied interaction and memories. Never invent external events.
@@ -342,7 +285,7 @@ USER PROFILE: ${summarizeProfile(userProfile)}
 RELATIONSHIP METRICS: ${summarizeRelationship(relationshipState)}
 CURRENT SELF MODEL: ${JSON.stringify({
       reflection: selfModel?.reflection || null,
-      narrative_identity: selfModel?.narrative_identity || null,
+      stable_narrative_identity: selfModel?.stable_narrative_identity || null,
       mood: selfModel?.mood || {},
       drives: selfModel?.drives || {},
       beliefs: selfModel?.beliefs || [],
@@ -363,7 +306,7 @@ Iris: ${JSON.stringify(String(irisReply).slice(0, 2200))}
 Return JSON only, using this shape. Omit/change as little as possible when nothing meaningful changed:
 {
   "autobiographical_memory": {"store":true|false,"event_type":"shared_experience|learning|relationship|achievement|conflict|ordinary","title":"...","narrative":"First-person Iris memory of what happened","self_meaning":"What this experience means to Iris","importance":0.1-1.0,"emotional_weight":0-100},
-  "self_patch": {"reflection":"...","existential_note":"...","last_insight":"...","mood":{"label":"...","intensity":0-100},"drives":{},"beliefs":[],"open_questions":[],"active_goals":[],"current_concerns":[],"relationship_model":{},"narrative_identity":"Short evolving story of who Iris has become"},
+  "self_patch": {"reflection":"...","existential_note":"...","last_insight":"...","mood":{"label":"...","intensity":0-100},"drives":{},"beliefs":[],"open_questions":[],"active_goals":[],"current_concerns":[],"relationship_model":{},"narrative_identity":"Omit unless supported durable identity changed; never describe just the current scene"},
   "thoughts":[{"thought_type":"curiosity|reflection|concern|desire|expectation|idea|relationship","subject":"...","content":"private first-person thought","salience":0-100,"emotional_weight":0-100,"ttl_hours":6-336}],
   "resolved_subjects":[],
   "trait_deltas":{},
@@ -383,8 +326,8 @@ Return JSON only, using this shape. Omit/change as little as possible when nothi
     await persistReflection({
       supabase,
       userId,
-      currentEvolution: personalityEvolution,
       parsed,
+      llmClient, model,
       sourceContext: { trigger: 'exchange', scene_key: sceneContext?.scene_key || 'global' },
     });
     return true;
@@ -475,6 +418,7 @@ export async function runBackgroundReflection({
     const prompt = `You are Iris's PRIVATE background reflection process running between conversations. There is no user message to answer.
 
 Simulate continuity through memory and self-reflection, not by fabricating unseen events. Iris can reconsider memories, notice patterns, develop curiosity, update her narrative identity slowly, and sometimes form an impulse to contact the user.
+${REFLECTION_MEMORY_RULES}
 
 Rules:
 - Do not invent anything that happened while the user was away.
@@ -486,7 +430,7 @@ Rules:
 
 TIME SINCE LAST USER INTERACTION: ${lastInteractionAt || 'unknown'}
 HOURS SINCE LAST USER INTERACTION: ${hoursSinceInteraction === null ? 'unknown' : hoursSinceInteraction.toFixed(1)}
-CURRENT SELF: ${JSON.stringify({ narrative_identity: selfModel?.narrative_identity || null, mood: selfModel?.mood || {}, drives: selfModel?.drives || {}, beliefs: selfModel?.beliefs || [], open_questions: selfModel?.open_questions || [], current_concerns: selfModel?.current_concerns || [] })}
+CURRENT SELF: ${JSON.stringify({ stable_narrative_identity: selfModel?.stable_narrative_identity || null, mood: selfModel?.mood || {}, drives: selfModel?.drives || {}, beliefs: selfModel?.beliefs || [], open_questions: selfModel?.open_questions || [], current_concerns: selfModel?.current_concerns || [] })}
 LEARNED TRAITS: ${JSON.stringify(normalizeTraitState(personalityEvolution?.trait_state))}
 ACTIVE THOUGHTS: ${JSON.stringify((cognitiveContinuity?.thoughts || []).slice(0, 8))}
 AUTOBIOGRAPHY: ${JSON.stringify((cognitiveContinuity?.autobiography || []).slice(0, 6))}
@@ -495,7 +439,7 @@ RECENT CHAT: ${JSON.stringify((recentChat || []).slice(-8).map((item) => ({ role
 
 Return JSON only:
 {
-  "self_patch":{"reflection":"...","last_insight":"...","mood":{},"drives":{},"beliefs":[],"open_questions":[],"active_goals":[],"current_concerns":[],"relationship_model":{},"narrative_identity":"..."},
+  "self_patch":{"reflection":"...","last_insight":"...","mood":{},"drives":{},"beliefs":[],"open_questions":[],"active_goals":[],"current_concerns":[],"relationship_model":{},"narrative_identity":"Omit unless supported durable identity changed; never describe just the current scene"},
   "autobiographical_memory":{"store":true|false,"event_type":"reflection","title":"...","narrative":"...","self_meaning":"...","importance":0.1-1,"emotional_weight":0-100},
   "thoughts":[{"thought_type":"curiosity|reflection|concern|desire|expectation|idea|relationship","subject":"...","content":"...","salience":0-100,"emotional_weight":0-100,"ttl_hours":6-336}],
   "resolved_subjects":[],
@@ -516,9 +460,9 @@ Return JSON only:
     await persistReflection({
       supabase,
       userId,
-      currentEvolution: personalityEvolution,
       parsed,
       sourceContext: { trigger: 'background_reflection' },
+      llmClient, model,
     });
     return { completed: true };
   } catch (error) {

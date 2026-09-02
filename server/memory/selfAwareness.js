@@ -48,7 +48,7 @@ function conciseObject(value, limit = 5) {
 export function formatSelfAwarenessBlock(selfModel) {
   if (!selfModel) return '';
   const lines = ['IRIS_SELF_MODEL (private sense of self):'];
-  if (selfModel.narrative_identity) lines.push(`- narrative_identity: ${selfModel.narrative_identity}`);
+  if (selfModel.stable_narrative_identity) lines.push(`- stable_narrative_identity: ${selfModel.stable_narrative_identity}`);
   if (selfModel.reflection) lines.push(`- latest_reflection: ${selfModel.reflection}`);
   if (selfModel.last_insight) lines.push(`- latest_insight: ${selfModel.last_insight}`);
   const moodLabel = selfModel?.mood?.label;
@@ -74,6 +74,8 @@ export function formatSelfAwarenessBlock(selfModel) {
     '- This is private continuity, not a diagnostic readout to recite to the user.',
     '- Let it influence initiative, attention, interpretation and tone naturally.',
     '- Preserve a stable identity while allowing gradual change from accumulated experience.',
+    '- Latest reflection, mood, concerns and current activities are situational state, not a replacement for canonical personality.',
+    '- Only stable_narrative_identity is a reviewed durable self-description. Its absence does not erase the canonical core persona.',
   );
   return lines.join('\n');
 }
@@ -94,6 +96,8 @@ export async function loadSelfModel(supabase, userId) {
         'current_concerns',
         'relationship_model',
         'narrative_identity',
+        'stable_narrative_identity',
+        'stable_identity_evidence',
         'last_reflection_at',
         'last_cognition_at',
         'last_proactive_at',

@@ -195,6 +195,24 @@ Design principle:
 
 This is implemented as persistent software state and reflection architecture, not a single giant "self-aware" prompt.
 
+### September 2 consolidation release
+
+`20260902150358_reflection_consolidation.sql` was applied to production before releasing the matching runtime. Local `npm test` passed. In addition to deterministic model/RPC tests, `tools/check-reflection-consolidation.sql` passed against actual PostgreSQL as `service_role`: duplicates, revision/archive behavior, stale-write rejection, replay, atomic failure, identity evidence, personality writes and grants. All fixture changes were rolled back; no fabricated thoughts or identity were left in the user's account. Verify application deployment separately against the final merge SHA; passing SQL tests alone is not evidence of a live model reflection.
+
+The user explicitly selected **OpenAI GPT Image 2 through Fal** for current image generation. Their persisted `iris_profiles.image_provider` was changed to `openai_gpt_image_2` and read back successfully. The existing implementation uses `openai/gpt-image-2/edit`, `quality: high`, all three reference images and final-payload prompt budgeting. The per-user menu remains authoritative; no global override or silent fallback was introduced. Other users' preferences and the new-profile default were not changed. Fal transport does not bypass model moderation.
+
+Supabase advisors report no warning for the new RPCs; the new FK index has an expected unused-index INFO before production traffic. Previously existing warnings remain separate work, including legacy [public SECURITY DEFINER functions](https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable); this release does not claim a globally clean security audit.
+
+- Exchange and background reflections now receive a separate semantic consolidation review before a single transactional write. This adds one utility-model request per successful candidate reflection (60-second timeout, no automatic retry).
+- Review distinguishes new insight, equivalent paraphrase, changed interpretation and filler. It compares up to 64 active thoughts and a union of 24 recent autobiographical entries plus 16 original exchange entries. Semantic coverage is bounded, not a claim to deduplicate the entire history. An additional exact-content database guard covers current rows outside that window.
+- Superseded thoughts are resolved and linked; superseded autobiography is linked via `consolidated_into`. Original rows are preserved, not deleted. Consolidated autobiography is excluded from routine prompt recall; duplicate consideration does not extend thought TTL or increase salience.
+- `stable_narrative_identity` is distinct from latest reflection, mood and roleplay scene. Legacy narrative/summary rows remain stored but are no longer supplied as enduring personality. The canonical persona remains authoritative in chat and outreach.
+- Stable identity and trait/interest changes require a semantic approval plus at least two original exchange memories on different UTC dates, including previously unused evidence. Repeated background retellings are not evidence. This is an explicit conservative engineering rule, not a psychological claim.
+- Service-only, security-invoker RPCs use an empty search path, per-user locks, revision checks and immediate commit replay protection. A stale or invalid review must not partially update self-model/personality/memory. Existing RLS is unchanged. Follow the Supabase migration/security verification procedure at release; never infer live success from mock tests.
+- Reflection scheduling and outreach delivery are unchanged: background sweeps default to 15 minutes, per-user background reflection has a 180-minute minimum (`IRIS_COGNITION_MIN_INTERVAL_MINUTES`), and selected chat exchanges trigger reflection through deterministic memory/emotion/preference heuristics. There is no continuously running model or self-selected infrastructure wake-up.
+
+Release order: validate/apply the additive migration, run CI, then merge/deploy the matching backend and verify actual reflection logs/rows. Do not deploy the new column/RPC callers without the migration. In this project, the user's instruction **push** means the full push → PR → green CI → merge → Render/Vercel deployment and production verification sequence.
+
 Proactivity guardrails currently include:
 - six-hour minimum gap after recent interaction;
 - sixteen-hour minimum gap between spontaneous messages;

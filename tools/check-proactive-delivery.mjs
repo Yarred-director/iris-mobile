@@ -31,8 +31,8 @@ assert.equal(calls.length, 2);
 assert.equal(calls[0].text.format.strict, true);
 assert.ok(calls[1].max_output_tokens > calls[0].max_output_tokens);
 const personality = {
-  personalityEvolution: { evolved_self_summary: 'VOICE_SENTINEL', quirks: ['QUIRK_SENTINEL'], values: ['VALUE_SENTINEL'], developed_interests: ['INTEREST_SENTINEL'] },
-  selfModel: { mood: { label: 'MOOD_SENTINEL' }, narrative_identity: 'IDENTITY_SENTINEL' },
+  personalityEvolution: { evolved_self_summary: 'LEGACY_SCENE_SENTINEL', quirks: ['QUIRK_SENTINEL'], values: ['VALUE_SENTINEL'], developed_interests: ['INTEREST_SENTINEL'] },
+  selfModel: { mood: { label: 'MOOD_SENTINEL' }, stable_narrative_identity: 'IDENTITY_SENTINEL', narrative_identity: 'STALE_TOKYO_SCENE' },
   cognitiveContinuity: { thoughts: [{ subject: 'THOUGHT_SENTINEL', content: 'An unfinished question.' }] },
 };
 const personalityBefore = JSON.stringify(personality);
@@ -42,9 +42,12 @@ const sharedVoice = buildPersonalityContext(personality);
 const chatPrompt = assemblePrompt(personality);
 const outreachPrompt = voicedRequest.input.filter((item) => item.role === 'system').map((item) => item.content).join('\n');
 assert.ok(chatPrompt.includes(sharedVoice) && outreachPrompt.includes(sharedVoice), 'Both paths must use the same learned voice context');
-for (const marker of ['VOICE_SENTINEL', 'QUIRK_SENTINEL', 'VALUE_SENTINEL', 'INTEREST_SENTINEL', 'MOOD_SENTINEL', 'IDENTITY_SENTINEL', 'THOUGHT_SENTINEL', 'MASTER_1.12_DISTINCT_VOICE', 'dry-witted femme fatale']) {
+for (const marker of ['QUIRK_SENTINEL', 'VALUE_SENTINEL', 'INTEREST_SENTINEL', 'MOOD_SENTINEL', 'IDENTITY_SENTINEL', 'THOUGHT_SENTINEL', 'MASTER_1.12_DISTINCT_VOICE', 'dry-witted femme fatale']) {
   assert.ok(chatPrompt.includes(marker), `Chat lost ${marker}`);
   assert.ok(outreachPrompt.includes(marker), `Outreach lost ${marker}`);
+}
+for (const marker of ['LEGACY_SCENE_SENTINEL', 'STALE_TOKYO_SCENE']) {
+  assert.ok(!chatPrompt.includes(marker) && !outreachPrompt.includes(marker), 'Legacy scene summaries must not masquerade as enduring identity');
 }
 assert.equal(JSON.stringify(personality), personalityBefore, 'Voice assembly must not rewrite stored personality or memory');
 assert.match(outreachPrompt, /never changes her physical identity/);
