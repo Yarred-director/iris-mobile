@@ -345,7 +345,18 @@ Framing policy:
 - face references must never cause automatic face-only framing;
 - bust/chest/cleavage terms are body-visibility requirements, not a request for a chest-up crop.
 
-Qwen Image Max has an 800-character prompt limit. Iris compacts prompts by semantic priority (same-person reference rule, physical identity, current appearance, requested scene, photo quality) and enforces the hard provider limit instead of blindly truncating the assembled prompt.
+Prompt budgets (2026-09-02 implementation; deployment must be verified separately):
+- `server/image/imagePromptBudget.js` owns the final prompt policies for every integration;
+- Fal's [Kling O3 schema](https://fal.ai/models/fal-ai/kling-image/o3/image-to-image/api) documents 2500 characters; [Qwen Image Max](https://fal.ai/models/fal-ai/qwen-image-max/edit/api) documents 800;
+- full Fal OpenAPI schemas specify [OpenAI GPT Image 2: 32000 characters](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=openai/gpt-image-2/edit), [Grok Imagine 2: 8000](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=xai/grok-imagine-image/v2.0/edit), and [Nano Banana 2: 50000](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/gemini-3.1-flash-image-preview/edit). The abbreviated plugin parameter descriptions omit these constraints; never treat that omission as absence of limits. Iris uses each endpoint's cap, not a blanket Kling cap;
+- Iris also caps UTF-8 bytes to the same number as a conservative application transport envelope. The production 422 confirms a size validation failure, but the old log showed pre-prefix/pre-clamp length; it does not prove whether the upstream validator counted bytes;
+- reference prefixes and Grok's photographic suffix are included in the budget and preserved intact;
+- known application boilerplate is compacted first, then body identity, appearance and scene receive separate budgets. Overflowing fields may be clipped at word/code-point boundaries; arbitrary-length descriptions cannot be preserved losslessly;
+- the old generic 3500-character pre-slice is removed, so a scene after long visual-state instructions is not discarded before budgeting;
+- `callFal` validates the exact final prompt immediately before serialization. `[IMAGE_GEN_PAYLOAD]` logs final character/UTF-8 sizes, policy and provider, never the private prompt or signed reference URLs;
+- Fal HTTP errors carry status, code, request ID when supplied, provider and an allowlisted size-validation reason. Raw Fal errors may echo private payloads and are not logged;
+- no provider switching, moderation changes or retries are introduced by this fix. Immediate/autonomous/scheduled images share this transport boundary;
+- `tools/check-image-prompt-budget.mjs` intercepts real request serialization with mocked HTTP, checking all five integrations, Unicode boundaries, scene retention, exact references, final budgets and error privacy. It runs in `test:image-context` / CI; it does not call live generation.
 
 ## 13. Three-view face reference pack
 

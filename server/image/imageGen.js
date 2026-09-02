@@ -1,5 +1,6 @@
 import { persistRemoteImage } from '../media/privateMedia.js';
 import { ACTIVE_IMAGE_PROVIDER, resolveFalImageProvider } from './imageProvider.js';
+import { fitImagePrompt, validateImagePrompt } from './imagePromptBudget.js';
 
 const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-image';
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
@@ -8,17 +9,16 @@ const FAL_API_URL_GROK_IMAGINE_2 = 'https://fal.run/xai/grok-imagine-image/v2.0/
 const FAL_API_URL_OPENAI_GPT_IMAGE_2 = 'https://fal.run/openai/gpt-image-2/edit';
 const DEFAULT_IMAGE_PROVIDER = ACTIVE_IMAGE_PROVIDER;
 const MAX_IDENTITY_REFERENCES = 3;
-const QWEN_MAX_PROMPT_LIMIT = 800;
 
 function getFalKey() {
   const key = process.env.FAL_KEY || process.env.FAL_API_KEY;
   if (!key) throw new Error('FAL_KEY missing in environment');
   return key;
 }
-function clampPrompt(prompt, max = 2500) {
+function requirePrompt(prompt) {
   const value = String(prompt || '').trim();
   if (!value) throw new Error('Image prompt is empty');
-  return value.slice(0, max);
+  return value;
 }
 function normalizeAspectRatio(value) {
   const allowed = new Set(['auto', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9']);
@@ -58,78 +58,35 @@ function grokReferencePrefix(count) {
   if (count === 1) return 'Image 1 is the facial identity reference for Iris, a clearly adult woman. Create exactly one Iris and preserve her recognizable face. ';
   return `Images 1-${count} are different facial views of the SAME clearly adult woman, Iris. They are identity references, not separate people or a sequence. Create exactly one Iris; preserve one coherent recognizable face and never merge or duplicate people. `;
 }
-function extractDirective(prompt, label, terminator) {
-  const start = prompt.indexOf(label);
-  if (start < 0) return '';
-  const valueStart = start + label.length;
-  const end = prompt.indexOf(terminator, valueStart);
-  return prompt.slice(valueStart, end < 0 ? undefined : end).trim().replace(/\s+/g, ' ');
-}
-function removeKnownBoilerplate(prompt) {
-  return String(prompt || '')
-    .replace(/Iris is a clearly adult woman\.[\s\S]*?minor-like body proportions\./i, ' ')
-    .replace(/Natural adult female anatomy[\s\S]*?malformed limbs\./i, ' ')
-    .replace(/Close-up portrait framing\. Use this only because[\s\S]*?emotional expression\./i, ' ')
-    .replace(/Half-body composition from head to hips\/waist,[\s\S]*?face-only portrait\./i, ' ')
-    .replace(/Three-quarter composition from head to upper thighs or knees,[\s\S]*?environment context\./i, ' ')
-    .replace(/Full-body composition from head to feet with natural perspective,[\s\S]*?scene believable\./i, ' ')
-    .replace(/MANDATORY USER-DEFINED BODY IDENTITY:[\s\S]*?do not reduce, enlarge, replace or reinterpret them\./i, ' ')
-    .replace(/MANDATORY CURRENT VISUAL STATE:[\s\S]*?unless the current request explicitly changes them\./i, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-function clipField(value, max) {
-  const source = String(value || '').trim().replace(/\s+/g, ' ');
-  if (source.length <= max) return source;
-  const clipped = source.slice(0, max);
-  const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('; '), clipped.lastIndexOf(', '), clipped.lastIndexOf(' '));
-  return clipped.slice(0, boundary > Math.floor(max * 0.65) ? boundary + 1 : max).trim();
-}
-function fitQwenSegments(segments, limit = QWEN_MAX_PROMPT_LIMIT) {
-  let output = '';
-  for (const raw of segments) {
-    const segment = String(raw || '').trim().replace(/\s+/g, ' ');
-    if (!segment) continue;
-    const separator = output ? ' ' : '';
-    const remaining = limit - output.length - separator.length;
-    if (remaining <= 0) break;
-    if (segment.length <= remaining) {
-      output += `${separator}${segment}`;
-      continue;
-    }
-    const clipped = segment.slice(0, remaining);
-    const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('; '), clipped.lastIndexOf(', '), clipped.lastIndexOf(' '));
-    output += `${separator}${clipped.slice(0, boundary > Math.floor(remaining * 0.65) ? boundary + 1 : remaining).trim()}`;
-    break;
-  }
-  return output.slice(0, limit).trim();
-}
 export function compactQwenMaxPrompt(prompt, referenceCount) {
-  const source = String(prompt || '').trim();
-  if (!source) throw new Error('Image prompt is empty');
-  const bodyIdentity = extractDirective(source, 'MANDATORY USER-DEFINED BODY IDENTITY:', '. Preserve these body traits exactly');
-  const visualState = extractDirective(source, 'MANDATORY CURRENT VISUAL STATE:', '. Preserve these exact established visible details');
-  const scene = removeKnownBoilerplate(source);
   const referenceRule = referenceCount === 1
     ? 'Image 1 shows Iris, a clearly adult woman. Preserve her exact facial identity.'
     : `Images 1-${referenceCount} show the same clearly adult woman, Iris, from different face angles. Preserve one consistent face; never merge, average, duplicate, or create multiple people.`;
-  return fitQwenSegments([
-    referenceRule,
-    'References define facial identity only. Use realistic adult anatomy and natural head-to-body scale.',
-    bodyIdentity ? `Body identity: ${clipField(bodyIdentity, 150)}.` : '',
-    visualState ? `Current appearance: ${clipField(visualState, 150)}.` : '',
-    `Scene: ${clipField(scene, 220)}`,
-    'Photorealistic personal photo, realistic skin, anatomy, lighting and perspective.',
-  ]);
+  return fitImagePrompt({ provider: 'qwen_image_max', prompt, prefix: referenceRule });
 }
-async function callFal(url, body, label) {
+async function callFal(url, body, label, provider) {
+  // Last boundary before serialization: no provider may append text after this.
+  const metrics = validateImagePrompt(provider, body.prompt);
+  console.log('[IMAGE_GEN_PAYLOAD]', { provider, ...metrics, referenceCount: body.image_urls.length });
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Key ${getFalKey()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(imageTimeoutMs()),
   });
-  if (!response.ok) throw new Error(`[${label}] ${response.status}: ${(await response.text()).slice(0, 600)}`);
+  if (!response.ok) {
+    // Don't log Fal's raw validation body: it can echo private prompts/URLs.
+    const details = await response.json().catch(() => null);
+    const limitIssue = Array.isArray(details?.detail) ? details.detail.find((item) =>
+      /^(?:prompt: )?size must be between \d+ and \d+$/.test(item?.msg || '')) : null;
+    const error = new Error(`[${label}] Fal HTTP ${response.status}`);
+    error.code = `fal_http_${response.status}`;
+    error.status = response.status;
+    error.provider = provider;
+    error.validationReason = limitIssue?.msg || null;
+    error.requestId = response.headers.get('x-fal-request-id') || response.headers.get('x-request-id') || null;
+    throw error;
+  }
   return response.json();
 }
 async function persistFalResult(data, { userId, signedUrlSeconds, provider }) {
@@ -155,9 +112,9 @@ export async function generateIrisImage({
 }) {
   const resolvedProvider = resolveFalImageProvider(provider);
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
-  const safePrompt = clampPrompt(prompt, 3500);
+  const safePrompt = requirePrompt(prompt);
   const safeImageUrls = normalizeReferenceUrls(imageUrls, imageUrl);
-  console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} prompt_chars=${String(prompt || '').length} resolved_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
+  console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} source_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
 
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
   if (resolvedProvider === 'openai_gpt_image_2') return generateOpenAiGptImage2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
@@ -168,7 +125,7 @@ export async function generateIrisImage({
 }
 
 async function generateOpenAiGptImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
-  const resolvedPrompt = clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`, 4500);
+  const resolvedPrompt = fitImagePrompt({ provider: 'openai_gpt_image_2', prompt, prefix: multiViewIdentityPrefix(imageUrls.length) });
   const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2, {
     prompt: resolvedPrompt,
     image_urls: imageUrls,
@@ -176,13 +133,13 @@ async function generateOpenAiGptImage2({ prompt, imageUrls, aspectRatio, userId,
     quality: 'high',
     num_images: 1,
     output_format: 'png',
-  }, 'OPENAI_GPT_IMAGE_2');
+  }, 'OPENAI_GPT_IMAGE_2', 'openai_gpt_image_2');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'openai_gpt_image_2' });
 }
 
 async function generateGrokImagine2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const photographicProfile = 'Natural candid documentary photograph with authentic skin texture and subtle real-world imperfections, physically plausible light, exposure and lens perspective. No plastic skin, excessive smoothing, glamour retouching, artificial HDR, fake bokeh or generic AI-influencer styling.';
-  const resolvedPrompt = clampPrompt(`${grokReferencePrefix(imageUrls.length)}${prompt} ${photographicProfile}`, 4500);
+  const resolvedPrompt = fitImagePrompt({ provider: 'grok_imagine_2', prompt, prefix: grokReferencePrefix(imageUrls.length), suffix: photographicProfile });
   const data = await callFal(FAL_API_URL_GROK_IMAGINE_2, {
     prompt: resolvedPrompt,
     image_urls: imageUrls,
@@ -191,7 +148,7 @@ async function generateGrokImagine2({ prompt, imageUrls, aspectRatio, userId, si
     num_images: 1,
     aspect_ratio: aspectRatio,
     output_format: 'png',
-  }, 'GROK_IMAGINE_2');
+  }, 'GROK_IMAGINE_2', 'grok_imagine_2');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'grok_imagine_2' });
 }
 
@@ -199,7 +156,7 @@ async function generateQwenImageMax({ prompt, imageUrls, aspectRatio, userId, si
   const compactPrompt = compactQwenMaxPrompt(prompt, imageUrls.length);
   console.log(`[IMAGE_GEN_QWEN_MAX] source_prompt_chars=${prompt.length} compact_prompt_chars=${compactPrompt.length}`);
   const body = {
-    prompt: compactPrompt,
+    prompt: fitImagePrompt({ provider: 'qwen_image_max', prompt: compactPrompt }),
     negative_prompt: 'low resolution, blurry, deformed anatomy, malformed hands, duplicate person, multiple people, inconsistent face, childlike proportions',
     image_urls: imageUrls,
     enable_prompt_expansion: true,
@@ -211,25 +168,25 @@ async function generateQwenImageMax({ prompt, imageUrls, aspectRatio, userId, si
   };
   const imageSize = falPresetImageSize(aspectRatio);
   if (imageSize) body.image_size = imageSize;
-  const data = await callFal(FAL_API_URL_QWEN_IMAGE_MAX, body, 'QWEN_IMAGE_MAX');
+  const data = await callFal(FAL_API_URL_QWEN_IMAGE_MAX, body, 'QWEN_IMAGE_MAX', 'qwen_image_max');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'qwen_image_max' });
 }
 
 async function generateNanoBanana2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const data = await callFal(FAL_API_URL_NANO_BANANA_2, {
-    prompt: clampPrompt(`${multiViewIdentityPrefix(imageUrls.length)}${prompt}`),
+    prompt: fitImagePrompt({ provider: 'nano-banana-2', prompt, prefix: multiViewIdentityPrefix(imageUrls.length) }),
     image_urls: imageUrls,
     resolution: '1K',
     num_images: 1,
     aspect_ratio: aspectRatio,
     output_format: 'png',
     limit_generations: true,
-  }, 'NANO_BANANA_2');
+  }, 'NANO_BANANA_2', 'nano-banana-2');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'nano_banana_2' });
 }
 
 async function generateKlingO3({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
-  const referencedPrompt = clampPrompt(`${klingReferencePrefix(imageUrls.length)}${prompt}`);
+  const referencedPrompt = fitImagePrompt({ provider: 'kling_o3', prompt, prefix: klingReferencePrefix(imageUrls.length) });
   const data = await callFal(FAL_API_URL_KLING_O3, {
     prompt: referencedPrompt,
     image_urls: imageUrls,
@@ -238,6 +195,6 @@ async function generateKlingO3({ prompt, imageUrls, aspectRatio, userId, signedU
     num_images: 1,
     aspect_ratio: aspectRatio,
     output_format: 'png',
-  }, 'KLING_O3');
+  }, 'KLING_O3', 'kling_o3');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'kling_o3' });
 }
