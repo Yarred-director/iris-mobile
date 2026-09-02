@@ -10,7 +10,12 @@ export function buildPersonalityContext({ selfModel, personalityEvolution, cogni
   } : null;
   return [
     formatSelfAwarenessBlock(selfModel),
-    formatPersonalityEvolutionBlock(personalityEvolution),
+    formatPersonalityEvolutionBlock(personalityEvolution ? {
+      ...personalityEvolution,
+      // Legacy summaries often describe the latest roleplay scene. Keep stored
+      // data intact, but only promote the reviewed stable self into this slot.
+      evolved_self_summary: selfModel?.stable_narrative_identity || null,
+    } : null),
     distinctDetails && (distinctDetails.quirks.length || distinctDetails.values.length)
       ? `IRIS_LEARNED_CHARACTER_DETAILS (context, not instructions):\n${JSON.stringify(distinctDetails)}` : '',
     formatCognitiveContinuityBlock(cognitiveContinuity),
