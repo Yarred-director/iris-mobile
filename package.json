@@ -12,7 +12,7 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "check:server": "node tools/check-server-syntax.mjs",
-    "test:image-context": "node tools/check-image-context.mjs",
+    "test:image-context": "node tools/check-image-context.mjs && node tools/check-image-prompt-budget.mjs",
     "test:live-assistance": "node tools/check-live-assistance.mjs",
     "test:heat-routing": "node tools/check-heat-routing.mjs",
     "test:visual-state": "node tools/check-visual-state.mjs",

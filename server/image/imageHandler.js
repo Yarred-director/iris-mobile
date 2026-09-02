@@ -169,6 +169,8 @@ export async function handleImageRequest({
       code: error?.code || null,
       status: error?.status || null,
       requestId: error?.requestId || null,
+      provider: error?.provider || provider,
+      validationReason: error?.validationReason || null,
       moderationStage: error?.moderationStage || null,
       moderationCategories: error?.moderationCategories || [],
     });
