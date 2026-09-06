@@ -1,6 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { cognitionError, parseCompletedJson } from './cognitionResponse.js';
 
+export const DRIVE_KEYS = Object.freeze([
+  'connection',
+  'curiosity',
+  'playfulness',
+  'independence',
+  'competence',
+  'novelty',
+  'protect_relationship',
+  'self_consistency',
+]);
+const MAX_DRIVE_STEP = 0.025;
+const MIN_DRIVE_VALUE = 0.12;
+const MAX_DRIVE_VALUE = 0.95;
+
 const decisionSchema = {
   type: 'object', additionalProperties: false,
   properties: {
@@ -26,7 +40,9 @@ export const REFLECTION_MEMORY_RULES = `Separate temporary mood, current scene a
 An outfit, location, meal, roleplay scene or one pleasant/unpleasant exchange is not a new identity.
 Propose narrative_identity/evolved_self_summary/trait changes only for a durable pattern supported by independent actual exchanges, not repeated background reflections of one exchange.
 Rephrasing an existing insight is not a new thought or autobiographical event. Return thoughts=[] and autobiographical_memory.store=false if nothing new emerged.
-A genuine change of interpretation should state what changed and why. Do not manufacture novelty to satisfy this instruction.`;
+A genuine change of interpretation should state what changed and why. Do not manufacture novelty to satisfy this instruction.
+Do not convert a temporary product/tool limitation, provider error, moderation outcome or implementation bug into an enduring belief, goal, concern, relationship rule, identity claim or existential conclusion. Runtime capability is determined by the current product, not old reflections.
+self_patch.drives is an ABSOLUTE bounded drive state, never a delta object. Return drives={} when no drive changed. If a drive genuinely changes, return ALL eight drive keys (connection, curiosity, playfulness, independence, competence, novelty, protect_relationship, self_consistency), start from the CURRENT SELF values, and move each value by at most 0.025. Never copy trait_deltas into drives and never assume a zero baseline.`;
 
 export async function loadReflectionSnapshot(supabase, userId) {
   const { data, error } = await supabase.rpc('load_iris_reflection_snapshot', { p_user_id: userId });
@@ -51,6 +67,29 @@ function validateDecision(value, index, existing, occupied) {
   }
   ids.forEach((id) => occupied.add(id));
   return value;
+}
+
+export function prepareDrivePatch(currentDrives, rawDrives) {
+  if (!rawDrives || typeof rawDrives !== 'object' || Array.isArray(rawDrives)) return null;
+  const keys = Object.keys(rawDrives);
+  if (!keys.length) return null;
+  if (keys.length !== DRIVE_KEYS.length || keys.some((key) => !DRIVE_KEYS.includes(key))) {
+    throw cognitionError('cognition_invalid_drive_state');
+  }
+  if (!currentDrives || typeof currentDrives !== 'object' || Array.isArray(currentDrives)) {
+    throw cognitionError('cognition_invalid_drive_baseline');
+  }
+
+  const next = {};
+  for (const key of DRIVE_KEYS) {
+    const current = Number(currentDrives[key]);
+    const proposed = Number(rawDrives[key]);
+    if (!Number.isFinite(current) || !Number.isFinite(proposed)) throw cognitionError('cognition_invalid_drive_state');
+    if (proposed < MIN_DRIVE_VALUE || proposed > MAX_DRIVE_VALUE) throw cognitionError('cognition_drive_out_of_bounds');
+    if (Math.abs(proposed - current) > MAX_DRIVE_STEP + 0.000001) throw cognitionError('cognition_drive_step_too_large');
+    next[key] = Number(proposed.toFixed(3));
+  }
+  return next;
 }
 
 export function validateConsolidation(review, snapshot, candidate) {
@@ -100,6 +139,7 @@ Keep the canonical Iris persona intact; learned identity is an abstraction acros
       role: 'user', content: JSON.stringify({
         stable_identity: snapshot.self?.stable_narrative_identity || null,
         already_applied_identity_evidence: snapshot.self?.stable_identity_evidence || [],
+        current_drives: snapshot.self?.drives || {},
         learned_traits: snapshot.evolution?.trait_state || {},
         existing_thoughts: snapshot.thoughts,
         existing_autobiography: snapshot.autobiography,
@@ -112,8 +152,10 @@ Keep the canonical Iris persona intact; learned identity is an abstraction acros
 
 export async function commitConsolidatedReflection({ supabase, userId, snapshot, candidate, review, personalityPatch, sourceContext, commitId = randomUUID() }) {
   validateConsolidation(review, snapshot, candidate);
-  const { narrative_identity: proposedIdentity, ...situationalPatch } = candidate.self;
+  const drivePatch = prepareDrivePatch(snapshot.self?.drives, candidate.self?.drives);
+  const { narrative_identity: proposedIdentity, drives: _rawDrives, ...situationalPatch } = candidate.self;
   const patch = { ...situationalPatch };
+  if (drivePatch) patch.drives = drivePatch;
   if (review.durable_change && proposedIdentity) patch.stable_narrative_identity = proposedIdentity;
   const plan = {
     self: patch,
