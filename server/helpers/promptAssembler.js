@@ -19,6 +19,8 @@ import { buildPersonalityContext } from '../prompt/personalityContext.js';
 import { formatVisualStateBlock } from '../memory/visualState.js';
 import { formatPhysicalIdentityBlock } from '../memory/physicalIdentity.js';
 import { formatActivityStateBlock } from '../memory/activityContinuity.js';
+import { formatPeopleDirectoryBlock } from '../people/peopleAgents.js';
+import { currentPeopleDirectory } from '../people/peopleContext.js';
 import { formatHardFactsBlock } from './factualDetector.js';
 
 export function assemblePrompt({
@@ -61,6 +63,9 @@ export function assemblePrompt({
 
   const userProfileBlock = formatUserProfileBlock(userProfile || []);
   if (userProfileBlock) parts.push(userProfileBlock);
+
+  const peopleDirectoryBlock = formatPeopleDirectoryBlock(currentPeopleDirectory());
+  if (peopleDirectoryBlock) parts.push(peopleDirectoryBlock);
 
   const bridge = formatBridgeBlock(sceneContext);
   if (bridge) parts.push(bridge);
