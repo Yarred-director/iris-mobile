@@ -1,5 +1,9 @@
--- DESTRUCTIVE ROLLBACK for the experimental People/child-agent feature.
--- Safe with runtime code present because runtime fails closed when the directory RPC is absent.
+-- DESTRUCTIVE CLEANUP for the experimental People/child-agent feature.
+-- Safe rollback order:
+--   1) Run people_agents_experimental_disable.sql (instant kill-switch).
+--   2) Revert/deploy the application feature commit.
+--   3) Run this file to remove all experimental schema/data.
+-- Do NOT drop the shared-chat speaker columns while feature-aware application code is still deployed.
 
 drop index if exists public.chat_messages_speaker_person_idx;
 alter table public.chat_messages drop column if exists speaker_person_id;
