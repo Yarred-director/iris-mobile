@@ -12,16 +12,10 @@ function cleanText(value, max = 12000) {
   return String(value || '').trim().slice(0, max);
 }
 
-function normalizeAlias(value) {
-  return String(value || '').trim().toLocaleLowerCase();
-}
-
 export async function loadPeopleDirectory(supabase, userId) {
   try {
     const { data, error } = await supabase.rpc('load_iris_people_directory', { p_user_id: userId });
     if (error) {
-      // Experimental subsystem deliberately fails closed. This also makes the SQL
-      // rollback safe even if application code is rolled back a few seconds later.
       console.log('[PEOPLE_DIRECTORY_DISABLED]', error.code || error.message);
       return [];
     }
@@ -43,7 +37,7 @@ export function formatPeopleDirectoryBlock(directory = []) {
     is_user_self: Boolean(item.is_user_self),
     agent_active: Boolean(item.agent_active),
   }));
-  return `IRIS_PEOPLE_DIRECTORY (separate people, not Iris memories):\n${JSON.stringify(compact)}\n- These identities are separate from Iris. Never inherit their memories, biography, body, relationships or first-person experiences.\n- If the user wants to speak directly to an active AI person, they can address that person at the start of a message (for example \"Name, ...\" or \"@Name ...\").`;
+  return `IRIS_PEOPLE_DIRECTORY (separate people, not Iris memories):\n${JSON.stringify(compact)}\n- These identities are separate from Iris. Never inherit their memories, biography, body, relationships or first-person experiences.\n- If the user wants to speak directly to an active AI person, they can address that person with an explicit @Name or @Alias message.`;
 }
 
 export function resolvePeopleAgentInvocation(message, directory = []) {
@@ -213,8 +207,6 @@ async function persistAgentMemory({ supabase, userId, context, userText, reply }
       .eq('person_id', personId);
     await supabase.rpc('prune_iris_people_agent_state', { p_user_id: userId, p_person_id: personId });
   } catch (error) {
-    // Memory is intentionally non-critical. A Myno reply must not fail because her
-    // tiny secondary memory compactor had a transient provider/schema error.
     console.log('[PEOPLE_AGENT_MEMORY_ERROR]', error?.code || error?.message || error);
   }
 }
