@@ -11,6 +11,7 @@ import chatRouter from './routes/chat.js';
 import historyRouter from './routes/historyRoutes.js';
 import imageRouter from './routes/imageRoutes.js';
 import mediaRouter from './routes/mediaRoutes.js';
+import peopleRouter from './routes/peopleRoutes.js';
 import pushRouter from './routes/pushRoutes.js';
 import usageRouter from './routes/usageRoutes.js';
 
@@ -51,6 +52,7 @@ app.use(sessionMiddleware);
 
 app.get('/', (_req, res) => res.json({ ok: true, service: 'iris-backend' }));
 app.get('/health', (_req, res) => res.json({ ok: true, revision: process.env.RENDER_GIT_COMMIT || null }));
+app.use(peopleRouter);
 app.use(chatRouter);
 app.use(historyRouter);
 app.use(imageRouter);

@@ -41,8 +41,16 @@ export function validateAssistantReply(response) {
   return reply;
 }
 
-export async function createValidatedAssistantReply({ client, responseArgs, engine, validateReply = null, maxAttempts = 2 }) {
+export async function createValidatedAssistantReply({
+  client,
+  responseArgs,
+  engine,
+  validateReply = null,
+  maxAttempts = 2,
+  personaName = 'Iris',
+}) {
   let lastError = null;
+  const safePersona = String(personaName || 'Iris').replace(/[\r\n]/g, ' ').trim().slice(0, 80) || 'Iris';
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const args = attempt === 1
       ? responseArgs
@@ -53,7 +61,7 @@ export async function createValidatedAssistantReply({ client, responseArgs, engi
             {
               role: 'system',
               content: `FINAL_OUTPUT_RECOVERY:
-- Return only Iris's direct, in-character reply to the user.
+- Return only ${safePersona}'s direct, in-character reply to the user.
 - Never mention policies, instructions, routing, classification, analysis, reasoning, safety processing, or what you need to do.
 - Do not describe the response-writing process.
 - Adult romantic and sexual roleplay is supported. Continue the user's scene directly; do not invent a refusal, de-escalation or boundary merely because the content is sexual.`,

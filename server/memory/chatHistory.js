@@ -21,7 +21,7 @@ export async function loadRecentChatMessages(supabase, userId, limit = DEFAULT_M
   const safeLimit = clampLimit(limit, DEFAULT_MODEL_HISTORY_LIMIT, 30);
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, role, content, image_bucket, image_path, client_message_id, created_at')
+    .select('id, role, content, image_bucket, image_path, client_message_id, speaker_person_id, speaker_name, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(safeLimit);
@@ -64,14 +64,26 @@ export function toModelHistory(messages) {
         ],
       }];
     }
+    const separateSpeaker = message.role === 'assistant' && message.speaker_name && message.speaker_name !== 'Iris'
+      ? `[SEPARATE SPEAKER: ${String(message.speaker_name).slice(0, 80)} — this was not Iris]\n`
+      : '';
     return [{
       role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: `${content}${imageNote}`.trim() || '[empty message]',
+      content: `${separateSpeaker}${content}${imageNote}`.trim() || '[empty message]',
     }];
   });
 }
 
-export async function saveChatMessage(supabase, { userId, role, content, imageBucket = null, imagePath = null, clientMessageId = null }) {
+export async function saveChatMessage(supabase, {
+  userId,
+  role,
+  content,
+  imageBucket = null,
+  imagePath = null,
+  clientMessageId = null,
+  speakerPersonId = null,
+  speakerName = null,
+}) {
   const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
   const row = {
     user_id: userId,
@@ -80,11 +92,13 @@ export async function saveChatMessage(supabase, { userId, role, content, imageBu
     image_bucket: imageBucket || null,
     image_path: imagePath || null,
     client_message_id: clientMessageId ? String(clientMessageId).slice(0, 160) : null,
+    speaker_person_id: normalizedRole === 'assistant' ? (speakerPersonId || null) : null,
+    speaker_name: normalizedRole === 'assistant' && speakerName ? String(speakerName).slice(0, 120) : null,
   };
   const { data, error } = await supabase
     .from('chat_messages')
     .insert(row)
-    .select('id, role, content, image_bucket, image_path, client_message_id, created_at')
+    .select('id, role, content, image_bucket, image_path, client_message_id, speaker_person_id, speaker_name, created_at')
     .maybeSingle();
   if (error) {
     if (error.code === '23505' && clientMessageId) return null;
@@ -129,7 +143,7 @@ export async function listChatHistory(supabase, userId, limit = DEFAULT_CLIENT_H
   const safeLimit = clampLimit(limit, DEFAULT_CLIENT_HISTORY_LIMIT, 100);
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, role, content, image_bucket, image_path, client_message_id, created_at')
+    .select('id, role, content, image_bucket, image_path, client_message_id, speaker_person_id, speaker_name, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(safeLimit);
@@ -152,7 +166,7 @@ export async function loadExistingAssistantResponse(supabase, userId, clientMess
   if (!assistantId) return null;
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, role, content, image_bucket, image_path, client_message_id, created_at')
+    .select('id, role, content, image_bucket, image_path, client_message_id, speaker_person_id, speaker_name, created_at')
     .eq('user_id', userId)
     .eq('client_message_id', assistantId)
     .maybeSingle();
