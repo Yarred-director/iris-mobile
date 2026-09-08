@@ -14,6 +14,7 @@ import {
   resolvePeopleAgentInvocation,
   runPeopleAgentExchange,
 } from '../people/peopleAgents.js';
+import { runWithPeopleDirectory } from '../people/peopleContext.js';
 
 const router = Router();
 
@@ -21,12 +22,12 @@ function quotaResponse(res, usage) {
   return res.status(429).json({ error: 'chat_daily_limit_reached', used: usage.used, limit: usage.limit, resets_at: usage.resetsAt });
 }
 
-// Experimental direct-address gateway. Normal Iris chat pays zero additional DB/auth
-// work unless a message explicitly starts with '@'. This keeps the test feature
-// isolated and cheap while still allowing @Myno / @Tori in the normal Iris chat UI.
+// Experimental gateway. For an enabled user, the generic People directory is loaded
+// once per chat request and exposed request-locally to Iris's prompt assembler. An
+// explicit @Name/@Alias invokes that child agent directly. Disabled/missing schema
+// returns an empty directory and normal Iris behavior continues unchanged.
 router.post('/chat', async (req, res, next) => {
   const rawMessage = String(req.body?.message || '').trim();
-  if (!rawMessage.startsWith('@')) return next();
 
   let rollbackUserMessage = null;
   let assistantPersisted = false;
@@ -35,8 +36,13 @@ router.post('/chat', async (req, res, next) => {
     if (!userId) return;
 
     const directory = await loadPeopleDirectory(req.supabase, userId);
-    const invocation = resolvePeopleAgentInvocation(rawMessage, directory);
-    if (!invocation) return next();
+    const invocation = rawMessage.startsWith('@')
+      ? resolvePeopleAgentInvocation(rawMessage, directory)
+      : null;
+
+    if (!invocation) {
+      return runWithPeopleDirectory(directory, () => next());
+    }
 
     const clientMessageId = req.body?.client_message_id ? String(req.body.client_message_id).slice(0, 140) : null;
     const existingResponse = await loadExistingAssistantResponse(req.supabase, userId, clientMessageId);
