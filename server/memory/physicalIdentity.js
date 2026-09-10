@@ -1,3 +1,6 @@
+import { getLLMClient } from '../lib/llmClient.js';
+import { MODELS } from '../lib/llmModels.js';
+
 const MAX_BODY_DESCRIPTION = 1400;
 const MAX_TRAIT_VALUE = 320;
 const BOOTSTRAP_USER_MESSAGE_LIMIT = 80;
@@ -221,12 +224,14 @@ export async function persistPhysicalIdentitySignal({
   if (!proposedBody || containsMinorLikeDescription(proposedBody)) return currentPhysicalIdentity;
 
   const currentTraits = normalizePhysicalTraits(currentPhysicalIdentity?.traits);
+  const mergeClient = llmClient || getLLMClient('openai');
+  const mergeModel = model || MODELS.openaiUtility || MODELS.openai;
   const structuredTraits = await resolveStructuredTraits({
     currentIdentity: currentPhysicalIdentity,
     proposedBody,
     latestUserText,
-    llmClient,
-    model,
+    llmClient: mergeClient,
+    model: mergeModel,
   });
   const traits = Object.keys(structuredTraits).length ? structuredTraits : currentTraits;
   const bodyDescription = composePhysicalBodyDescription(traits, proposedBody);
