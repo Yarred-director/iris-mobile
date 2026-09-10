@@ -6,7 +6,8 @@ const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-ima
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
 const FAL_API_URL_QWEN_IMAGE_MAX = 'https://fal.run/fal-ai/qwen-image-max/edit';
 const FAL_API_URL_GROK_IMAGINE_2 = 'https://fal.run/xai/grok-imagine-image/v2.0/edit';
-const FAL_API_URL_OPENAI_GPT_IMAGE_2 = 'https://fal.run/openai/gpt-image-2/edit';
+const FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT = 'https://fal.run/openai/gpt-image-2/edit';
+const FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT = 'https://fal.run/openai/gpt-image-2';
 const DEFAULT_IMAGE_PROVIDER = ACTIVE_IMAGE_PROVIDER;
 const MAX_IDENTITY_REFERENCES = 3;
 
@@ -37,7 +38,7 @@ function imageTimeoutMs() {
   return Math.max(30000, Math.min(Number(process.env.IMAGE_GENERATION_TIMEOUT_MS || 240000), 300000));
 }
 function normalizeReferenceUrls(imageUrls, imageUrl) {
-  const candidates = Array.isArray(imageUrls) ? imageUrls : [];
+  const candidates = Array.isArray(imageUrls) ? [...imageUrls] : [];
   if (imageUrl) candidates.unshift(imageUrl);
   return [...new Set(candidates.map((value) => String(value || '').trim()).filter(Boolean))].slice(0, MAX_IDENTITY_REFERENCES);
 }
@@ -64,10 +65,19 @@ export function compactQwenMaxPrompt(prompt, referenceCount) {
     : `Images 1-${referenceCount} show the same clearly adult woman, Iris, from different face angles. Preserve one consistent face; never merge, average, duplicate, or create multiple people.`;
   return fitImagePrompt({ provider: 'qwen_image_max', prompt, prefix: referenceRule });
 }
-async function callFal(url, body, label, provider) {
-  // Last boundary before serialization: no provider may append text after this.
+
+export function resolveOpenAiFalMode(referenceCount) {
+  return Number(referenceCount) > 0
+    ? { mode: 'edit', endpoint: FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT }
+    : { mode: 'text', endpoint: FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT };
+}
+
+async function callFal(url, body, label, provider, mode = 'edit') {
+  // Last boundary before serialization: every image provider, including OpenAI,
+  // is transported through Fal. There is intentionally no direct OpenAI image API path.
   const metrics = validateImagePrompt(provider, body.prompt);
-  console.log('[IMAGE_GEN_PAYLOAD]', { provider, ...metrics, referenceCount: body.image_urls.length });
+  const referenceCount = Array.isArray(body.image_urls) ? body.image_urls.length : 0;
+  console.log('[IMAGE_GEN_PAYLOAD]', { provider, mode, ...metrics, referenceCount });
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Key ${getFalKey()}`, 'Content-Type': 'application/json' },
@@ -83,6 +93,8 @@ async function callFal(url, body, label, provider) {
     error.code = `fal_http_${response.status}`;
     error.status = response.status;
     error.provider = provider;
+    error.transport = 'fal';
+    error.mode = mode;
     error.validationReason = limitIssue?.msg || null;
     error.requestId = response.headers.get('x-fal-request-id') || response.headers.get('x-request-id') || null;
     throw error;
@@ -114,26 +126,45 @@ export async function generateIrisImage({
   const safeAspectRatio = normalizeAspectRatio(aspectRatio);
   const safePrompt = requirePrompt(prompt);
   const safeImageUrls = normalizeReferenceUrls(imageUrls, imageUrl);
-  console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} source_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
+  console.log(`[IMAGE_GEN] provider=${resolvedProvider} requested_provider=${provider} transport=fal source_prompt_chars=${safePrompt.length} reference_count=${safeImageUrls.length}`);
+
+  if (resolvedProvider === 'openai_gpt_image_2') {
+    return safeImageUrls.length
+      ? generateOpenAiGptImage2Edit({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds })
+      : generateOpenAiGptImage2Text({ prompt: safePrompt, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+  }
 
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
-  if (resolvedProvider === 'openai_gpt_image_2') return generateOpenAiGptImage2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   if (resolvedProvider === 'grok_imagine_2') return generateGrokImagine2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   if (resolvedProvider === 'qwen_image_max') return generateQwenImageMax({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   if (resolvedProvider === 'nano-banana-2') return generateNanoBanana2({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
 }
 
-async function generateOpenAiGptImage2({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
+async function generateOpenAiGptImage2Edit({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const resolvedPrompt = fitImagePrompt({ provider: 'openai_gpt_image_2', prompt, prefix: multiViewIdentityPrefix(imageUrls.length) });
-  const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2, {
+  const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT, {
     prompt: resolvedPrompt,
     image_urls: imageUrls,
     image_size: falPresetImageSize(aspectRatio) || 'auto',
     quality: 'high',
     num_images: 1,
     output_format: 'png',
-  }, 'OPENAI_GPT_IMAGE_2', 'openai_gpt_image_2');
+    background: 'opaque',
+  }, 'OPENAI_GPT_IMAGE_2_EDIT', 'openai_gpt_image_2', 'edit');
+  return persistFalResult(data, { userId, signedUrlSeconds, provider: 'openai_gpt_image_2' });
+}
+
+async function generateOpenAiGptImage2Text({ prompt, aspectRatio, userId, signedUrlSeconds }) {
+  const resolvedPrompt = fitImagePrompt({ provider: 'openai_gpt_image_2', prompt });
+  const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT, {
+    prompt: resolvedPrompt,
+    image_size: falPresetImageSize(aspectRatio) || 'auto',
+    quality: 'high',
+    num_images: 1,
+    output_format: 'png',
+    background: 'opaque',
+  }, 'OPENAI_GPT_IMAGE_2_TEXT', 'openai_gpt_image_2', 'text');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'openai_gpt_image_2' });
 }
 
@@ -148,7 +179,7 @@ async function generateGrokImagine2({ prompt, imageUrls, aspectRatio, userId, si
     num_images: 1,
     aspect_ratio: aspectRatio,
     output_format: 'png',
-  }, 'GROK_IMAGINE_2', 'grok_imagine_2');
+  }, 'GROK_IMAGINE_2', 'grok_imagine_2', 'edit');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'grok_imagine_2' });
 }
 
@@ -168,7 +199,7 @@ async function generateQwenImageMax({ prompt, imageUrls, aspectRatio, userId, si
   };
   const imageSize = falPresetImageSize(aspectRatio);
   if (imageSize) body.image_size = imageSize;
-  const data = await callFal(FAL_API_URL_QWEN_IMAGE_MAX, body, 'QWEN_IMAGE_MAX', 'qwen_image_max');
+  const data = await callFal(FAL_API_URL_QWEN_IMAGE_MAX, body, 'QWEN_IMAGE_MAX', 'qwen_image_max', 'edit');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'qwen_image_max' });
 }
 
@@ -181,7 +212,7 @@ async function generateNanoBanana2({ prompt, imageUrls, aspectRatio, userId, sig
     aspect_ratio: aspectRatio,
     output_format: 'png',
     limit_generations: true,
-  }, 'NANO_BANANA_2', 'nano-banana-2');
+  }, 'NANO_BANANA_2', 'nano-banana-2', 'edit');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'nano_banana_2' });
 }
 
@@ -195,6 +226,6 @@ async function generateKlingO3({ prompt, imageUrls, aspectRatio, userId, signedU
     num_images: 1,
     aspect_ratio: aspectRatio,
     output_format: 'png',
-  }, 'KLING_O3', 'kling_o3');
+  }, 'KLING_O3', 'kling_o3', 'edit');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'kling_o3' });
 }
