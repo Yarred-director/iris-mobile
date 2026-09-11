@@ -10,7 +10,13 @@ const endpoints = {
   qwen_image_max: 'fal-ai/qwen-image-max/edit',
   'nano-banana-2': 'fal-ai/gemini-3.1-flash-image-preview/edit',
 };
-const expectedLimits = { kling_o3: 2500, grok_imagine_2: 8000, openai_gpt_image_2: 32000, qwen_image_max: 800, 'nano-banana-2': 50000 };
+const expectedLimits = {
+  kling_o3: { documented: 2500, application: 2300 },
+  grok_imagine_2: { documented: 8000, application: 8000 },
+  openai_gpt_image_2: { documented: 32000, application: 32000 },
+  qwen_image_max: { documented: 800, application: 800 },
+  'nano-banana-2': { documented: 50000, application: 50000 },
+};
 const body = 'MANDATORY USER-DEFINED BODY IDENTITY: athletic adult woman with long legs. Preserve these body traits exactly; do not reduce, enlarge, replace or reinterpret them.';
 const appearance = `MANDATORY CURRENT VISUAL STATE: outfit=black platform boots, white leg warmers, plaid skirt and anime crop top; hair=ponytail; ${'extra styling detail; '.repeat(220)}. Any outfit value is exhaustive: do not add visible clothing layers that are not named. Preserve these exact established visible details and colors unless the current request explicitly changes them.`;
 const scene = 'Tokyo neon ramen stall, leaning on a bar stool, smiling at the camera. Photorealistic.';
@@ -37,10 +43,15 @@ globalThis.fetch = async (url, options) => {
 try {
   for (const [provider, endpoint] of Object.entries(endpoints)) {
     const policy = IMAGE_PROMPT_POLICIES[provider];
-    const limit = expectedLimits[provider];
+    const limits = expectedLimits[provider];
+    const limit = limits.application;
     assert.equal(policy.maxChars, limit);
-    assert.equal(policy.documentedMaxChars, limit);
-    for (const prompt of ['x'.repeat(2546), 'ž'.repeat(limit), '東京🌃 '.repeat(limit), 'x'.repeat(limit + 100), longPrompt]) {
+    assert.equal(policy.maxUtf8Bytes, limit);
+    assert.equal(policy.documentedMaxChars, limits.documented);
+    if (provider === 'kling_o3') assert.ok(policy.maxChars < policy.documentedMaxChars, 'Kling must keep production safety headroom below the documented ceiling');
+
+    const incidentRegression = provider === 'kling_o3' ? ['x'.repeat(2485)] : [];
+    for (const prompt of [...incidentRegression, 'x'.repeat(2546), 'ž'.repeat(limit), '東京🌃 '.repeat(limit), 'x'.repeat(limit + 100), longPrompt]) {
       const before = calls;
       await assert.rejects(generateIrisImage({ provider, prompt, imageUrls: refs, userId: 'test-user' }), (error) => {
         assert.equal(error.status, 422);
@@ -61,7 +72,7 @@ try {
       assert.equal(payloadLog.chars, Array.from(finalPrompt).length);
       assert.equal(payloadLog.utf8Bytes, Buffer.byteLength(finalPrompt, 'utf8'));
       assert.doesNotMatch(JSON.stringify(logs), /PRIVATE_PROMPT|example\.invalid|Tokyo neon ramen/);
-      assert.ok(finalPrompt.length <= limit);
+      assert.ok(Array.from(finalPrompt).length <= limit);
       assert.ok(Buffer.byteLength(finalPrompt, 'utf8') <= limit);
       assert.equal(finalPrompt.isWellFormed(), true, 'Unicode must not be split between surrogate pairs');
       if (provider === 'kling_o3') assert.match(finalPrompt, /@Image1 @Image2 @Image3/);
