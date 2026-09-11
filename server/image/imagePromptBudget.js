@@ -2,19 +2,25 @@ import { Buffer } from 'node:buffer';
 
 // Verified against full Fal OpenAPI schemas on 2026-09-02. The plugin's
 // abbreviated parameter descriptions omit maxLength for several endpoints.
+//
+// Kling documents a 2500-character prompt ceiling, but production on
+// 2026-09-10 rejected a serialized 2485-character / 2493-byte prompt with
+// "prompt: size must be between 0 and 2500". Keep a separate application
+// envelope below the documented ceiling so provider-side normalization or
+// hidden transport overhead cannot push an otherwise valid prompt over it.
 export const IMAGE_PROMPT_POLICIES = Object.freeze(Object.fromEntries([
-  ['kling_o3', 2500, 1],
-  ['qwen_image_max', 800, 1],
-  ['openai_gpt_image_2', 32000, 2],
-  ['grok_imagine_2', 8000, 1],
-  ['nano-banana-2', 50000, 3],
-].map(([provider, documentedMaxChars, minChars]) => [provider, Object.freeze({
+  ['kling_o3', 2500, 2300, 1],
+  ['qwen_image_max', 800, 800, 1],
+  ['openai_gpt_image_2', 32000, 32000, 2],
+  ['grok_imagine_2', 8000, 8000, 1],
+  ['nano-banana-2', 50000, 50000, 3],
+].map(([provider, documentedMaxChars, applicationMaxChars, minChars]) => [provider, Object.freeze({
   documentedMaxChars,
   minChars,
-  maxChars: documentedMaxChars,
+  maxChars: applicationMaxChars,
   // Conservative application transport envelope, NOT a claimed Fal byte limit.
   // Covers upstream validators that count UTF-8 rather than JS string units.
-  maxUtf8Bytes: documentedMaxChars,
+  maxUtf8Bytes: applicationMaxChars,
 })])));
 
 export function imagePromptMetrics(prompt) {
