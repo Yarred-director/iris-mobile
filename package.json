@@ -18,7 +18,7 @@
     "test:visual-state": "node tools/check-visual-state.mjs",
     "test:physical-identity": "node tools/check-physical-identity.mjs",
     "test:memory-quality": "node tools/check-memory-quality.mjs",
-    "test:cognition": "node tools/check-cognition.mjs && node tools/check-proactive-delivery.mjs && node tools/check-reflection-consolidation.mjs && node tools/check-cognition-drives.mjs",
+    "test:cognition": "node tools/check-cognition.mjs && node tools/check-proactive-delivery.mjs && node tools/check-proactive-semantic-gate.mjs && node tools/check-reflection-consolidation.mjs && node tools/check-cognition-drives.mjs",
     "test:people-agents": "node tools/check-people-agents.mjs",
     "test:notifications": "node tools/check-notifications.mjs",
     "test:companion-continuity": "node tools/check-companion-continuity.mjs",
