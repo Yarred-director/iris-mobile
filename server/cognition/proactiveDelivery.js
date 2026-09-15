@@ -36,7 +36,12 @@ export async function processProactiveUser(context, { decide = decideProactiveMe
       await finish('skip', 'no_grounded_candidate');
       return { sent: false, reason: 'no_grounded_candidate', runId: run.id };
     }
-    const check = evaluateProactiveEligibility({ ...eligibilityInput, urge: candidate.urge });
+    // should_reach_out is the semantic decision. The numeric urge is useful
+    // model metadata, but must not become a second veto after the model has
+    // already found a grounded reason to contact the user. Timing, quiet hours,
+    // user preference and cooldown remain independently authoritative here and
+    // are rechecked transactionally by finish_iris_proactive_run.
+    const check = evaluateProactiveEligibility({ ...eligibilityInput, urge: 100 });
     const result = await finish(check.allowed ? 'send' : 'skip', check.reason, candidate);
     return { sent: result?.status === 'sent', reason: result?.reason || result?.status, runId: run.id };
   } catch (error) {
