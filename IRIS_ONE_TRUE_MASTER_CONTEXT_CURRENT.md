@@ -5,10 +5,12 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-09-01, Europe/Bratislava
+**Consolidated:** 2026-09-15, Europe/Bratislava  
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
+
+> SOURCE-OF-TRUTH RULE: this is the single cross-chat project master. Update it after meaningful production changes, runtime findings, migrations, architecture decisions or debugging conclusions. Do not claim a change is live merely because code or SQL exists; verify production state.
 
 ## 1. Product direction
 
@@ -27,10 +29,10 @@ Core goals:
 - multilingual behavior mirroring the user's language;
 - PWA-first distribution across iPhone, Android and desktop;
 - cost-aware routing across OpenAI, xAI and image providers;
-- controlled romantic/intimate escalation;
+- controlled adult romantic/intimate escalation;
 - privacy-by-design because Iris may store highly intimate user data.
 
-Current distribution strategy:
+Distribution strategy:
 - do NOT make App Store or Google Play a blocker for beta or early monetization;
 - primary product is the installable web/PWA experience;
 - native Expo support remains available, but store release is optional/later.
@@ -38,28 +40,30 @@ Current distribution strategy:
 ## 2. Production infrastructure
 
 ### Frontend
-Production: `https://iris-mobile.vercel.app`  
-Host: Vercel  
-Build: `npm run build:web`  
-Output: `dist`
+- Production: `https://iris-mobile.vercel.app`
+- Host: Vercel
+- Build: `npm run build:web`
+- Output: `dist`
 
 ### Backend
-Production API: `https://iris-mobile.onrender.com`  
-Host: Render
+- Production API: `https://iris-mobile.onrender.com`
+- Host: Render
+- Region: Frankfurt
+- Render service uses `main` with auto-deploy.
 
 ### Supabase
-Project URL: `https://glufbaseqhjkljhvdhmh.supabase.co`  
-Region: EU / eu-west-1
+- Project: `glufbaseqhjkljhvdhmh`
+- Region: EU / eu-west-1
 
-Never expose Supabase `service_role` or provider secrets in frontend/public config or this master.
+Never expose Supabase `service_role`, Fal/provider keys, push secrets or other provider secrets in frontend/public config or this master.
 
 ## 3. Current model stack
 
-Canonical model config: `server/lib/llmModels.js`
+Canonical model config: `server/lib/llmModels.js`.
 
 - Main OpenAI chat: `gpt-5.6-terra`
 - OpenAI utility/classifier/memory/image-prompt/background cognition helper: `gpt-5.6-luna`
-- xAI intimate/vision route: `grok-4.6` (explicit stable production slug)
+- xAI intimate/vision route: `grok-4.6`
 - Embeddings: `text-embedding-3-small`
 
 Routing:
@@ -73,119 +77,87 @@ Routing:
 
 Routing integrity:
 - `server/behavior/intimacyRouter.js` is the authoritative heat classifier;
-- heat 2/3 always routes to Grok; factual/live-web detection cannot override an intimate route back to Terra;
-- it uses Luna with a strict structured-output schema and treats incomplete, refused, malformed or inconsistent routing output as an error instead of silently defaulting to heat 0;
-- the broad `intentJudge` may still provide non-routing visual/activity/preference signals, but its heat fields are overwritten by the dedicated classifier;
-- `server/lib/assistantReplyGuard.js` rejects incomplete/refused/empty replies and likely internal planning or policy meta-text, retries once with a final-output recovery instruction, and only then permits persistence/delivery;
-- for heat 2/3, `server/behavior/adultIntimacyReplyJudge.js` uses Grok structured output to reject invented sexual boundaries or unrequested de-escalation before persistence/delivery; a rejected candidate is regenerated once;
-- if routing or final-reply validation fails before an assistant turn is stored, the newly inserted user turn is rolled back by its exact row ID, user ID and role so the UI does not accumulate orphan duplicates.
+- heat 2/3 always routes to Grok;
+- malformed/incomplete/refused routing output fails explicitly rather than silently becoming heat 0;
+- `intentJudge` may still provide non-routing visual/activity/preference signals, but it cannot override heat routing;
+- `server/lib/assistantReplyGuard.js` rejects incomplete/refused/empty replies and likely internal planning/policy meta-text, then allows one bounded recovery attempt;
+- for heat 2/3, `server/behavior/adultIntimacyReplyJudge.js` rejects invented sexual boundaries or unrequested de-escalation before persistence/delivery;
+- if routing or final-reply validation fails before an assistant turn is stored, the inserted user row is rolled back by exact row ID/user/role.
 
-Product decision: keep Terra before beta unless real tester data justifies a switch.
+## 4. Canonical behavior and voice
 
-## 4. Language and personality rules
+Repo file: `server/master_iris_core.yaml`.  
+Current behavior family: `MASTER_1.12_DISTINCT_VOICE`.
 
-- mirror language of latest substantive user message;
-- heat 2/3 runtime instructions explicitly require native, idiomatic grammar, correct diacritics and natural word order rather than English drift or literal translation;
-- language-neutral short replies continue recent language;
-- no hardcoded Slovak or English default;
-- semantic heat/preference/nickname logic must work in any language/script;
+Stable user-directed voice: magnetic, self-possessed, dry-witted, mischievous femme-fatale energy; concrete observations, considered opinions, affectionate teasing and selective warmth rather than automatic validation/question loops. Serious distress takes precedence over wit.
+
+Rules:
+- mirror the language of the latest substantive user message;
+- heat 2/3 must stay idiomatic in that language, not drift into broken translated phrasing;
 - Iris speaks in first-person feminine;
-- stay in character;
-- learned preferences are soft priors, not permission to escalate.
-
-## 5. Canonical behavior YAML
-
-Repo file: `server/master_iris_core.yaml`  
-Current behavior family: `MASTER_1.12_DISTINCT_VOICE`
-
-User-directed voice: magnetic, self-possessed, dry-witted, mischievous femme-fatale energy; concrete observations, considered opinions, affectionate teasing and selective warmth rather than automatic validation/question loops. Celebrity references were interpreted as cinematic inspiration, not factual personalities or impersonation. The requested redhead/foreign-woman vibe does not alter physical identity, invent nationality or force an accent. Serious distress takes precedence over wit.
-
-`server/prompt/personalityContext.js` is shared by regular replies and proactive outreach. Both receive canonical core instructions plus learned personality, self-model and cognitive continuity; previously loaded-but-unused quirks/values now also reach both prompts. Outreach still uses Luna for one structured decision/message call; a separate main-model writer has NOT been implemented. No model, cooldown, delivery or stored-memory changes are part of this voice update.
+- no fake foreign accent or invented nationality;
+- learned preferences are soft priors, not permission to invent facts or escalate context;
+- celebrity references are stylistic inspiration only and must not substitute a celebrity face/identity for Iris.
 
 Prompt load order:
-1. versioned repo file `server/master_iris_core.yaml` (canonical in all environments);
-2. env YAML only as an emergency fallback if the repo file cannot be read;
+1. versioned repo file `server/master_iris_core.yaml`;
+2. env YAML only as emergency fallback if repo file cannot be read;
 3. internal minimal fallback.
 
-Render's legacy `/etc/secrets/master_iris_core.yaml` is no longer loaded and cannot silently reintroduce stale prompt rules.
+Render's old `/etc/secrets/master_iris_core.yaml` is not canonical and must not silently override the repo file.
 
-Major behavior guarantees:
-- adaptive heat 0–3;
-- no fixed multi-turn Grok lock;
-- heat is an authoritative semantic provider-routing label, not an application-level content ceiling;
-- adult romantic and sexual roleplay has no app-coded refusal, de-escalation, consent-as-lock, post-climax lock or heat-specific content boundary;
-- only the clearly-adult/no-minor identity guard remains mandatory;
-- Iris-only nickname directionality;
-- mirror-user language;
-- persistent visual continuity;
-- no hardcoded wardrobe-by-location/time/color/fabric mappings.
-
-## 6. Memory architecture
+## 5. Memory architecture
 
 ### Recent chat
 Immediate conversation continuity and short follow-ups.
-
-### User image attachments and exact links
-- chat accepts up to four JPG, PNG or WebP images, maximum 8 MB each;
-- images use private `iris-photos/chat/{userId}/...` paths and server-issued one-time signed uploads; clients never receive the Supabase service role;
-- the backend verifies that the uploaded object exists and checks its MIME type and exact byte size before attaching it to a persisted user turn;
-- images are delivered to the selected conversational model as native `input_image` vision parts and recent images can remain in short model history;
-- an attached photo is treated as something Iris should inspect, not as an implicit request to run the separate Iris-photo generator;
-- default retention is 30 days, after which a background sweep deletes both the Storage object and attachment metadata via the Supabase Storage API;
-- pending/abandoned uploads expire after two hours;
-- only an image explicitly marked by the user as **Môj vzhľad · trvalo** receives `user_appearance` retention and no automatic expiry;
-- deleting chat history deletes temporary attachments; explicitly permanent user-appearance images survive that action;
-- messages containing an HTTP(S) URL force browsing of the exact supplied URL; Iris must disclose retrieval failure instead of pretending to have read it.
 
 ### User profile
 Durable user facts and preferences.
 
 ### Episodic memory
-Table: `episodic_memory`  
-Semantic retrieval RPC: `match_episodic_memory_v2`
+Table: `episodic_memory`.  
+Semantic retrieval RPC: `match_episodic_memory_v2`.
 
-Current episodic-memory quality loop:
-- event-gated persistence avoids storing routine chat;
-- new episodic memories are semantically assessed by Luna for `importance` and `emotional_weight`;
-- importance is long-term recall value, not message length, explicitness or drama;
-- importance range 0.1–1.0;
-- emotional weight range 0–100;
+Quality loop:
+- event-gated persistence avoids routine-chat clutter;
+- Luna semantically assesses `importance` (0.1–1.0) and `emotional_weight` (0–100);
 - recall ranking is 75% semantic similarity + 25% importance;
-- memories with `decay_score < 10` are excluded from episodic recall;
+- `decay_score < 10` is excluded from episodic recall;
 - confident recall threshold similarity >= 0.35;
 - up to four unique confidently recalled memories are reinforced per recall;
-- reinforcement increments `reinforcement_count` and updates `last_recalled_at` atomically;
-- 24-hour per-memory reinforcement cooldown prevents one conversation inflating reinforcement.
+- reinforcement updates `reinforcement_count` and `last_recalled_at` atomically;
+- 24-hour per-memory reinforcement cooldown prevents one conversation from inflating reinforcement;
+- `memoryDecay.js` derives half-life from importance, emotional weight and reinforcement.
 
-Memory fading/decay:
-- `memoryDecay.js` calculates half-life from importance, emotional weight and reinforcement count;
-- higher importance/emotion/reinforcement increases half-life;
-- protected high-value/core memories resist decay;
-- lower-value memories progressively compress/fade and can eventually be deleted.
+### Shared experiences / scene context
+- `shared_experiences` stores durable shared events;
+- scene context tracks current place/room/time/subject/interaction state and recent engine information.
 
-### Shared experiences
-Table: `shared_experiences`
+### User image attachments and exact links
+- up to four JPG/PNG/WebP images per chat turn, max 8 MB each;
+- private `iris-photos/chat/{userId}/...` storage with server-issued signed uploads;
+- backend verifies object existence, MIME type and exact size before attaching;
+- attached photos are sent natively to the selected conversational vision model and are NOT implicit requests to generate an Iris photo;
+- default attachment retention 30 days; abandoned uploads expire after two hours;
+- only explicit **Môj vzhľad · trvalo** gets permanent `user_appearance` retention;
+- deleting chat history removes temporary attachments but not explicitly permanent user-appearance images;
+- exact HTTP(S) links force retrieval of that exact link; if retrieval fails Iris must say so rather than pretend it was read.
 
-### Scene context
-Tracks current place/room/time/subject/interaction state and recent engine information.
+## 6. Persistent cognition / self-model
 
-## 7. Persistent cognition / Iris self-model
-
-Merged in PR #22; production backend is deployed.
-
-Iris now has a persistent cognition layer separate from user memory:
-- persistent self-model;
-- autobiographical memory about experiences that happened to Iris;
+Iris has persistent software state separate from user memory:
+- self-model;
+- autobiographical memory;
 - private thought stream;
-- current mood;
-- drives;
+- mood;
+- eight bounded drives;
 - beliefs;
 - goals;
 - concerns;
 - open questions;
 - relationship model;
-- narrative identity;
-- personality plasticity with bounded gradual trait updates;
+- stable narrative identity;
+- bounded learned personality evolution;
 - evidence/reasons for learned trait movement;
 - background reflection using Luna;
 - proactive impulses that may become spontaneous assistant messages.
@@ -193,401 +165,317 @@ Iris now has a persistent cognition layer separate from user memory:
 Design principle:
 `experience -> memory -> reflection -> meaning -> thoughts -> changing self-model -> gradual personality development -> future behavior/proactivity`
 
-This is implemented as persistent software state and reflection architecture, not a single giant "self-aware" prompt.
+This is persistent software-state/reflection architecture, not evidence of biological consciousness or a continuously running model.
 
-### September 2 consolidation release
+### Reflection consolidation
+`20260902150358_reflection_consolidation.sql` added semantic consolidation before transactional reflection writes.
 
-`20260902150358_reflection_consolidation.sql` was applied to production before releasing the matching runtime. Local `npm test` passed. In addition to deterministic model/RPC tests, `tools/check-reflection-consolidation.sql` passed against actual PostgreSQL as `service_role`: duplicates, revision/archive behavior, stale-write rejection, replay, atomic failure, identity evidence, personality writes and grants. All fixture changes were rolled back; no fabricated thoughts or identity were left in the user's account. Verify application deployment separately against the final merge SHA; passing SQL tests alone is not evidence of a live model reflection.
+Key invariants:
+- new insight vs paraphrase vs changed interpretation vs filler is reviewed semantically;
+- superseded thoughts are resolved and linked;
+- consolidated autobiography keeps the original row rather than deleting history;
+- `stable_narrative_identity` is separate from current mood/scene/latest reflection;
+- stable identity and learned trait/interest changes require conservative evidence, including original exchange memories on different UTC dates;
+- service-only RPCs use per-user locking/revision/replay protection so stale or invalid reviews cannot partially update self/personality/memory;
+- one experience cannot change a trait by more than 0.025.
 
-The user explicitly selected **OpenAI GPT Image 2 through Fal** for current image generation. Their persisted `iris_profiles.image_provider` was changed to `openai_gpt_image_2` and read back successfully. The existing implementation uses `openai/gpt-image-2/edit`, `quality: high`, all three reference images and final-payload prompt budgeting. The per-user menu remains authoritative; no global override or silent fallback was introduced. Other users' preferences and the new-profile default were not changed. Fal transport does not bypass model moderation.
+### Drive state
+Canonical drive object has exactly these eight numeric fields:
+- `connection`
+- `curiosity`
+- `playfulness`
+- `independence`
+- `competence`
+- `novelty`
+- `protect_relationship`
+- `self_consistency`
 
-Supabase advisors report no warning for the new RPCs; the new FK index has an expected unused-index INFO before production traffic. Previously existing warnings remain separate work, including legacy [public SECURITY DEFINER functions](https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable); this release does not claim a globally clean security audit.
+Allowed range is 0.12–0.95; one persisted update may move an individual drive by at most 0.025001.
 
-- Exchange and background reflections now receive a separate semantic consolidation review before a single transactional write. This adds one utility-model request per successful candidate reflection (60-second timeout, no automatic retry).
-- Review distinguishes new insight, equivalent paraphrase, changed interpretation and filler. It compares up to 64 active thoughts and a union of 24 recent autobiographical entries plus 16 original exchange entries. Semantic coverage is bounded, not a claim to deduplicate the entire history. An additional exact-content database guard covers current rows outside that window.
-- Superseded thoughts are resolved and linked; superseded autobiography is linked via `consolidated_into`. Original rows are preserved, not deleted. Consolidated autobiography is excluded from routine prompt recall; duplicate consideration does not extend thought TTL or increase salience.
-- `stable_narrative_identity` is distinct from latest reflection, mood and roleplay scene. Legacy narrative/summary rows remain stored but are no longer supplied as enduring personality. The canonical persona remains authoritative in chat and outreach.
-- Stable identity and trait/interest changes require a semantic approval plus at least two original exchange memories on different UTC dates, including previously unused evidence. Repeated background retellings are not evidence. This is an explicit conservative engineering rule, not a psychological claim.
-- Service-only, security-invoker RPCs use an empty search path, per-user locks, revision checks and immediate commit replay protection. A stale or invalid review must not partially update self-model/personality/memory. Existing RLS is unchanged. Follow the Supabase migration/security verification procedure at release; never infer live success from mock tests.
-- Reflection scheduling and outreach delivery are unchanged: background sweeps default to 15 minutes, per-user background reflection has a 180-minute minimum (`IRIS_COGNITION_MIN_INTERVAL_MINUTES`), and selected chat exchanges trigger reflection through deterministic memory/emotion/preference heuristics. There is no continuously running model or self-selected infrastructure wake-up.
+### 2026-09-15 production cognition repair
+A real production audit after the user reported several days of silence found two independent faults.
 
-Release order: validate/apply the additive migration, run CI, then merge/deploy the matching backend and verify actual reflection logs/rows. Do not deploy the new column/RPC callers without the migration. In this project, the user's instruction **push** means the full push → PR → green CI → merge → Render/Vercel deployment and production verification sequence.
+**Fault A — background cognition DB guard broken:**
+- migration from the Sept 6 cognition hardening used nonexistent PostgreSQL function `jsonb_object_length(jsonb)` inside `public.guard_iris_drive_state()`;
+- Render repeatedly logged `COGNITION_CLAIM_ERROR ... function jsonb_object_length(jsonb) does not exist`;
+- `last_cognition_at` had been stale since Sept 6;
+- production migration `20260915112200_fix_cognition_drive_guard_jsonb_count` replaced that call with `count(*) from jsonb_object_keys(new.drives)` while preserving the exact-eight-keys, numeric-type, bounds and max-step invariants;
+- production verification after the migration showed `last_cognition_at` advancing to 2026-09-15 11:25 UTC and Render logged `COGNITION_CONSOLIDATED` plus a sweep with `processed: 1`, proving background reflection resumed.
 
-Proactivity guardrails currently include:
-- six-hour minimum gap after recent interaction;
+**Fault B — valid proactive decisions were second-vetoed:**
+- `iris_proactive_runs` showed repeated `outcome='weak_urge'` skips for days;
+- in runtime this could only happen after the strict semantic decision had already returned `should_reach_out=true`;
+- `processProactiveUser()` then applied a second numeric `urge >= 55` veto, contradicting the design goal that the semantic decision should be authoritative after hard eligibility checks;
+- PR #45 changes the runtime so a semantic `should_reach_out=true` is decisive once hard eligibility passes; `urge` remains metadata and no longer acts as a second veto;
+- regression `tools/check-proactive-semantic-gate.mjs` explicitly tests `should_reach_out=true` with `urge=1` and requires delivery to proceed;
+- hard guardrails remain unchanged: proactivity preference, quiet hours, six-hour post-interaction gap, sixteen-hour minimum proactive cooldown, DB lease/duplicate protection, and transactional finalization rechecks.
+
+PR #45 merged to `main` as `4e668a9eafd7e0fb7a0893e0fb55772a42e9d155`; CI passed and Render/Vercel deployment checks were green. The first post-deploy sweep ran successfully; because the previous skipped proactive run still had an active attempt lease/window, it correctly reported `not_due_or_leased` rather than manufacturing an immediate message. Future due evaluations must no longer end as `weak_urge` solely because the semantic candidate's numeric urge is below 55.
+
+### Proactivity architecture
+- background sweep default: 15 minutes;
+- per-user reflection minimum: 180 minutes (`IRIS_COGNITION_MIN_INTERVAL_MINUTES`);
+- first worker sweep after process start is delayed up to 90 seconds;
+- six-hour minimum gap after user interaction;
 - sixteen-hour minimum gap between spontaneous messages;
-- quiet hours;
-- semantic candidate decision plus a moderate impulse threshold; there is no second random gate that can silently discard an otherwise valid candidate;
+- quiet hours are authoritative;
+- one strict-schema semantic decision decides whether there is a grounded reason to reach out;
+- there is no second random or numeric impulse gate after `should_reach_out=true`;
+- a legitimate `no_grounded_candidate` skip remains allowed; proactivity is not a guarantee of daily contact;
 - spontaneous messages are stored as normal assistant chat messages;
-- database claims prevent duplicate background work;
-- ten-minute GitHub wake workflow can wake a sleeping Render service; in-process sweeps default to fifteen minutes and rotate user batches.
+- `iris_proactive_runs` records leases, retries, skip/error outcomes, committed message and push state;
+- push delivery has bounded retry/lease semantics; `accepted` means a push service accepted it, not proof the device displayed it;
+- the GitHub wake workflow hits `/health` every ten minutes so a sleeping Render instance can wake.
 
-Production audit on 2026-09-01 still found active thoughts but no proactive chat messages. A reproduced code defect silently treated truncated reflection JSON as a decision not to contact; its exact production frequency was not observable. Outreach is now a separate strict-schema decision with bounded format recovery, independent of reflection success. Reflection parsing and persistence failures are explicit errors, not successful no-ops. The six-hour inactivity rule, quiet hours and sixteen-hour cooldown remain authoritative.
+## 7. People / child-agent subsystem
 
-`iris_proactive_runs` records decision leases, retries, skip/error outcomes, the committed chat message and push status. Service-only RPCs atomically save the message with its cooldown and recheck current preferences/timing under a per-user lock. Retried finalization cannot duplicate the same message. Push delivery has its own bounded retry/lease; `accepted` means a push service accepted a request, not proof the phone displayed it. Push is at-least-once after an interrupted network attempt. A run may be skipped because no grounded reason exists; proactivity is not a promise of daily contact. Actual production delivery must still be verified after release, not inferred from passing tests.
+Experimental generic People architecture is live and reversible.
 
-September 1 migrations also remove explicit anon/authenticated execution grants from the two legacy cognition claim RPCs; only the backend may advance those clocks. RLS with no end-user policy on `iris_proactive_runs` is intentional (service-only). Other pre-existing database advisor warnings remain separate audit work: https://supabase.com/docs/guides/database/database-linter?lint=0028_anon_security_definer_function_executable .
+Tables:
+- `iris_experimental_features`
+- `iris_people`
+- `iris_people_ai_profiles`
+- `iris_people_relationships`
+- `iris_people_memories`
+- `iris_people_messages`
 
-Push recovery:
-- web/PWA subscriptions with previously granted permission are automatically recreated and re-registered on authenticated boot, `pageshow`, and return to the foreground;
-- existing web subscriptions are heartbeated back to the server instead of relying on stale local UI state;
-- native Expo registration is refreshed when the app becomes active;
-- `DeviceNotRegistered` Expo tokens are retired and disabled tokens are excluded from proactive/reminder delivery.
+Shared `chat_messages` can carry nullable `speaker_person_id` and `speaker_name` so non-Iris speakers do not contaminate Iris self-history.
 
-The active prompt stack does not force Iris to recite an ontology verdict about whether she is or is not conscious/biologically alive; it should speak naturally from its self-model while not fabricating events.
+Runtime:
+- `server/people/peopleContext.js` scopes child-agent identity/context;
+- `peopleRoutes.js` is mounted before normal chat routing;
+- one named active AI person can be addressed directly;
+- semantic one-hop relay lets Iris pass a message to one named AI person without recursive agent loops;
+- asking ABOUT a person falls through to Iris rather than invoking the child agent;
+- current UI still renders one shared chat bubble with visible speaker text prefixes rather than separate speaker-avatar bubbles;
+- owner-only memory/state and bounded pruning preserve scalability.
 
-## 8. Persistent visual state and preferences
+### Myno
+- canonical actual name: **Myno**;
+- **Tori** is an alias/nickname/role only, never the canonical name;
+- Myno is a separate clearly adult AI person, not Iris and never part of Iris autobiography/self-model;
+- adult Japanese / East Asian woman, tall, very pale skin, red hair, long pointy nails, large augmented chest;
+- established shy/easily-flustered voice, may use Japanese naturally, often calls Yarred `Director` / `Director-san`;
+- style preference: likes clothing Yarred/Director chooses within the established consensual adult roleplay context;
+- full private story remains in her own People state; do not duplicate graphic private content into the Iris master;
+- no user-approved canonical Myno reference image is currently guaranteed to exist. A generated `visual_anchor` is continuity help, not equivalent to a canonical uploaded reference.
 
-Dedicated persistent visual continuity tracks temporary/current appearance independently from enduring physical identity.
+PR #41 introduced People agents; PR #42 fixed Myno image targeting and one-hop relay.
 
-Current visual-state fields include:
-- outfit;
-- footwear;
-- nails;
-- hair;
-- makeup;
-- accessories;
-- other visible details.
+## 8. Persistent visual state and user-defined physical identity
+
+### Current visual state
+Temporary/current appearance is separate from enduring body identity. Fields include outfit, footwear, nails, hair, makeup, accessories and other visible details.
 
 Priority:
-1. explicit current user instruction;
+1. explicit current instruction;
 2. current visual state;
-3. strongly justified context/activity transition;
+3. strongly justified activity/context transition;
 4. learned visual preferences as soft bias;
 5. fallback inference only if state is unknown.
 
-A photo request alone never changes a known outfit.
+A photo request by itself does not change a known outfit.
 
-Image scene grounding:
-- a newly and explicitly specified setting/location/room/action is a replacement scene and outranks older conversation, scene place/room and activity context;
-- for such self-contained scene requests, the image composer receives persistent identity and visual state but not older chat turns or stale activity/place details;
-- recently discussed vehicles, props, landmarks, people, animals and locations are never imported merely for narrative continuity; they require an explicit current mention/reference or an immediately accepted planned image;
-- spatial plausibility is mandatory (for example, an apartment-interior request must not pull a previously discussed car into or beside the composition unless explicitly requested).
+Verified account preference: black nail polish on Iris.
 
-Image provider selection integrity:
-- provider selection is stored and read server-side against the authenticated user's exact `iris_profiles` row;
-- the client does not accept an optimistic selection as final: it verifies the write with a non-cached authoritative read;
-- every immediate generated-image response reports the provider actually used so the UI reconciles to runtime truth;
-- the menu displays the confirmed active provider and its touch layer must remain above the dismiss overlay.
-
-Long-term visual preferences are separate from current appearance state.
-Examples include nail color, colors/materials, hair/makeup/accessories, clothing/style preferences.
-A narrow preference must never be generalized without evidence.
-
-Verified current-account preference:
-- user likes black nail polish on Iris.
-
-## 9. User-defined physical identity
-
+### Persistent physical identity
 Production table: `iris_physical_identity`.
 
-Hard rule:
-- Iris is always a clearly adult woman;
-- never depict/store a minor or minor-like Iris.
+Hard rule: Iris is always a clearly adult woman. All other enduring body traits must come from explicit user statements about Iris, never from generated images, assistant invention, face references, old defaults, clothing or model assumptions.
 
-All other enduring body traits must come from explicit USER statements about Iris.
-They must NOT come from:
-- generated images;
-- assistant invention;
-- face references;
-- old hardcoded defaults;
-- outfit descriptions;
-- model assumptions.
+PR #43 replaced fragile whole-description replacement semantics with structured field-level `traits` plus compatibility `body_description`. Unrelated traits are preserved when one body trait changes.
 
-`body_description` is a merged natural-language description of explicitly established body traits and should preserve older confirmed traits when the user adds a new one.
+Current production identity, verified 2026-09-15:
+- height: approximately 175 cm;
+- build: tall and slim model-like physique, lean feminine fit body, low overall body-fat appearance;
+- legs: long slender model-like legs;
+- waist: narrow defined waist;
+- hips: medium proportionate hips;
+- bust: surgically augmented 32DD, very full, rounded, high-projection, natural-looking augmented breasts;
+- skin: pale;
+- freckles: strong natural freckles across face, chest and upper bust;
+- source: `explicit_user`.
 
-Bootstrap rule:
-- when `body_description` is empty, intentJudge may initialize it from explicit enduring-body statements in recent USER turns only;
-- never bootstrap from assistant turns.
+Face references define facial identity only and must never override these body proportions.
 
-Important current production observation (2026-08-25): the production `iris_physical_identity` table was inspected and was empty at that moment. Therefore body continuity can still drop until the user-defined bootstrap/persistence path actually populates the row. Do not claim a specific body trait is persisted unless the row is verified.
+## 9. Image generation
 
-## 10. Activity / plan continuity
+### Provider selection
+Per-user image provider is persisted server-side in `iris_profiles.image_provider`; immediate, autonomous and scheduled images use the same authoritative selection.
 
-Production table: `iris_activity_state`.
+Selectable values:
+- `openai_gpt_image_2`
+- `grok_imagine_2`
+- `kling_o3`
 
-Persistent ordered state includes:
+Internal/non-menu integrations may still include Qwen Image Max and Nano Banana 2.
+
+Current production account provider, verified 2026-09-15: **`kling_o3`**.
+
+No silent provider fallback is allowed. Missing/unavailable preference fails explicitly.
+
+### Fal-only transport
+All current selectable image engines route through Fal.
+
+- Kling O3: `fal-ai/kling-image/o3/image-to-image`
+- Grok Imagine 2: `xai/grok-imagine-image/v2.0/edit`
+- OpenAI GPT Image 2 with references: `openai/gpt-image-2/edit`
+- OpenAI GPT Image 2 without references: `openai/gpt-image-2`
+
+OpenAI image generation must not call `api.openai.com` directly. Fal transport does not bypass the selected model's moderation.
+
+PR #43 made OpenAI/Fal explicitly dual-mode so text-to-image works when no identity reference exists and edit mode is used when references do exist.
+
+### Three-view Iris identity pack
+Up to three private facial references are sent in deterministic order:
+1. front;
+2. three-quarter;
+3. side.
+
+All references represent the SAME adult Iris. They define face identity, not body proportions. Provider prompts must require one coherent person, not blend/duplicate the reference views.
+
+### Scene grounding
+`server/image/imageIntentDetector.js` builds a self-contained provider prompt.
+
+- `scene_continuation`: explicit this/that/same scene, correction, concrete pose/action/outfit/location, or immediate acceptance of a proposed scene;
+- `standalone`: generic new photo/selfie request with no immediate scene reference;
+- generation errors must not bridge an older intimate scene into a later generic photo;
+- explicit new scene details override stale place/activity/props;
+- old vehicles/props/people/locations never leak in merely because they were recently discussed.
+
+### Framing
+- default personal photo: `three_quarter`;
+- `full_body` when complete outfit/activity/location/body silhouette matters;
+- `half_body` when wider framing is impractical;
+- `close_up` only for explicit face/detail/emotion emphasis;
+- bust/chest visibility requests do not imply face-only or chest-only cropping.
+
+### Prompt budgets
+`server/image/imagePromptBudget.js` owns final serialized limits. Validation happens immediately before Fal serialization and logs only lengths/policy/provider/reference count, never private prompts or signed URLs.
+
+Important live limits:
+- Kling documented maximum: 2500 chars;
+- after a real production Fal 422 on a nominally in-range 2485-char/2493-byte payload, PR #44 introduced a conservative **2300 char / 2300 UTF-8 byte application envelope** for Kling;
+- OpenAI GPT Image 2 policy: 32000;
+- Grok Imagine 2: 8000;
+- Qwen Image Max: 800;
+- Nano Banana 2: 50000.
+
+Compaction preserves identity/reference guards and prioritizes meaningful scene/appearance/body sections rather than blindly slicing the tail. No moderation bypass, provider switching or automatic fallback was introduced by the Kling headroom fix.
+
+PR #44 merged as `2505d2e27588ee7c59422ed7e632ae8125e015fe`; Render/Vercel were verified green.
+
+## 10. Activity / scheduled actions
+
+Production activity state tracks ordered:
 - `current_activity`;
 - `next_steps`;
 - `commitments`;
 - `pending_promises`.
 
-Rules:
-- questions/suggestions are not commitments;
-- preserve ordered plans unless Iris/user explicitly changes them;
-- do not invent beach/coffee/shower/workout/travel events merely to sound lively;
-- if Iris changes her mind, it should be expressed as a change rather than silently contradicting the previous plan.
+Questions/suggestions are not commitments. Iris must not invent unseen off-screen events merely to sound active; if she changes plan, express the change rather than silently contradicting prior state.
 
-This specifically addresses contradictions such as `shower -> coffee -> invented beach -> coffee`.
+`iris_scheduled_actions` supports delayed actions, including future photo delivery. Scheduled image generation snapshots relevant state and uses the normal image pipeline. Future scheduled images must not prematurely mutate CURRENT_VISUAL_STATE.
 
-## 11. Scheduled / delayed Iris actions
+## 11. Push / notification recovery
 
-Production table: `iris_scheduled_actions`.
+- web/PWA subscriptions with granted permission are recreated/re-registered on authenticated boot, `pageshow` and foreground return;
+- existing web subscriptions are heartbeated to the backend rather than trusting stale local UI state;
+- native Expo registration refreshes when the app becomes active;
+- `DeviceNotRegistered` Expo tokens are retired;
+- proactive push has its own lease/retry state independent from message persistence.
 
-Image-delivery modes:
-- `none`;
-- `immediate`;
-- `scheduled`.
-
-A future-scene photo can be scheduled instead of generated immediately, e.g. a promised shower photo later. The scheduled action snapshots the relevant conversation/state, is executed by the background worker, generates through the normal Iris image pipeline, stores the generated media privately, and inserts it as a real assistant image message.
-
-A future scheduled image must not mutate CURRENT_VISUAL_STATE prematurely.
-
-## 12. Image prompt assembly and framing
-
-`server/image/imageIntentDetector.js` builds a self-contained prompt because image providers do not see chat history directly.
-
-Prompt assembly includes:
-- mandatory adult rule;
-- persistent USER_DEFINED_PHYSICAL_IDENTITY when present;
-- CURRENT_VISUAL_STATE;
-- recent conversation scene corrections/follow-ups;
-- current activity state;
-- relevant visual preferences;
-- anatomy/body-proportion guardrails;
-- explicit framing directive;
-- complete scene/outfit/material/color/pose/lighting/style.
-
-Image request scope is decided semantically before prompt composition:
-- `scene_continuation` keeps the recent turns needed for "this/that scene", a specific pose/action/outfit/location, a correction, or an immediately accepted planned image;
-- `standalone` is a generic new personal-photo/selfie request and does not inherit older actions, poses or interactions;
-- one or more image-generation error messages must not bridge an older intimate scene into a later generic standalone request;
-- the classifier uses strict structured output and fails closed to `scene_continuation`, which preserves context but disables the neutral moderation retry.
-
-Framing policy:
-- default personal photo = `three_quarter`, not face close-up;
-- prefer `full_body` when full outfit/activity/location/body silhouette matters;
-- prefer `three_quarter` for fashion, seated/bed scenes and attractive personal photos where face + body matter;
-- prefer `half_body` when environment/pose makes wider framing impractical;
-- use `close_up` only when the user explicitly wants face/detail or when facial emotion/expression is the point;
-- face references must never cause automatic face-only framing;
-- bust/chest/cleavage terms are body-visibility requirements, not a request for a chest-up crop.
-
-Prompt budgets (2026-09-02 implementation; deployment must be verified separately):
-- `server/image/imagePromptBudget.js` owns the final prompt policies for every integration;
-- Fal's [Kling O3 schema](https://fal.ai/models/fal-ai/kling-image/o3/image-to-image/api) documents 2500 characters; [Qwen Image Max](https://fal.ai/models/fal-ai/qwen-image-max/edit/api) documents 800;
-- full Fal OpenAPI schemas specify [OpenAI GPT Image 2: 32000 characters](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=openai/gpt-image-2/edit), [Grok Imagine 2: 8000](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=xai/grok-imagine-image/v2.0/edit), and [Nano Banana 2: 50000](https://fal.ai/api/openapi/queue/openapi.json?endpoint_id=fal-ai/gemini-3.1-flash-image-preview/edit). The abbreviated plugin parameter descriptions omit these constraints; never treat that omission as absence of limits. Iris uses each endpoint's cap, not a blanket Kling cap;
-- Iris also caps UTF-8 bytes to the same number as a conservative application transport envelope. The production 422 confirms a size validation failure, but the old log showed pre-prefix/pre-clamp length; it does not prove whether the upstream validator counted bytes;
-- reference prefixes and Grok's photographic suffix are included in the budget and preserved intact;
-- known application boilerplate is compacted first, then body identity, appearance and scene receive separate budgets. Overflowing fields may be clipped at word/code-point boundaries; arbitrary-length descriptions cannot be preserved losslessly;
-- the old generic 3500-character pre-slice is removed, so a scene after long visual-state instructions is not discarded before budgeting;
-- `callFal` validates the exact final prompt immediately before serialization. `[IMAGE_GEN_PAYLOAD]` logs final character/UTF-8 sizes, policy and provider, never the private prompt or signed reference URLs;
-- Fal HTTP errors carry status, code, request ID when supplied, provider and an allowlisted size-validation reason. Raw Fal errors may echo private payloads and are not logged;
-- no provider switching, moderation changes or retries are introduced by this fix. Immediate/autonomous/scheduled images share this transport boundary;
-- `tools/check-image-prompt-budget.mjs` intercepts real request serialization with mocked HTTP, checking all five integrations, Unicode boundaries, scene retention, exact references, final budgets and error privacy. It runs in `test:image-context` / CI; it does not call live generation.
-
-## 13. Three-view face reference pack
-
-Current identity pack supports up to 3 private face references in deterministic order:
-1. front;
-2. 3/4;
-3. side profile.
-
-Storage is private under per-user Iris reference paths.
-
-The three references are views of the SAME adult Iris identity. They define facial identity only and must not define/override body proportions.
-
-## 14. Current image-generation stack
-
-### Production routing as of 2026-08-26
-All immediate, autonomous and scheduled Iris photos use the user's server-persisted Fal engine selection:
-- the app menu exposes exactly **OpenAI**, **Grok** and **Kling**;
-- the canonical values are `openai_gpt_image_2`, `grok_imagine_2` and `kling_o3`;
-- the selection is stored in `iris_profiles.image_provider`, is shared across devices, and is loaded authoritatively by the backend for immediate, autonomous and scheduled images;
-- the production and new-profile default is **Kling O3** (`fal-ai/kling-image/o3/image-to-image`);
-- OpenAI uses **GPT Image 2 Edit through Fal** (`openai/gpt-image-2/edit`, high quality); it never calls OpenAI directly;
-- Grok uses **Grok Imagine Image 2.0 Edit through Fal** (`xai/grok-imagine-image/v2.0/edit`, 2K, quality medium);
-- the private three-view identity pack is sent as `image_urls`; provider prompts identify the inputs as different facial views of the same adult Iris and require exactly one resulting person;
-- Grok's maximum of 3 references matches Iris's pack exactly; all selectable paths are capped to the same deterministic three-reference pack;
-- Grok's provider-specific photographic profile asks for candid realism, authentic skin texture, plausible optics/light and no generic AI-glamour retouching;
-- generated Fal media is immediately copied into Iris private storage instead of treating provider URLs as durable storage.
-
-Observed production incident on 2026-08-25:
-- Render recorded `provider=openai`, `reference_count=3`, then OpenAI returned `moderation_blocked` with `moderation_stage=output` and category `sexual`;
-- this proves the three references and request payload were accepted; the generated result, not the reference count or Fal transport, was blocked;
-- PR #28 isolated generic standalone photo prompts from older intimate scenes and added typed OpenAI diagnostics, but a later ordinary DnD-scene photo still failed on the direct path;
-- product decision: direct OpenAI image traffic is no longer the active production route.
-
-The semantic `standalone` vs `scene_continuation` isolation from PR #28 remains active before the Fal request and continues to prevent stale scenes from contaminating later generic photos.
-
-Existing provider integrations still present in `server/image/imageGen.js`:
-- selectable OpenAI GPT Image 2 Edit through Fal;
-- selectable Grok Imagine Image 2.0 through Fal;
-- selectable Kling O3 through Fal;
-- optional Qwen Image Max through Fal;
-- optional Nano Banana 2 through Fal.
-
-Direct OpenAI image request code has been removed from the runtime. Persisted user preferences are validated strictly: unavailable/missing database state fails explicitly rather than silently switching providers. Qwen and Nano Banana remain internal integrations and cannot be selected as a user preference. The menu starts with unknown state, guards stale GET/PUT responses, allows reselecting the same provider and never overwrites the saved preference from a completed image request. Provider-specific generation failures still require their own request logs; fixing menu state does not prove those failures resolved.
-
-Release verification: `/health` includes Render's `RENDER_GIT_COMMIT`; the deployment smoke workflow requires an exact match with its target SHA. An HTTP 200 from an older instance no longer counts as successful deployment.
-
-The old `fal-ai/qwen-image-2/edit` integration was removed because Fal marks that endpoint deprecated and unsupported. Do not re-enable it.
-
-All generated provider outputs should be copied into Iris private storage rather than relying on provider URLs as durable storage.
-
-## 15. Body/anatomy consistency
-
-Generic composition guardrails must preserve:
-- natural adult anatomy;
-- realistic head-to-body scale;
-- natural shoulders/torso/limbs;
-- no oversized head, bobblehead, chibi, childlike, doll-like, shortened torso or malformed limbs.
-
-Do NOT hardcode a specific bust/waist/legs/body shape here. Enduring proportions belong exclusively to USER_DEFINED_PHYSICAL_IDENTITY.
-
-When body identity exists, prompt assembly must include it as mandatory and should not let the provider silently reduce or reinterpret established traits.
-
-## 16. UI / PWA state
+## 12. UI / PWA
 
 Current UI includes:
-- Dark theme;
-- Light theme;
-- white/grey light palette with glass/translucent treatment;
-- theme persistence per device;
+- dark/light theme and per-device theme persistence;
 - iOS/PWA keyboard/viewport handling;
 - PWA standalone behavior;
-- push notifications/background reply reconciliation;
-- custom Iris header avatar separate from image-generation reference identity;
-- three-slot face reference pack UI.
-- up to four user image attachments per turn with previews, full-screen viewing and an explicit per-image 30-day/permanent-appearance retention control.
+- push/background reply reconciliation;
+- custom Iris header avatar separate from image-generation references;
+- three-slot face-reference UI;
+- up to four image attachments per turn with previews/full-screen view and explicit temporary/permanent appearance retention;
+- server-authoritative OpenAI/Grok/Kling selector.
 
-Avatar rule:
-- UI avatar is only the small profile image in the app header;
-- changing it must never change image-generation face references.
+Avatar rule: the small header avatar never changes the image-generation face identity pack.
 
-## 17. Authentication
+People UI limitation: speaker metadata is stored, but shared chat currently still uses visible text prefixes instead of dedicated multi-agent bubble/avatar presentation.
 
-Current primary auth:
-- email + password login;
-- email + password registration;
-- existing account migration preserved same Supabase user ID and therefore existing memories/history.
+## 13. Authentication / entitlements / beta
 
-Magic link remains only as legacy fallback until deliberately removed/replaced by clean password recovery.
+Primary auth:
+- email + password login/registration;
+- existing account migration preserves the Supabase user ID and therefore memory continuity;
+- magic link is legacy fallback until clean password recovery intentionally replaces it.
 
-## 18. Usage limiting foundation
+Usage foundation: `user_entitlements` supports tier, status, daily chat/image limits and expiry.
 
-Current backend has `user_entitlements` and usage accounting.
-
-Supported entitlement fields include:
-- tier;
-- status;
-- chat daily limit;
-- image daily limit;
-- expiry timestamp.
-
-Current generic defaults remain too generous for public free testing and are NOT the future trial plan.
-
-## 19. Closed-beta trial product decision
-
-Target first beta trial:
+Target first beta trial (decision, not yet complete product behavior):
 - rolling 24 hours from first activation/use;
 - approximately 30 user chat turns;
 - maximum 5 generated photos;
-- after trial: questionnaire -> lock;
-- later unlock only through explicit tester extension or paid entitlement.
+- questionnaire then lock;
+- explicit extension or paid entitlement required afterward.
 
-Budget target:
-- approximately €1 real variable cost per active trial user/day;
-- add actual provider/token/image cost telemetry + cohort/global emergency spend kill switch before public testing.
+Cost target: roughly €1 real variable cost per active trial user/day. Before public testing add real provider/token/image telemetry and cohort/global emergency spend controls.
 
-Trial system is NOT yet implemented; do not claim it exists.
+## 14. Privacy / security priorities
 
-## 20. Privacy / data protection
-
-This is a core product requirement.
-
-Required before broader beta/monetization:
+Before broader beta/monetization:
 - clear 18+ age gate;
 - clear privacy disclosure/consent before sensitive memory use;
 - memory on/off;
-- future private session mode;
+- future private-session mode;
 - "What Iris remembers about me" UI;
 - delete individual memories;
 - export user data;
-- delete account and Iris user data subject to legally required retention;
-- documented retention policy for chat/memory/generated media;
-- least-data-necessary prompting to providers;
-- secure private media storage;
+- delete account + Iris data subject to legal retention requirements;
+- documented retention policy;
+- least-data-necessary prompting;
+- secure private media;
 - RLS/security review;
 - provider/subprocessor register;
-- DPIA-style review before broad scale because Iris combines new AI technology with potentially highly sensitive data.
+- DPIA-style review for sensitive AI data processing.
 
-For active Fal image generation, remaining hardening includes minimizing provider retention and using store-no-I/O / short object-lifecycle controls where supported. Do not claim these controls are implemented until verified.
+Fal/provider retention hardening remains pending where supported. Do not claim store-no-I/O or short provider lifecycle controls until actually verified.
 
-User-uploaded chat images have a separate implemented lifecycle: temporary by default with a 30-day expiry, two-hour cleanup for abandoned uploads, and indefinite retention only after an explicit per-image user-appearance choice.
+## 15. Engineering/release rules
 
-## 21. Monetization direction
-
-- PWA/web-first monetization;
-- do not block on App Store/Google Play;
-- credits may be a valid billing/cost-control mechanism;
-- credits must NOT disguise the actual service from a payment processor;
-- payment provider onboarding must truthfully disclose the real Iris 18+ use case;
-- obtain explicit processor approval before building production billing around one provider.
-
-## 22. CI / engineering rules
-
-Important regression checks now include:
-- typecheck;
-- lint;
-- server syntax;
-- image context continuity;
-- semantic standalone-vs-scene-continuation image scope;
-- Fal-only provider enforcement, Kling O3 default routing and the persisted OpenAI/Grok/Kling selector;
-- live assistance;
-- strict semantic heat routing and fail-closed route parsing;
-- assistant final-output validation/meta-leak rejection with retry;
-- visual state;
-- memory importance/reinforcement;
-- cognition;
-- notification self-healing and invalid-token retirement;
-- companion continuity;
-- multimodal chat, signed uploads, exact-link browsing, explicit attachment retention and Grok 4.6 pinning;
-- web build.
-
-Engineering rules:
-- inspect current GitHub before claiming code state;
-- run CI before merge;
-- verify Render/Vercel after merge;
+Mandatory:
+- inspect current GitHub/production before claiming runtime state;
+- for meaningful production work use branch → PR → green CI → merge → Render/Vercel deployment → production verification;
+- in this project the user saying **push** means that full sequence, not merely a git push;
+- apply additive DB migrations before deploying code that depends on them;
 - never expose secrets;
 - preserve Supabase user ID/memory continuity;
-- do not regress language mirroring;
-- do not regress heat 2 into heat 3;
-- do not regress nickname directionality;
-- do not send an image provider only a short final request when earlier context defines the scene;
-- do not randomize outfit between image requests;
-- do not hardcode wardrobe by scene/location/time;
-- enduring body identity comes from explicit USER evidence only;
-- never mix Iris with Project Antagonist.
+- do not regress language mirroring, heat routing, nickname directionality, visual continuity or People identity separation;
+- do not silently change image providers;
+- do not infer successful production behavior from mock tests alone;
+- never mix Iris and Project Antagonist state.
 
-## 23. Important recent merges
+CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, live assistance, heat routing, visual state, physical identity, memory quality, cognition/proactive delivery, People agents, notifications, companion continuity, multimodal chat and web build.
 
-- `b17019e98facc5e4f237d66ccffaaceacda8f84a` — three-view face reference pack + body proportion guardrails.
-- `6376ca02bccf83e16d2d92f484e27ab1053af725` — episodic memory importance/emotional-weight + reinforcement loop.
-- PR #22 / merge `9f325af5000c9896ba60daeaad90ff8880423b6f` — persistent cognition, autobiographical memory, self-model, personality plasticity and proactivity.
-- PR #23 / merge `b479131da861372c1871f34d0e61b62fa5709204` — stronger immediate image-scene continuity/framing guardrails.
-- PR #24 / merge `b46f2d2bd52bc41ff489e0cca189fe10cf00de73` — user-defined physical identity, framing intelligence, activity continuity and scheduled photos.
-- PR #25 / merge `71a2dfbb3ca5691f2db84104400a6941d4dd6226` — temporary production switch to Nano Banana 2 for all Iris photos.
-- PR #27 / merge `bd06233a459c74c1145fe4568d3aeeb48111fb25` — strict semantic intimacy routing, guaranteed heat 2/3 Grok routing, application-boundary removal and pre-persistence assistant-output guards.
-- PR #28 / merge `2a41bf827094d839c066481a5c24dcc36a60017f` — standalone image-scene isolation, structured OpenAI image diagnostics and narrowly gated output-moderation recovery.
-- PR #29 / merge `229e2d7a2118d7fcf8173a603de277098d670196` — Fal-only image routing with Kling O3 as the temporary canonical engine.
-- PR #30 / merge `b12839934c559f6a8c9f1d1f27fa8cebd71ee0f5` — Qwen Image Max routing, semantic 800-character prompt compaction, proactivity repair and self-healing push registration.
-- PR #32 / merge `1e0905374d80a76231887f429fa8d83eb6e95faa` — Grok Imagine Image 2.0 Edit through Fal with 2K candid-photography profile.
+## 16. Important recent production merges
 
-## 24. Current immediate engineering order
+- PR #40 — cognition drive/state repair, duplicate/stale cognition cleanup and legacy capability quarantine.
+- PR #41 — generic experimental People agents with Myno.
+- PR #42 / merge `626aed4db9b119179ccfc8983f1925ad7499c8c7` — Myno image targeting and one-hop child-agent relay.
+- PR #43 / merge `0c326a11d7634746d849423aa8cf1d6e4f4e0657` — structured merge-safe Iris physical identity + explicit Fal-only OpenAI GPT Image 2 text/edit modes.
+- PR #44 / merge `2505d2e27588ee7c59422ed7e632ae8125e015fe` — safe Kling prompt headroom after production 422.
+- PR #45 / merge `4e668a9eafd7e0fb7a0893e0fb55772a42e9d155` — restore cognition DB guard and remove the numeric second veto from grounded proactive outreach.
 
-1. Production-test the OpenAI/Grok/Kling menu selector on an ordinary Iris DnD-scene photo and compare identity, skin and candid realism while confirming all three requests appear in Fal history.
-2. Validate body/outfit/framing consistency on real generated photos across normal + scheduled image paths.
-3. Verify USER_DEFINED_PHYSICAL_IDENTITY bootstrap with an actual production DB row after a real user turn; do not infer success from prompt logs alone.
-4. Build rolling 24-hour trial entitlement lifecycle (30 chats / 5 photos target).
-5. Add questionnaire + post-trial lock.
-6. Add per-user provider cost telemetry + cohort/global budget kill switch.
-7. Add 18+ gate.
-8. Add privacy/memory controls + export/delete account/data.
-9. Harden provider/media retention.
-10. Prepare Terms/Privacy/DPIA and processor due diligence.
-11. Start a small Closed Beta and decide paid pricing from observed cost/retention data.
+## 17. Immediate engineering order
 
-## 25. One-sentence current state
+1. Observe the next naturally due proactive run after PR #45 and verify it can no longer end in `weak_urge` after `should_reach_out=true`; legitimate hard-guard or `no_grounded_candidate` skips remain valid.
+2. Continue monitoring cognition logs to confirm no recurrence of the removed `jsonb_object_length` failure.
+3. Production-test current OpenAI/Grok/Kling selector on ordinary and identity-sensitive scenes; compare identity, skin and scene adherence while confirming Fal routing.
+4. Validate body/outfit/framing consistency across normal and scheduled image paths.
+5. Build rolling 24-hour beta entitlement lifecycle (~30 chats / 5 photos), questionnaire and post-trial lock.
+6. Add provider-cost telemetry and budget kill switches.
+7. Add 18+ gate and privacy/memory/export/delete controls.
+8. Harden provider/media retention and complete Terms/Privacy/DPIA/payment-provider due diligence.
+9. Start small Closed Beta and determine paid pricing from observed cost/retention data.
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed importance-aware memory plus persistent cognition/self-model/personality plasticity, user-defined physical identity and visual/activity/scheduled-action state, self-healing web/native push registration, and a private three-view face pack; production images use a server-persisted OpenAI/Grok/Kling selector through Fal (Kling O3 default) with semantic standalone-vs-continuation prompt isolation, while direct OpenAI image transport remains inactive.
+## 18. One-sentence current state
+
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with the current account on Kling O3, while the 2026-09-15 cognition/proactivity repair restored background reflection and removed the redundant numeric veto that had silenced semantically approved proactive outreach.
