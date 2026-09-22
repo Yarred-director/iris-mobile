@@ -36,6 +36,24 @@ function cognitionEnabled() {
   return String(process.env.IRIS_COGNITION_ENABLED || 'true').toLowerCase() !== 'false';
 }
 
+export function proactiveProviderForScene(sceneContext) {
+  return String(sceneContext?.last_engine || '').toLowerCase() === 'grok' ? 'grok' : 'openai';
+}
+
+async function loadSceneRoutingState(supabase, userId) {
+  const { data, error } = await supabase
+    .from('scene_context')
+    .select('interaction_mode,last_engine,last_engine_reply,updated_at')
+    .eq('user_id', userId)
+    .eq('scene_key', 'global')
+    .maybeSingle();
+  if (error) {
+    console.log('[COGNITION_SCENE_ROUTE_LOAD]', error.message);
+    return null;
+  }
+  return data || null;
+}
+
 async function loadRecentEpisodicMemories(supabase, userId) {
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data, error } = await supabase
@@ -107,12 +125,13 @@ async function processUser({ supabase, profile, llmClient, model }) {
     // Reflection failure must not prevent independent outreach evaluation.
   }
 
-  const [selfModel, personalityEvolution, cognitiveContinuity, recentEpisodicMemories, recentChat] = await Promise.all([
+  const [selfModel, personalityEvolution, cognitiveContinuity, recentEpisodicMemories, recentChat, sceneContext] = await Promise.all([
     loadSelfModel(supabase, userId),
     loadPersonalityEvolution(supabase, userId),
     loadCognitiveContinuity(supabase, userId),
     loadRecentEpisodicMemories(supabase, userId),
     loadRecentChatMessages(supabase, userId, 10),
+    loadSceneRoutingState(supabase, userId),
   ]);
 
   const context = {
@@ -124,17 +143,29 @@ async function processUser({ supabase, profile, llmClient, model }) {
     cognitiveContinuity,
     recentEpisodicMemories,
     recentChat,
+    sceneContext,
     llmClient,
     model,
     cooldownHours: intEnv('IRIS_PROACTIVE_MIN_INTERVAL_HOURS', DEFAULT_PROACTIVE_INTERVAL_HOURS, 16, 168),
   };
   // Outreach is not gated by reflection success or its three-hour claim.
-  const outreach = processProactiveUser(context);
+  // Provider continuity is deliberate: when the last conversational reply came
+  // from Grok, spontaneous follow-up is also authored by Grok so an adult scene
+  // is not silently reinterpreted by a stricter provider.
+  const proactiveProvider = proactiveProviderForScene(sceneContext);
+  const proactiveClient = proactiveProvider === 'grok' ? getLLMClient('grok') : llmClient;
+  const proactiveModel = proactiveProvider === 'grok' ? MODELS.grok : model;
+  const outreach = processProactiveUser({
+    ...context,
+    llmClient: proactiveClient,
+    model: proactiveModel,
+    proactiveProvider,
+  });
   const reflection = claimed === true ? runBackgroundReflection(context).catch((error) => {
     console.log('[COGNITION_REFLECTION_FAILED]', { userId, code: error.code || 'reflection_failed' });
   }) : Promise.resolve();
   const [result] = await Promise.all([outreach, reflection]);
-  console.log('[COGNITION_PROACTIVE_RESULT]', { userId, ...result });
+  console.log('[COGNITION_PROACTIVE_RESULT]', { userId, proactiveProvider, ...result });
   return { claimed: claimed === true, ...result };
 }
 
