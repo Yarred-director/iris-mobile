@@ -5,7 +5,7 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-09-15, Europe/Bratislava  
+**Consolidated:** 2026-09-22, Europe/Bratislava  
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
@@ -226,6 +226,20 @@ PR #45 merged to `main` as `4e668a9eafd7e0fb7a0893e0fb55772a42e9d155`; CI passed
 - `iris_proactive_runs` records leases, retries, skip/error outcomes, committed message and push state;
 - push delivery has bounded retry/lease semantics; `accepted` means a push service accepted it, not proof the device displayed it;
 - the GitHub wake workflow hits `/health` every ten minutes so a sleeping Render instance can wake.
+
+### September 22 proactive-provider continuity fix
+Production history showed a separate quality bug after explicit Grok conversations: the direct chat could end on `last_engine='grok'` with `interaction_mode='heat_3'`, but later spontaneous messages were still authored by the OpenAI utility model. Those messages repeatedly reframed the adult scene as something that should be kept "non-explicit" or "less graphic", even though the user had not established that boundary. Repeated proactive copies then reinforced the bad framing.
+
+The intended rule is now provider-continuous:
+- when the latest conversational assistant reply was authored by Grok, the proactive decision/message is also authored by Grok 4.6;
+- Luna/OpenAI remains the normal proactive engine when the last conversational engine was not Grok;
+- the worker loads `scene_context.last_engine`, `interaction_mode` and `last_engine_reply` for the exact user before proactive evaluation;
+- a Grok continuation receives the latest direct Grok reply plus recent chat and must preserve the adult romantic/sexual intensity and tone the conversation actually ended with;
+- `heat_2` / `heat_3` proactive continuations must not invent a new "keep it non-explicit", "too graphic", consent-as-lock or de-escalation boundary merely because the prior scene was sexual;
+- only a USER-authored request to stop, slow down, change topic or establish a boundary is authoritative; older unsolicited assistant/proactive wording is not promoted into a user preference;
+- intimate Grok proactive candidates are passed through the existing adult-intimacy reply judge; an invented boundary receives one bounded Grok rewrite before failure;
+- hard timing/proactivity controls remain unchanged: quiet hours, six-hour recent-interaction gap, sixteen-hour cooldown, preferences, DB leases and transactional finalization.
+
 
 ## 7. People / child-agent subsystem
 

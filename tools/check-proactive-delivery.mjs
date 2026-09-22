@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { cognitionError, decideProactiveMessage, parseCompletedJson } from '../server/cognition/proactiveDecision.js';
 import { processProactiveUser, deliverPendingProactiveNotifications } from '../server/cognition/proactiveDelivery.js';
 import { runBackgroundReflection, reflectOnExchange } from '../server/cognition/cognitiveEngine.js';
+import { proactiveProviderForScene } from '../server/cognition/cognitionWorker.js';
 import { loadUserImageProvider, saveUserImageProvider } from '../server/image/imageProvider.js';
 import { buildPersonalityContext } from '../server/prompt/personalityContext.js';
 // A legacy embedding module constructs its client on import. This is only a
@@ -30,6 +31,35 @@ assert.deepEqual(await decideProactiveMessage({ llmClient, model: 'test' }), can
 assert.equal(calls.length, 2);
 assert.equal(calls[0].text.format.strict, true);
 assert.ok(calls[1].max_output_tokens > calls[0].max_output_tokens);
+assert.equal(proactiveProviderForScene({ last_engine: 'grok' }), 'grok');
+assert.equal(proactiveProviderForScene({ last_engine: 'openai' }), 'openai');
+assert.equal(proactiveProviderForScene({ last_engine: 'image' }), 'openai');
+
+let grokRequest;
+let auditedIntimacy;
+const grokCandidate = { ...candidate, message: 'GROK_INTIMATE_CONTINUITY_SENTINEL' };
+const grokResult = await decideProactiveMessage({
+  profile: { last_interaction_at: '2026-09-01T00:00:00Z' },
+  sceneContext: {
+    last_engine: 'grok',
+    interaction_mode: 'heat_3',
+    last_engine_reply: 'LAST_GROK_REPLY_SENTINEL',
+  },
+  proactiveProvider: 'grok',
+  recentChat: [{ role: 'user', content: 'LATEST_USER_INTIMATE_SENTINEL' }],
+  llmClient: { responses: { create: async (args) => { grokRequest = args; return completed(grokCandidate); } } },
+  model: 'grok-test',
+  auditIntimacy: async (value) => { auditedIntimacy = value; return value.reply; },
+});
+assert.equal(grokResult.message, grokCandidate.message);
+assert.equal(grokRequest.model, 'grok-test');
+assert.equal(grokRequest.reasoning.effort, 'low');
+const grokSystem = grokRequest.input.filter((item) => item.role === 'system').map((item) => item.content).join('\n');
+const grokPayload = grokRequest.input.find((item) => item.role === 'user')?.content || '';
+assert.match(grokSystem, /same adult romantic\/sexual intensity/);
+assert.match(grokSystem, /Only USER-authored requests/);
+assert.match(grokPayload, /LAST_GROK_REPLY_SENTINEL/);
+assert.deepEqual(auditedIntimacy, { userText: 'LATEST_USER_INTIMATE_SENTINEL', reply: 'GROK_INTIMATE_CONTINUITY_SENTINEL' });
 const personality = {
   personalityEvolution: { evolved_self_summary: 'LEGACY_SCENE_SENTINEL', quirks: ['QUIRK_SENTINEL'], values: ['VALUE_SENTINEL'], developed_interests: ['INTEREST_SENTINEL'] },
   selfModel: { mood: { label: 'MOOD_SENTINEL' }, stable_narrative_identity: 'IDENTITY_SENTINEL', narrative_identity: 'STALE_TOKYO_SCENE' },
