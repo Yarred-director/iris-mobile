@@ -490,7 +490,7 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 16. Important recent production merges
 
-- Pending PR — OpenAI billing failover to Grok + private-thought liveness/telemetry repair after the Sept 22–29 credit outage.
+- PR #48 / merge `949a203b5cec02dba600fd01415045c8285fab22` — OpenAI billing-exhaustion failover to Grok 4.6 + private-thought liveness/telemetry repair after the Sept 22–29 outage; live production verification showed `LLM_PROVIDER_FAILOVER`, then successful background reflection consolidation at revision 105 while OpenAI credits were still exhausted.
 
 - PR #40 — cognition drive/state repair, duplicate/stale cognition cleanup and legacy capability quarantine.
 - PR #41 — generic experimental People agents with Myno.
@@ -501,8 +501,8 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 17. Immediate engineering order
 
-1. Observe the next naturally due proactive run after PR #45 and verify it can no longer end in `weak_urge` after `should_reach_out=true`; legitimate hard-guard or `no_grounded_candidate` skips remain valid.
-2. Continue monitoring cognition logs to confirm no recurrence of the removed `jsonb_object_length` failure.
+1. Restore/top up OpenAI API billing when convenient; until then, monitor the PR #48 billing circuit to confirm text/utility traffic remains healthy on Grok fallback. OpenAI embeddings are still degraded while billing is empty.
+2. Monitor `COGNITION_REFLECTION_REVIEW` and new `iris_thoughts` rows across fresh user interactions; background reflection with no genuinely new open thread is allowed to persist zero thoughts.
 3. Production-test current OpenAI/Grok/Kling selector on ordinary and identity-sensitive scenes; compare identity, skin and scene adherence while confirming Fal routing.
 4. Validate body/outfit/framing consistency across normal and scheduled image paths.
 5. Build rolling 24-hour beta entitlement lifecycle (~30 chats / 5 photos), questionnaire and post-trial lock.
@@ -513,4 +513,4 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 18. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with the current account on Kling O3, while the 2026-09-15 cognition/proactivity repair restored background reflection and removed the redundant numeric veto that had silenced semantically approved proactive outreach.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with the current account on Kling O3, and PR #48 now keeps text/utility cognition operational by failing OpenAI billing-exhaustion calls over to Grok 4.6 while preserving provider tracking and private-thought liveness.
