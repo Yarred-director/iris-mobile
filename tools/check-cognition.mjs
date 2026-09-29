@@ -86,6 +86,8 @@ const chatSource = fs.readFileSync(new URL('../server/routes/chat.js', import.me
 assert.match(chatSource, /loadCognitiveContinuity/);
 assert.match(chatSource, /reflectOnExchange/);
 assert.match(chatSource, /req\.supabaseAdmin/);
+assert.match(chatSource, /client\.__irisLastProvider \|\| engine/);
+assert.match(chatSource, /last_engine: scheduledAction \? 'scheduled_action' : actualEngine/);
 
 const indexSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
 assert.match(indexSource, /startCognitionLoop/);
