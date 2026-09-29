@@ -18,7 +18,7 @@ function looksLikeFootwearOnly(value) {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return false;
   const footwear = /(shoe|shoes|boot|boots|heel|heels|stiletto|stilettos|pump|pumps|sandal|sandals|sneaker|sneakers|loafer|loafers|topánk|topank|čižm|cizm|ihličk|ihlick|lodičk|lodick|sandál|sandal)/iu.test(text);
-  const clothing = /(?:\b(?:dress|skirt|shirt|blouse|top|bra|lingerie|underwear|pants|trousers|jeans|shorts|coat|jacket|robe|swimsuit|bikini)\b|šat|sat|sukň|sukn|košeľ|kosel|blúzk|bluzk|podprsen|nohavi|nohav|kabát|kabat|bunda|plavk)/iu.test(text);
+  const clothing = /(?:(?:^|[^\p{L}\p{N}])(?:dress|skirt|shirt|blouse|top|bra|lingerie|underwear|pants|trousers|jeans|shorts|coat|jacket|robe|swimsuit|bikini)(?=$|[^\p{L}\p{N}])|šat|sat|sukň|sukn|košeľ|kosel|blúzk|bluzk|podprsen|nohavi|nohav|kabát|kabat|bunda|plavk)/iu.test(text);
   return footwear && !clothing;
 }
 
