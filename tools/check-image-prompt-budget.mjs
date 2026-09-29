@@ -6,7 +6,7 @@ import { IMAGE_PROMPT_POLICIES, fitImagePrompt, validateImagePrompt } from '../s
 const endpoints = {
   kling_o3: 'fal-ai/kling-image/o3/image-to-image',
   grok_imagine_2: 'xai/grok-imagine-image/v2.0/edit',
-  openai_gpt_image_2: 'openai/gpt-image-2/edit',
+  openai_gpt_image_2: 'openai/gpt-image-2.5/sunburst/edit',
   qwen_image_max: 'fal-ai/qwen-image-max/edit',
   'nano-banana-2': 'fal-ai/gemini-3.1-flash-image-preview/edit',
 };

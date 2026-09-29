@@ -3,11 +3,12 @@ const USER_SELECTABLE_IMAGE_PROVIDERS = new Set(['openai_gpt_image_2', 'grok_ima
 
 const configuredProvider = String(process.env.IRIS_IMAGE_PROVIDER || '').trim().toLowerCase();
 
-// Production image traffic is Fal-only. An old Render value such as "openai"
-// must not silently restore the direct OpenAI transport.
+// Production image traffic is Fal-only. The product key `openai_gpt_image_2`
+// is retained for backwards-compatible UI/DB state, but now resolves to
+// OpenAI GPT Image 2.5 Sunburst through Fal.
 export const ACTIVE_IMAGE_PROVIDER = SUPPORTED_FAL_IMAGE_PROVIDERS.has(configuredProvider)
   ? configuredProvider
-  : 'kling_o3';
+  : 'openai_gpt_image_2';
 
 export const IMAGE_PROVIDER_OPTIONS = Object.freeze([...USER_SELECTABLE_IMAGE_PROVIDERS]);
 

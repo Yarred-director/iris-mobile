@@ -42,11 +42,11 @@ assert.match(migration, /add column if not exists traits jsonb/i);
 assert.match(migration, /jsonb_typeof\(traits\) = 'object'/i);
 
 const imageGen = fs.readFileSync('server/image/imageGen.js', 'utf8');
-assert.match(imageGen, /https:\/\/fal\.run\/openai\/gpt-image-2\/edit/);
-assert.match(imageGen, /https:\/\/fal\.run\/openai\/gpt-image-2'/);
+assert.match(imageGen, /https:\/\/fal\.run\/openai\/gpt-image-2\.5\/sunburst\/edit/);
+assert.match(imageGen, /https:\/\/fal\.run\/openai\/gpt-image-2\.5\/sunburst\/text-to-image'/);
 assert.match(imageGen, /transport=fal/);
-assert.match(imageGen, /generateOpenAiGptImage2Edit/);
-assert.match(imageGen, /generateOpenAiGptImage2Text/);
+assert.match(imageGen, /generateOpenAiSunburstEdit/);
+assert.match(imageGen, /generateOpenAiSunburstText/);
 assert.doesNotMatch(imageGen, /api\.openai\.com\/v1\/images/i);
 
-console.log('physical identity + OpenAI Fal checks passed');
+console.log('physical identity + OpenAI Sunburst Fal checks passed');

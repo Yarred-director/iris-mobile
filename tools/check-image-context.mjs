@@ -241,15 +241,15 @@ assert.throws(() => parseImageRequestScopeResponse({
   output_text: '{"request_scope":"standalone"}',
 }), /image_scope_invalid_shape/, 'Incomplete image request scope must fail closed.');
 
-assert.equal(ACTIVE_IMAGE_PROVIDER, 'kling_o3', 'Production image routing must default to Kling O3 through Fal.');
+assert.equal(ACTIVE_IMAGE_PROVIDER, 'openai_gpt_image_2', 'Production image routing must default to OpenAI Sunburst through Fal.');
 assert.equal(isFalImageProvider(ACTIVE_IMAGE_PROVIDER), true, 'Active production image provider must be a Fal provider.');
 assert.equal(isFalImageProvider('openai'), false, 'Direct OpenAI must never be accepted as an active Fal provider.');
-assert.equal(resolveFalImageProvider('openai'), 'openai_gpt_image_2', 'OpenAI selection must resolve to GPT Image 2 through Fal.');
-assert.equal(resolveFalImageProvider('qwen2'), 'kling_o3', 'Deprecated Qwen configuration must resolve to Kling O3.');
+assert.equal(resolveFalImageProvider('openai'), 'openai_gpt_image_2', 'OpenAI selection must resolve to the Sunburst-backed OpenAI product key through Fal.');
+assert.equal(resolveFalImageProvider('qwen2'), 'openai_gpt_image_2', 'Unknown legacy configuration must resolve to the OpenAI Sunburst default.');
 assert.equal(resolveFalImageProvider('kling'), 'kling_o3', 'Legacy Kling alias must resolve to the canonical Fal provider.');
 assert.equal(resolveFalImageProvider('grok'), 'grok_imagine_2', 'Grok alias must resolve to the canonical current xAI provider.');
 assert.deepEqual(IMAGE_PROVIDER_OPTIONS, ['openai_gpt_image_2', 'grok_imagine_2', 'kling_o3'], 'Only the three product-approved Fal engines may appear in the app switch.');
-assert.equal(resolveUserImageProvider('qwen_image_max'), 'kling_o3', 'Internal fallback providers must not become a user preference.');
+assert.equal(resolveUserImageProvider('qwen_image_max'), 'openai_gpt_image_2', 'Internal providers must not become a user preference and must resolve to the OpenAI Sunburst default.');
 
 let persistedProvider = 'kling_o3';
 const providerStore = {

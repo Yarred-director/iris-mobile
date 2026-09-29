@@ -343,7 +343,7 @@ Selectable values:
 
 Internal/non-menu integrations may still include Qwen Image Max and Nano Banana 2.
 
-Current production account provider, verified 2026-09-15: **`kling_o3`**.
+Current production account provider is being switched on 2026-09-29 to **`openai_gpt_image_2`**, whose OpenAI UI option now maps to GPT Image 2.5 Sunburst through Fal.
 
 No silent provider fallback is allowed. Missing/unavailable preference fails explicitly.
 
@@ -352,12 +352,15 @@ All current selectable image engines route through Fal.
 
 - Kling O3: `fal-ai/kling-image/o3/image-to-image`
 - Grok Imagine 2: `xai/grok-imagine-image/v2.0/edit`
-- OpenAI GPT Image 2 with references: `openai/gpt-image-2/edit`
-- OpenAI GPT Image 2 without references: `openai/gpt-image-2`
+- OpenAI option with references: `openai/gpt-image-2.5/sunburst/edit`
+- OpenAI option without references: `openai/gpt-image-2.5/sunburst/text-to-image`
 
 OpenAI image generation must not call `api.openai.com` directly. Fal transport does not bypass the selected model's moderation.
 
-PR #43 made OpenAI/Fal explicitly dual-mode so text-to-image works when no identity reference exists and edit mode is used when references do exist.
+PR #43 made OpenAI/Fal explicitly dual-mode so text-to-image works when no identity reference exists and edit mode is used when references do exist. On 2026-09-29 the same stable product/DB key `openai_gpt_image_2` was remapped to OpenAI GPT Image 2.5 Sunburst; the UI label remains `OpenAI`.
+
+### 2026-09-29 Grok image failure diagnosis
+A production image request at 13:07 UTC used `grok_imagine_2` with all three Iris face references and a 3164-character final prompt. Fal returned HTTP 422. The Fal request ID was later inspected through the connected Fal account and reported `content_policy_violation` on `body.prompt`: the provider content checker rejected that request. This was not a credit failure, prompt-length overflow, missing references, or Render outage. Image transport logging now records a privacy-safe moderation stage/category when Fal returns this structured policy error, without logging the private prompt or signed reference URLs.
 
 ### Three-view Iris identity pack
 Up to three private facial references are sent in deterministic order:
@@ -389,7 +392,7 @@ All references represent the SAME adult Iris. They define face identity, not bod
 Important live limits:
 - Kling documented maximum: 2500 chars;
 - after a real production Fal 422 on a nominally in-range 2485-char/2493-byte payload, PR #44 introduced a conservative **2300 char / 2300 UTF-8 byte application envelope** for Kling;
-- OpenAI GPT Image 2 policy: 32000;
+- OpenAI GPT Image 2.5 Sunburst policy: 32000;
 - Grok Imagine 2: 8000;
 - Qwen Image Max: 800;
 - Nano Banana 2: 50000.
@@ -513,4 +516,4 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 18. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with the current account on Kling O3, and PR #48 now keeps text/utility cognition operational by failing OpenAI billing-exhaustion calls over to Grok 4.6 while preserving provider tracking and private-thought liveness.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with OpenAI now mapped to GPT Image 2.5 Sunburst and set as the intended default, and PR #48 now keeps text/utility cognition operational by failing OpenAI billing-exhaustion calls over to Grok 4.6 while preserving provider tracking and private-thought liveness.
