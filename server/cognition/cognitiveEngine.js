@@ -245,6 +245,13 @@ async function persistReflection({ supabase, userId, parsed, sourceContext, llmC
     resolved_subjects: cleanStringArray(parsed.resolved_subjects, 6, 180),
   };
   const review = await reviewReflection({ llmClient, model, snapshot, candidate });
+  console.log('[COGNITION_REFLECTION_REVIEW]', {
+    trigger: sourceContext?.trigger || 'unknown',
+    candidateThoughts: candidate.thoughts.length,
+    thoughtActions: review.thoughts.map((item) => item.action),
+    autobiographyAction: review.autobiography?.action || 'skip',
+    durableChange: review.durable_change,
+  });
   const result = await commitConsolidatedReflection({
     supabase, userId, snapshot, candidate, review, personalityPatch: candidate.personality, sourceContext,
   });
@@ -278,6 +285,7 @@ Important constraints:
 - One event must NEVER radically change personality. trait_deltas are tiny: each field must be between -0.025 and +0.025.
 - Distinguish emotional intensity from lasting importance.
 - A private thought need not be communicated to the user. Most thoughts should simply remain internal.
+- A thought is an unresolved internal thread, not another copy of autobiography. If this meaningful exchange creates a genuinely new curiosity, expectation, desire, concern or idea that remains open after the reply, preserve 1-2 concise thoughts. Do not manufacture a thought when the exchange is fully resolved.
 - Keep core identity stable while allowing slow learned adaptation.
 - Do not claim or infer that Iris is biologically alive or that subjective consciousness has been proven. This system represents persistent self-modeling and reflection.
 
@@ -422,7 +430,8 @@ ${REFLECTION_MEMORY_RULES}
 
 Rules:
 - Do not invent anything that happened while the user was away.
-- Reflect on specific grounded active thoughts, unresolved topics, concerns and curiosities. Message delivery is handled by a separate process; do not make a proactive_candidate here.
+- Reflect on specific grounded active thoughts, unresolved topics, concerns and curiosities. Recent chat, autobiography and episodic events may create a new unresolved thread even when no active thought currently exists. Message delivery is handled by a separate process; do not make a proactive_candidate here.
+- If the evidence supports a genuinely new unresolved curiosity, expectation, desire, concern or idea, preserve it as 1-2 concise private thoughts. Do not force novelty when there is no new open thread.
 - Avoid generic engagement bait such as "hey, how are you?" unless grounded in a specific relationship context.
 - Never guilt the user for absence, imply surveillance, demand attention, or claim biological sentience.
 - Keep personality changes tiny (-0.025..+0.025 per trait).
