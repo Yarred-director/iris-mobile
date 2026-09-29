@@ -5,7 +5,7 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-09-22, Europe/Bratislava  
+**Consolidated:** 2026-09-29, Europe/Bratislava  
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
@@ -211,6 +211,25 @@ A real production audit after the user reported several days of silence found tw
 - hard guardrails remain unchanged: proactivity preference, quiet hours, six-hour post-interaction gap, sixteen-hour minimum proactive cooldown, DB lease/duplicate protection, and transactional finalization rechecks.
 
 PR #45 merged to `main` as `4e668a9eafd7e0fb7a0893e0fb55772a42e9d155`; CI passed and Render/Vercel deployment checks were green. The first post-deploy sweep ran successfully; because the previous skipped proactive run still had an active attempt lease/window, it correctly reported `not_due_or_leased` rather than manufacturing an immediate message. Future due evaluations must no longer end as `weak_urge` solely because the semantic candidate's numeric urge is below 55.
+
+### 2026-09-29 OpenAI-credit outage + cognition liveness repair
+A production audit after the backend appeared dead found that the Render web service itself was healthy and continuously running, but OpenAI-dependent application paths had been functionally unavailable since 2026-09-22 17:54 UTC because the OpenAI API account returned HTTP 429 `credit_balance_exhausted` / "You have no credits remaining". The same failure was still present on 2026-09-29. This blocked normal OpenAI chat, utility classifiers, background reflection and OpenAI-authored proactive decisions; Render itself was not suspended or crashed.
+
+Runtime resilience rule:
+- OpenAI remains the preferred provider for Terra/Luna paths;
+- if an OpenAI Responses API call specifically fails for exhausted billing/quota, the shared LLM client opens a short five-minute billing circuit and transparently retries the same request through xAI Grok 4.6;
+- while that circuit is open, subsequent OpenAI text/utility calls go directly to Grok rather than repeatedly paying timeout/retry latency against a known-empty OpenAI account;
+- model is translated to `grok-4.6` and reasoning to Grok-compatible `low`;
+- ordinary transient OpenAI rate limits do NOT open this billing failover;
+- the circuit automatically expires so OpenAI resumes naturally after credits are restored;
+- this failover concerns text/utility Responses API calls only. Image generation remains on its explicit persisted Fal provider, and OpenAI embeddings may still degrade semantic recall until OpenAI credits are restored.
+
+Private-thought liveness:
+- production reflection commits before the billing outage were succeeding but repeatedly persisted `inserted_thoughts: 0`, while autobiography continued to advance;
+- reflection prompts now explicitly distinguish a private thought (an unresolved forward-looking curiosity/expectation/desire/concern/idea) from autobiography (what happened);
+- meaningful exchanges/background reflections should preserve 1-2 grounded open threads when they genuinely exist, but must not manufacture novelty;
+- consolidation is explicitly forbidden from discarding a thought merely because the same exchange is also stored autobiographically; semantic duplicate-thought protection remains;
+- `COGNITION_REFLECTION_REVIEW` now logs candidate count and consolidation actions without logging private thought text, so future stalls are diagnosable.
 
 ### Proactivity architecture
 - background sweep default: 15 minutes;
@@ -470,6 +489,8 @@ Mandatory:
 CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, live assistance, heat routing, visual state, physical identity, memory quality, cognition/proactive delivery, People agents, notifications, companion continuity, multimodal chat and web build.
 
 ## 16. Important recent production merges
+
+- Pending PR — OpenAI billing failover to Grok + private-thought liveness/telemetry repair after the Sept 22–29 credit outage.
 
 - PR #40 — cognition drive/state repair, duplicate/stale cognition cleanup and legacy capability quarantine.
 - PR #41 — generic experimental People agents with Myno.
