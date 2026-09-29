@@ -2,7 +2,7 @@
 // These checks intentionally avoid an LLM call for routine chat messages.
 
 const GREETING_ONLY = /^(ahoj|čau|cau|hello|hi|hey|dobr[éeý]\s*(ráno|rano|deň|den|večer|vecer)?|ok|okay|dobre|ďakujem|dakujem|thanks|thx)[!.?\s]*$/iu;
-const IMAGE_REQUEST = /(?:\b(fotk|foto|obráz|obraz|selfie|picture|photo|image|vygeneruj|nakresli|ukáž sa|ukaz sa|pošli mi seba|posli mi seba)\w*|\bpics?\b)/iu;
+const IMAGE_REQUEST = /(?:\b(fotk|foto|obráz|obraz|selfie|picture|photo|image|vygeneruj|nakresli|ukáž sa|ukaz sa|pošli mi seba|posli mi seba)\w*|\bpics?\b|\b(?:feet|foot)\s*pics?\b)/iu;
 const SCENE_SIGNAL = /\b(sme|som|si)\s+(na|v|vo|pri|u)\b|\b(pláž|plaz|hotel|izba|spálňa|spalna|kuchyňa|kuchyna|reštaurácia|restauracia|mesto|krajina|ráno|rano|večer|vecer|noc|dnes|zajtra|lietadlo|letisko|beach|room|hotel|morning|evening|night)\b/iu;
 const MEMORY_SIGNAL = /\b(pamätaj|pamataj|zapamätaj|zapamataj|mám rád|mam rad|nemám rád|nemam rad|milujem|neznášam|neznasam|preferujem|volám sa|volam sa|pracujem|bývam|byvam|narodil|moja rodina|môj projekt|moj projekt|dôležité|dolezite|remember|i like|i love|i hate|i prefer|my name|my family|my project)\b/iu;
 const EMOTIONAL_SIGNAL = /\b(chýbaš|chybas|ľúbim|lubim|milujem|bojím|bojim|smutn|šťastn|stastn|nahnevan|osamel|dôver|dover|vzťah|vztah|žiarli|ziarli|miss you|love you|trust|relationship|lonely|sad|happy|angry)\w*/iu;
