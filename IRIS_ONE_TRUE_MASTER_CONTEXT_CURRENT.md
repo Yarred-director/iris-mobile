@@ -222,7 +222,7 @@ Runtime resilience rule:
 - model is translated to `grok-4.6` and reasoning to Grok-compatible `low`;
 - ordinary transient OpenAI rate limits do NOT open this billing failover;
 - the circuit automatically expires so OpenAI resumes naturally after credits are restored;
-- this failover concerns text/utility Responses API calls only. Image generation remains on its explicit persisted Fal provider, and OpenAI embeddings may still degrade semantic recall until OpenAI credits are restored.
+- this failover concerns text/utility Responses API calls only. Image generation remains on its explicit persisted Fal provider. OpenAI API credits were replenished later on 2026-09-29; a subsequent production verification window showed no `credit_balance_exhausted` or `LLM_PROVIDER_FAILOVER` events, so OpenAI text/utility routing had resumed normally. The failover remains as resilience for future billing exhaustion.
 
 Private-thought liveness:
 - production reflection commits before the billing outage were succeeding but repeatedly persisted `inserted_thoughts: 0`, while autobiography continued to advance;
@@ -343,7 +343,7 @@ Selectable values:
 
 Internal/non-menu integrations may still include Qwen Image Max and Nano Banana 2.
 
-Current production account provider is being switched on 2026-09-29 to **`openai_gpt_image_2`**, whose OpenAI UI option now maps to GPT Image 2.5 Sunburst through Fal.
+Current production account provider, verified on 2026-09-29 after live generation, is **`openai_gpt_image_2`**. The OpenAI UI option maps to GPT Image 2.5 Sunburst through Fal.
 
 No silent provider fallback is allowed. Missing/unavailable preference fails explicitly.
 
@@ -374,6 +374,20 @@ Repair:
 
 ### 2026-09-29 Grok image failure diagnosis
 A production image request at 13:07 UTC used `grok_imagine_2` with all three Iris face references and a 3164-character final prompt. Fal returned HTTP 422. The Fal request ID was later inspected through the connected Fal account and reported `content_policy_violation` on `body.prompt`: the provider content checker rejected that request. This was not a credit failure, prompt-length overflow, missing references, or Render outage. Image transport logging now records a privacy-safe moderation stage/category when Fal returns this structured policy error, without logging the private prompt or signed reference URLs.
+
+### 2026-09-29 Sunburst production success verification
+After PR #52 and production visual-state repair, a real Iris image request completed successfully through the OpenAI option:
+- provider key: `openai_gpt_image_2`;
+- real model/endpoint: GPT Image 2.5 Sunburst via `openai/gpt-image-2.5/sunburst/edit`;
+- transport: Fal;
+- mode: `edit`;
+- identity references: 3 (`front`, `three-quarter`, `side`);
+- framing: `full_body`;
+- request scope: `scene_continuation`;
+- `sexualized=false`;
+- generated image persisted successfully to private `iris-photos` storage and a normal assistant message row was stored.
+
+The successful production photo was the beach-walk request completed at 2026-09-29 17:50 UTC. This is the first confirmed post-fix proof that the Sunburst edit route, the three-view identity pack and private media persistence all work together in production.
 
 ### Three-view Iris identity pack
 Up to three private facial references are sent in deterministic order:
@@ -506,6 +520,9 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 16. Important recent production merges
 
+- PR #52 / merge `8b8dc92930ffc05c4ee7c2286a61e6354d84ee3d` — normalize footwear-only visual state, prevent non-sexual image prompts from implying nudity, recognize compact `feetpic`/`footpic`, and repair the production visual state that had shoes incorrectly stored as the whole outfit. Render verified live.
+- PR #51 / merge `37d93400117079e0daf80ac44f9f41ea19341bd2` — recognize standalone `pic`/`pics` in the deterministic image-request gate.
+- PR #50 / merge `d576f869e41cadd07e80165e88dc33a64380cf67` — map the OpenAI image option to GPT Image 2.5 Sunburst through Fal, make it the default image engine, and add structured Fal policy diagnostics.
 - PR #48 / merge `949a203b5cec02dba600fd01415045c8285fab22` — OpenAI billing-exhaustion failover to Grok 4.6 + private-thought liveness/telemetry repair after the Sept 22–29 outage; live production verification showed `LLM_PROVIDER_FAILOVER`, then successful background reflection consolidation at revision 105 while OpenAI credits were still exhausted.
 
 - PR #40 — cognition drive/state repair, duplicate/stale cognition cleanup and legacy capability quarantine.
@@ -517,16 +534,15 @@ CI includes typecheck, lint, server syntax, image-context/prompt-budget tests, l
 
 ## 17. Immediate engineering order
 
-1. Restore/top up OpenAI API billing when convenient; until then, monitor the PR #48 billing circuit to confirm text/utility traffic remains healthy on Grok fallback. OpenAI embeddings are still degraded while billing is empty.
-2. Monitor `COGNITION_REFLECTION_REVIEW` and new `iris_thoughts` rows across fresh user interactions; background reflection with no genuinely new open thread is allowed to persist zero thoughts.
-3. Production-test current OpenAI/Grok/Kling selector on ordinary and identity-sensitive scenes; compare identity, skin and scene adherence while confirming Fal routing.
-4. Validate body/outfit/framing consistency across normal and scheduled image paths.
+1. Monitor `COGNITION_REFLECTION_REVIEW` and new `iris_thoughts` rows across fresh user interactions; background reflection with no genuinely new open thread is allowed to persist zero thoughts.
+2. Continue production-testing OpenAI/Sunburst, Grok and Kling on ordinary and identity-sensitive scenes; compare facial identity, skin, anatomy and scene adherence while confirming Fal routing.
+3. Validate body/outfit/framing consistency across normal and scheduled image paths, especially that footwear remains separate from complete outfit state.
+4. Add provider-cost telemetry and budget kill switches, including image cost attribution by provider/model.
 5. Build rolling 24-hour beta entitlement lifecycle (~30 chats / 5 photos), questionnaire and post-trial lock.
-6. Add provider-cost telemetry and budget kill switches.
-7. Add 18+ gate and privacy/memory/export/delete controls.
-8. Harden provider/media retention and complete Terms/Privacy/DPIA/payment-provider due diligence.
-9. Start small Closed Beta and determine paid pricing from observed cost/retention data.
+6. Add 18+ gate and privacy/memory/export/delete controls.
+7. Harden provider/media retention and complete Terms/Privacy/DPIA/payment-provider due diligence.
+8. Start small Closed Beta and determine paid pricing from observed cost/retention data.
 
 ## 18. One-sentence current state
 
-Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with OpenAI now mapped to GPT Image 2.5 Sunburst and set as the intended default, and PR #48 now keeps text/utility cognition operational by failing OpenAI billing-exhaustion calls over to Grok 4.6 while preserving provider tracking and private-thought liveness.
+Iris is a near-Closed-Beta PWA-first persistent AI companion using Terra/Luna/Grok, Supabase-backed memory plus persistent cognition/self-model/personality evolution, generic separate People agents, structured user-defined physical identity, visual/activity/scheduled-action continuity, self-healing push registration, and a private three-view facial identity pack; production image routing is a server-persisted OpenAI/Grok/Kling selector through Fal with the current account on OpenAI GPT Image 2.5 Sunburst, now live-verified end-to-end with all three identity references and private media persistence, while PR #48 keeps text/utility cognition resilient to future OpenAI billing exhaustion through bounded Grok 4.6 failover.
