@@ -123,11 +123,14 @@ function wrapClient(client, provider) {
       const fallbackClient = getRawGrokFallbackClient();
       if (fallbackClient && Date.now() < openAiBillingCircuitUntil) {
         console.log('[LLM_PROVIDER_FAILOVER]', { from: 'openai', to: 'grok', reason: 'billing_circuit_open' });
+        client.__irisLastProvider = 'grok';
         return fallbackClient.responses.create(buildGrokFallbackArgs(sanitizedArgs), ...rest);
       }
 
       try {
-        return await originalCreate(sanitizedArgs, ...rest);
+        const response = await originalCreate(sanitizedArgs, ...rest);
+        client.__irisLastProvider = 'openai';
+        return response;
       } catch (error) {
         if (!fallbackClient || !isOpenAiBillingUnavailable(error)) throw error;
         openAiBillingCircuitUntil = Date.now() + openAiBillingFailoverMs();
@@ -137,11 +140,14 @@ function wrapClient(client, provider) {
           reason: error?.code || 'openai_billing_unavailable',
           retry_after_ms: openAiBillingFailoverMs(),
         });
+        client.__irisLastProvider = 'grok';
         return fallbackClient.responses.create(buildGrokFallbackArgs(sanitizedArgs), ...rest);
       }
     }
 
-    return originalCreate(sanitizedArgs, ...rest);
+    const response = await originalCreate(sanitizedArgs, ...rest);
+    client.__irisLastProvider = provider;
+    return response;
   };
   return client;
 }
