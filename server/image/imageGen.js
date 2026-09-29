@@ -6,8 +6,8 @@ const FAL_API_URL_KLING_O3 = 'https://fal.run/fal-ai/kling-image/o3/image-to-ima
 const FAL_API_URL_NANO_BANANA_2 = 'https://fal.run/fal-ai/gemini-3.1-flash-image-preview/edit';
 const FAL_API_URL_QWEN_IMAGE_MAX = 'https://fal.run/fal-ai/qwen-image-max/edit';
 const FAL_API_URL_GROK_IMAGINE_2 = 'https://fal.run/xai/grok-imagine-image/v2.0/edit';
-const FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT = 'https://fal.run/openai/gpt-image-2/edit';
-const FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT = 'https://fal.run/openai/gpt-image-2';
+const FAL_API_URL_OPENAI_SUNBURST_EDIT = 'https://fal.run/openai/gpt-image-2.5/sunburst/edit';
+const FAL_API_URL_OPENAI_SUNBURST_TEXT = 'https://fal.run/openai/gpt-image-2.5/sunburst/text-to-image';
 const DEFAULT_IMAGE_PROVIDER = ACTIVE_IMAGE_PROVIDER;
 const MAX_IDENTITY_REFERENCES = 3;
 
@@ -68,8 +68,8 @@ export function compactQwenMaxPrompt(prompt, referenceCount) {
 
 export function resolveOpenAiFalMode(referenceCount) {
   return Number(referenceCount) > 0
-    ? { mode: 'edit', endpoint: FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT }
-    : { mode: 'text', endpoint: FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT };
+    ? { mode: 'edit', endpoint: FAL_API_URL_OPENAI_SUNBURST_EDIT }
+    : { mode: 'text', endpoint: FAL_API_URL_OPENAI_SUNBURST_TEXT };
 }
 
 async function callFal(url, body, label, provider, mode = 'edit') {
@@ -87,8 +87,12 @@ async function callFal(url, body, label, provider, mode = 'edit') {
   if (!response.ok) {
     // Don't log Fal's raw validation body: it can echo private prompts/URLs.
     const details = await response.json().catch(() => null);
-    const limitIssue = Array.isArray(details?.detail) ? details.detail.find((item) =>
-      /^(?:prompt: )?size must be between \d+ and \d+$/.test(item?.msg || '')) : null;
+    const issues = Array.isArray(details?.detail) ? details.detail : [];
+    const limitIssue = issues.find((item) =>
+      /^(?:prompt: )?size must be between \d+ and \d+$/.test(item?.msg || ''));
+    const policyIssue = issues.find((item) =>
+      item?.type === 'content_policy_violation' || /content checker|content policy/i.test(item?.msg || ''));
+    const policyPath = Array.isArray(policyIssue?.loc) ? policyIssue.loc.filter(Boolean).join('.') : null;
     const error = new Error(`[${label}] Fal HTTP ${response.status}`);
     error.code = `fal_http_${response.status}`;
     error.status = response.status;
@@ -96,6 +100,8 @@ async function callFal(url, body, label, provider, mode = 'edit') {
     error.transport = 'fal';
     error.mode = mode;
     error.validationReason = limitIssue?.msg || null;
+    error.moderationStage = policyIssue ? (policyPath || 'provider_content_checker') : null;
+    error.moderationCategories = policyIssue ? ['content_policy_violation'] : [];
     error.requestId = response.headers.get('x-fal-request-id') || response.headers.get('x-request-id') || null;
     throw error;
   }
@@ -130,8 +136,8 @@ export async function generateIrisImage({
 
   if (resolvedProvider === 'openai_gpt_image_2') {
     return safeImageUrls.length
-      ? generateOpenAiGptImage2Edit({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds })
-      : generateOpenAiGptImage2Text({ prompt: safePrompt, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
+      ? generateOpenAiSunburstEdit({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds })
+      : generateOpenAiSunburstText({ prompt: safePrompt, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
   }
 
   if (!safeImageUrls.length) throw new Error('Reference image URL missing');
@@ -141,9 +147,9 @@ export async function generateIrisImage({
   return generateKlingO3({ prompt: safePrompt, imageUrls: safeImageUrls, aspectRatio: safeAspectRatio, userId, signedUrlSeconds });
 }
 
-async function generateOpenAiGptImage2Edit({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
+async function generateOpenAiSunburstEdit({ prompt, imageUrls, aspectRatio, userId, signedUrlSeconds }) {
   const resolvedPrompt = fitImagePrompt({ provider: 'openai_gpt_image_2', prompt, prefix: multiViewIdentityPrefix(imageUrls.length) });
-  const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2_EDIT, {
+  const data = await callFal(FAL_API_URL_OPENAI_SUNBURST_EDIT, {
     prompt: resolvedPrompt,
     image_urls: imageUrls,
     image_size: falPresetImageSize(aspectRatio) || 'auto',
@@ -151,20 +157,20 @@ async function generateOpenAiGptImage2Edit({ prompt, imageUrls, aspectRatio, use
     num_images: 1,
     output_format: 'png',
     background: 'opaque',
-  }, 'OPENAI_GPT_IMAGE_2_EDIT', 'openai_gpt_image_2', 'edit');
+  }, 'OPENAI_SUNBURST_EDIT', 'openai_gpt_image_2', 'edit');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'openai_gpt_image_2' });
 }
 
-async function generateOpenAiGptImage2Text({ prompt, aspectRatio, userId, signedUrlSeconds }) {
+async function generateOpenAiSunburstText({ prompt, aspectRatio, userId, signedUrlSeconds }) {
   const resolvedPrompt = fitImagePrompt({ provider: 'openai_gpt_image_2', prompt });
-  const data = await callFal(FAL_API_URL_OPENAI_GPT_IMAGE_2_TEXT, {
+  const data = await callFal(FAL_API_URL_OPENAI_SUNBURST_TEXT, {
     prompt: resolvedPrompt,
     image_size: falPresetImageSize(aspectRatio) || 'auto',
     quality: 'high',
     num_images: 1,
     output_format: 'png',
     background: 'opaque',
-  }, 'OPENAI_GPT_IMAGE_2_TEXT', 'openai_gpt_image_2', 'text');
+  }, 'OPENAI_SUNBURST_TEXT', 'openai_gpt_image_2', 'text');
   return persistFalResult(data, { userId, signedUrlSeconds, provider: 'openai_gpt_image_2' });
 }
 
