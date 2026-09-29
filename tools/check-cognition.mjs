@@ -8,7 +8,14 @@ import {
   normalizeTraitState,
   shouldAllowProactive,
 } from '../server/cognition/cognitiveEngine.js';
-import { sanitizeInternalOntologyDirectives } from '../server/lib/llmClient.js';
+import { buildGrokFallbackArgs, isOpenAiBillingUnavailable, sanitizeInternalOntologyDirectives } from '../server/lib/llmClient.js';
+
+assert.equal(isOpenAiBillingUnavailable({ status: 429, code: 'credit_balance_exhausted', message: 'You have no credits remaining.' }), true);
+assert.equal(isOpenAiBillingUnavailable({ status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' }), false);
+assert.deepEqual(
+  buildGrokFallbackArgs({ model: 'gpt-5.6-luna', reasoning: { effort: 'none' }, input: [{ role: 'user', content: 'x' }] }),
+  { model: 'grok-4.6', reasoning: { effort: 'low' }, input: [{ role: 'user', content: 'x' }] },
+);
 
 const defaults = normalizeTraitState(null);
 assert.ok(defaults.curiosity > 0.7, 'Core curiosity should start high but bounded');
@@ -82,6 +89,12 @@ assert.match(chatSource, /req\.supabaseAdmin/);
 
 const indexSource = fs.readFileSync(new URL('../server/index.js', import.meta.url), 'utf8');
 assert.match(indexSource, /startCognitionLoop/);
+
+const cognitiveEngineSource = fs.readFileSync(new URL('../server/cognition/cognitiveEngine.js', import.meta.url), 'utf8');
+const consolidationSource = fs.readFileSync(new URL('../server/cognition/reflectionConsolidation.js', import.meta.url), 'utf8');
+assert.match(cognitiveEngineSource, /genuinely new curiosity, expectation, desire, concern or idea/);
+assert.match(cognitiveEngineSource, /COGNITION_REFLECTION_REVIEW/);
+assert.match(consolidationSource, /forward-looking curiosity, expectation, desire, concern or idea/);
 
 const workerSource = fs.readFileSync(new URL('../server/cognition/cognitionWorker.js', import.meta.url), 'utf8');
 assert.match(workerSource, /claim_iris_cognition/);
