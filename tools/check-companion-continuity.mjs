@@ -4,10 +4,16 @@ import { formatActivityStateBlock, sanitizeActivityState } from '../server/memor
 import { formatPhysicalIdentityBlock } from '../server/memory/physicalIdentity.js';
 import { formatScheduledActionDirective } from '../server/actions/scheduledActions.js';
 import { looksLikeImageRequest } from '../server/memory/memoryPolicy.js';
+import { mergeVisualState } from '../server/memory/visualState.js';
 
 assert.equal(looksLikeImageRequest('feet pic - poslala by si mi nejaky?'), true, 'Common English pic phrasing must route into the real image pipeline.');
+assert.equal(looksLikeImageRequest('pošli mi feetpic'), true, 'Compounded feetpic phrasing must route into the image pipeline.');
+assert.equal(looksLikeImageRequest('pošli mi footpic'), true, 'Compounded footpic phrasing must route into the image pipeline.');
 assert.equal(looksLikeImageRequest('pic'), true, 'A direct pic request must route into the image pipeline.');
 assert.equal(looksLikeImageRequest('picnic v parku'), false, 'The pic alias must not match unrelated words such as picnic.');
+const normalizedFootwear = mergeVisualState({ outfit: 'čierne ihličkové topánky s otvorenou špičkou', nails: 'čierny lak' });
+assert.equal(normalizedFootwear.outfit, undefined, 'Footwear-only legacy outfit state must not masquerade as a complete outfit.');
+assert.equal(normalizedFootwear.footwear, 'čierne ihličkové topánky s otvorenou špičkou');
 
 
 const physical = formatPhysicalIdentityBlock({
@@ -66,6 +72,9 @@ assert.match(imageProviderSource, /resolveFalImageProvider/, 'Legacy provider va
 assert.match(imageProviderSource, /candidate === 'kling'/, 'Legacy Kling scheduled actions must resolve to canonical Kling O3.');
 assert.match(imageProviderSource, /openai_gpt_image_2.*grok_imagine_2.*kling_o3/, 'The app switch must expose exactly OpenAI, Grok and Kling canonical providers.');
 assert.match(imageProviderSource, /select\('image_provider'\)/, 'The selected image engine must be loaded from the user profile.');
+
+const imageIntentSource = fs.readFileSync(new URL('../server/image/imageIntentDetector.js', import.meta.url), 'utf8');
+assert.match(imageIntentSource, /never infer nudity or lingerie from footwear/i, 'Non-sexual image prompts must not treat footwear-only state as an outfit.');
 
 const imageGenSource = fs.readFileSync(new URL('../server/image/imageGen.js', import.meta.url), 'utf8');
 assert.match(imageGenSource, /fal\.run\/xai\/grok-imagine-image\/v2\.0\/edit/, 'Grok Imagine Image 2.0 must use the current Fal edit endpoint.');

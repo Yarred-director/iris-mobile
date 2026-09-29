@@ -362,6 +362,16 @@ PR #43 made OpenAI/Fal explicitly dual-mode so text-to-image works when no ident
 ### 2026-09-29 standalone "pic" routing repair
 A direct user request phrased with the common English word `pic` did not enter the image pipeline because deterministic `looksLikeImageRequest()` recognized `photo/picture/image/fotka/selfie` but not standalone `pic`. Render also logged `INTENT_JUDGE_NON_ROUTING_FALLBACK`, but that was not the deciding image gate: `imageRequested` had already been false before the intent classifier ran. The deterministic matcher now recognizes standalone `pic`/`pics` without matching unrelated words such as `picnic`.
 
+### 2026-09-29 Sunburst safe-photo failure root cause
+A supposedly harmless request, `iris posli mi fotku teba v tokyu`, correctly entered the OpenAI Sunburst edit route with all three identity references, but Fal returned HTTP 422 `content_policy_violation` on `body.prompt` (request `01a0ed82-49e7-7a71-a203-e52abf049922`). The direct request itself was non-sexualized. The real continuity defect was that a prior footwear-only description (`čierne ihličkové topánky s otvorenou špičkou`) had been persisted into `CURRENT_VISUAL_STATE.outfit`. Image prompting treats `outfit` as exhaustive, so a later ordinary photo could implicitly describe Iris as wearing only shoes while also injecting her full body identity. That made a safe Tokyo request look like unintended nudity to the provider checker.
+
+Repair:
+- deterministic visual-state normalization moves footwear-only legacy `outfit` values to the dedicated `footwear` field;
+- intentJudge is explicitly told never to store shoes/heels/boots alone as `outfit`;
+- non-sexual image prompts now state that footwear/accessories must never imply nudity; if no complete outfit is known, choose a complete contextually appropriate ordinary outfit;
+- production state was repaired in-place so the shoes now live under `footwear`, with `outfit` unset;
+- image-request matching also recognizes compounded `feetpic` / `footpic`, not only standalone `pic`.
+
 ### 2026-09-29 Grok image failure diagnosis
 A production image request at 13:07 UTC used `grok_imagine_2` with all three Iris face references and a 3164-character final prompt. Fal returned HTTP 422. The Fal request ID was later inspected through the connected Fal account and reported `content_policy_violation` on `body.prompt`: the provider content checker rejected that request. This was not a credit failure, prompt-length overflow, missing references, or Render outage. Image transport logging now records a privacy-safe moderation stage/category when Fal returns this structured policy error, without logging the private prompt or signed reference URLs.
 
