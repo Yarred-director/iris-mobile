@@ -14,6 +14,23 @@ const PREFERENCE_CATEGORIES = new Set([
   'dislikes',
 ]);
 
+function looksLikeFootwearOnly(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return false;
+  const footwear = /(shoe|shoes|boot|boots|heel|heels|stiletto|stilettos|pump|pumps|sandal|sandals|sneaker|sneakers|loafer|loafers|topánk|topank|čižm|cizm|ihličk|ihlick|lodičk|lodick|sandál|sandal)/iu.test(text);
+  const clothing = /(dress|skirt|shirt|blouse|top|bra|lingerie|underwear|pants|trousers|jeans|shorts|coat|jacket|robe|swimsuit|bikini|šat|sat|sukň|sukn|košeľ|kosel|blúzk|bluzk|podprsen|nohavi|nohav|kabát|kabat|bunda|plavk)/iu.test(text);
+  return footwear && !clothing;
+}
+
+function normalizeLegacyFootwearState(state = {}) {
+  const next = { ...state };
+  if (looksLikeFootwearOnly(next.outfit)) {
+    if (!next.footwear) next.footwear = next.outfit;
+    delete next.outfit;
+  }
+  return next;
+}
+
 function cleanString(value, max = 500) {
   if (typeof value !== 'string') return null;
   const cleaned = value.trim().replace(/\s+/g, ' ');
@@ -50,8 +67,9 @@ export function sanitizeClearFields(fields) {
 
 export function mergeVisualState(currentState = {}, patch = {}, clearFields = []) {
   const next = {};
-  if (currentState && typeof currentState === 'object' && !Array.isArray(currentState)) {
-    for (const [key, value] of Object.entries(currentState)) {
+  const normalizedCurrent = normalizeLegacyFootwearState(currentState);
+  if (normalizedCurrent && typeof normalizedCurrent === 'object' && !Array.isArray(normalizedCurrent)) {
+    for (const [key, value] of Object.entries(normalizedCurrent)) {
       if (!APPEARANCE_FIELDS.has(key)) continue;
       const normalized = cleanString(value);
       if (normalized) next[key] = normalized;
@@ -59,7 +77,7 @@ export function mergeVisualState(currentState = {}, patch = {}, clearFields = []
   }
   for (const key of sanitizeClearFields(clearFields)) delete next[key];
   Object.assign(next, sanitizeAppearancePatch(patch));
-  return next;
+  return normalizeLegacyFootwearState(next);
 }
 
 export function selectPotentialVisualPreferences(profileFacts = [], limit = 24) {
