@@ -359,6 +359,9 @@ OpenAI image generation must not call `api.openai.com` directly. Fal transport d
 
 PR #43 made OpenAI/Fal explicitly dual-mode so text-to-image works when no identity reference exists and edit mode is used when references do exist. On 2026-09-29 the same stable product/DB key `openai_gpt_image_2` was remapped to OpenAI GPT Image 2.5 Sunburst; the UI label remains `OpenAI`.
 
+### 2026-09-29 standalone "pic" routing repair
+A direct user request phrased with the common English word `pic` did not enter the image pipeline because deterministic `looksLikeImageRequest()` recognized `photo/picture/image/fotka/selfie` but not standalone `pic`. Render also logged `INTENT_JUDGE_NON_ROUTING_FALLBACK`, but that was not the deciding image gate: `imageRequested` had already been false before the intent classifier ran. The deterministic matcher now recognizes standalone `pic`/`pics` without matching unrelated words such as `picnic`.
+
 ### 2026-09-29 Grok image failure diagnosis
 A production image request at 13:07 UTC used `grok_imagine_2` with all three Iris face references and a 3164-character final prompt. Fal returned HTTP 422. The Fal request ID was later inspected through the connected Fal account and reported `content_policy_violation` on `body.prompt`: the provider content checker rejected that request. This was not a credit failure, prompt-length overflow, missing references, or Render outage. Image transport logging now records a privacy-safe moderation stage/category when Fal returns this structured policy error, without logging the private prompt or signed reference URLs.
 

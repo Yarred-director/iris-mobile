@@ -3,6 +3,12 @@ import fs from 'node:fs';
 import { formatActivityStateBlock, sanitizeActivityState } from '../server/memory/activityContinuity.js';
 import { formatPhysicalIdentityBlock } from '../server/memory/physicalIdentity.js';
 import { formatScheduledActionDirective } from '../server/actions/scheduledActions.js';
+import { looksLikeImageRequest } from '../server/memory/memoryPolicy.js';
+
+assert.equal(looksLikeImageRequest('feet pic - poslala by si mi nejaky?'), true, 'Common English pic phrasing must route into the real image pipeline.');
+assert.equal(looksLikeImageRequest('pic'), true, 'A direct pic request must route into the image pipeline.');
+assert.equal(looksLikeImageRequest('picnic v parku'), false, 'The pic alias must not match unrelated words such as picnic.');
+
 
 const physical = formatPhysicalIdentityBlock({
   body_description: 'adult woman with a full augmented C-cup bust, slim waist and long legs',
