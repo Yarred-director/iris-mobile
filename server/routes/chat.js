@@ -427,6 +427,7 @@ router.post('/chat', async (req, res) => {
       ? (candidate) => assertAdultIntimacyReply({ userText: message, reply: candidate })
       : null;
     const reply = await createValidatedAssistantReply({ client, responseArgs, engine, validateReply });
+    const actualEngine = client.__irisLastProvider || engine;
     const savedAssistantMessage = await saveChatMessage(req.supabase, { userId, role: 'assistant', content: reply, clientMessageId: assistantClientMessageId(clientMessageId) });
     assistantPersisted = Boolean(savedAssistantMessage);
 
@@ -436,7 +437,7 @@ router.post('/chat', async (req, res) => {
         .catch((error) => console.log('[AUTO_MEMORY_EXCHANGE_ERROR]', error?.message));
     }
     await patchSceneContext(req.supabase, sceneKey, {
-      last_engine: scheduledAction ? 'scheduled_action' : engine,
+      last_engine: scheduledAction ? 'scheduled_action' : actualEngine,
       engine_lock_count: 0,
       last_engine_reply: reply,
       interaction_mode: interactionModeForHeat(heatLevel, state),
