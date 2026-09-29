@@ -5,6 +5,7 @@ import { classifyImageRequestScope } from './imageRequestScope.js';
 const ADULT_IDENTITY_RULE = `Iris is a clearly adult woman. Never depict her as a minor, underage, childlike, teen-like, or with minor-like body proportions.`;
 const BODY_PROPORTION_GUARDRAILS = `Natural adult female anatomy and realistic head-to-body scale. Preserve the proportions defined by USER_DEFINED_PHYSICAL_IDENTITY when present. Never enlarge the head relative to shoulders or torso merely to preserve the face reference. No chibi, bobblehead, childlike or doll-like proportions, distorted anatomy, shortened torso, or malformed limbs.`;
 const BUST_VISIBILITY_GUARDRAIL = `Frame from the head to at least the waist, preferably upper thighs when the scene allows. Keep the entire established bust and enough torso visibly in frame; do not crop at the collarbones or shoulders and do not turn the scene into a tight beauty headshot.`;
+const NON_SEXUAL_CLOTHING_GUARDRAIL = `For a non-sexualized image, never infer nudity or lingerie from footwear, nails, makeup or accessories. If the latest request does not specify clothing and no complete outfit is established, choose a complete contextually appropriate ordinary outfit while preserving separately established footwear and accessories.`;
 
 const FRAMING_DIRECTIVES = Object.freeze({
   close_up: 'Close-up portrait framing. Use this only because the requested photo is specifically about facial identity, makeup, a facial detail, or an emotional expression.',
@@ -187,13 +188,14 @@ function asksForBustVisibility(text, history = []) {
   return /\b(?:augmented\s+(?:chest|breasts?|bust)|full\s+chest|larger\s+(?:bust|breasts?)|bigger\s+(?:bust|breasts?)|cleavage|neckline|bust|cup\s*(?:size)?)\b|výstrih|vystrih|dekolt|poprsie|prsia/.test(recent);
 }
 
-function applyConversationFramingGuardrails(prompt, text, history, framing, physicalIdentity, visualState) {
+function applyConversationFramingGuardrails(prompt, text, history, framing, physicalIdentity, visualState, sexualized = false) {
   const hasBustFocus = asksForBustVisibility(text, history);
   const safeFraming = hasBustFocus && framing === 'close_up' ? 'three_quarter' : framing;
   const scene = withCoreGuardrails(prompt, safeFraming, physicalIdentity, visualState);
+  const withBust = hasBustFocus ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene;
   return {
     framing: safeFraming,
-    prompt: hasBustFocus ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene,
+    prompt: sexualized ? withBust : `${withBust} ${NON_SEXUAL_CLOTHING_GUARDRAIL}`,
   };
 }
 
@@ -247,7 +249,7 @@ export async function extractImageIntent({
     const requestedFraming = normalizeFraming(parsed.framing);
     const scenePrompt = parsed.prompt?.trim() ||
       `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, requestVisualState);
+    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, requestVisualState, Boolean(requestScope.sexualized || parsed.explicit));
 
     return {
       prompt: framed.prompt,
@@ -265,7 +267,7 @@ export async function extractImageIntent({
     const fallbackFraming = 'three_quarter';
     const requestVisualState = visualStateForRequest(visualState, requestScope);
     const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, requestVisualState);
+    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, requestVisualState, Boolean(requestScope.sexualized));
     return {
       prompt: framed.prompt,
       caption: '📸',
