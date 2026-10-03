@@ -90,6 +90,9 @@ export async function handleImageRequest({
   activityState = null,
   visualPreferences = [],
 }) {
+  // Select once, before composing any provider-facing identity text. Immediate
+  // and scheduled requests share this same authoritative persisted selection.
+  const provider = await loadUserImageProvider(getSupabaseAdmin(), userId);
   const intent = await extractImageIntent({
     text: message,
     conversationHistory,
@@ -98,6 +101,7 @@ export async function handleImageRequest({
     physicalIdentity,
     activityState,
     visualPreferences,
+    provider,
     llmClient,
     model,
   });
@@ -129,7 +133,6 @@ export async function handleImageRequest({
     return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
   }
 
-  const provider = await loadUserImageProvider(getSupabaseAdmin(), userId);
   console.log('[IMAGE_HANDLER] generation requested', {
     promptChars: String(intent.prompt || '').length,
     contextTurns: Array.isArray(conversationHistory) ? conversationHistory.length : 0,
@@ -152,6 +155,7 @@ export async function handleImageRequest({
       aspectRatio: intent.aspect_ratio || 'auto',
       userId,
     });
+    console.log('[IMAGE_HANDLER] generation succeeded', { provider: result.provider, referenceCount: references.length, persisted: Boolean(result.imagePath) });
     return {
       handled: true,
       imageUrl: result.imageUrl || null,
