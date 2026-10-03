@@ -5,7 +5,7 @@
 **Repo:** `Yarred-director/iris-mobile`  
 **Branch:** `main`  
 **Canonical file:** `IRIS_ONE_TRUE_MASTER_CONTEXT_CURRENT.md`  
-**Consolidated:** 2026-09-29, Europe/Bratislava  
+**Consolidated:** 2026-10-03, Europe/Bratislava
 **Product phase:** Private / Early Alpha, approaching Closed Beta
 
 > HARD BOUNDARY: this file is ONLY for Project Iris. Project Antagonist is a separate UE5.8 multiplayer game. Never merge Iris app/auth/memory/LLM/image facts with Antagonist Blueprint/combat/AI/game-project facts.
@@ -388,6 +388,27 @@ After PR #52 and production visual-state repair, a real Iris image request compl
 - generated image persisted successfully to private `iris-photos` storage and a normal assistant message row was stored.
 
 The successful production photo was the beach-walk request completed at 2026-09-29 17:50 UTC. This is the first confirmed post-fix proof that the Sunburst edit route, the three-view identity pack and private media persistence all work together in production.
+
+### 2026-10-03 benign Sunburst physical-identity serialization repair
+
+Production request `01a0f60d-cc3b-7171-b34f-44396016a109` (2026-10-01 06:01–06:02 UTC), an ordinary sleepy morning bed photo, reached Fal/Sunburst in edit mode with three face references, `standalone`, `sexualized=false`, and a valid 3371-character / 3386-byte final prompt. Render logs confirm HTTP 422 `content_policy_violation` at `body.prompt`; this was not prompt-budget overflow or a transport/credit failure.
+
+Root cause in the application: `imageIntentDetector.js` supplied the complete raw canonical `body_description` to the scene composer and deterministically appended it again. Canonical cup-size and detailed breast anatomy therefore contaminated ordinary non-sexual provider prompts. Canonical identity data remains valid and must not be weakened to fix image serialization.
+
+Architecture:
+- New reusable pure helper: `server/image/physicalIdentitySerialization.js`, `serializePhysicalIdentityForImageProvider({ physicalIdentity, provider, sexualized })`.
+- Only exact `provider='openai_gpt_image_2'` with `sexualized === false` receives a neutral photographic identity projection. Established augmented/full proportions become `augmented big chest, glamorous bombshell look, proportionate to her established adult figure`; height, build, legs, waist, hips, pale skin and strong freckles remain data-derived. A different/small identity is not assigned Iris's current measurements or bombshell silhouette.
+- Freckle distribution uses visible-skin wording instead of unnecessary chest/upper-bust emphasis. Structured traits are preferred; labeled legacy/partial snapshots and free-text legacy descriptions remain supported without mutating input.
+- `imageHandler.js` loads the authoritative persisted provider once **before** prompt composition and passes it into `extractImageIntent`. Immediate and scheduled image paths share this handler.
+- The composer context, mandatory identity directive, empty-result fallback and error fallback all receive the same provider projection. Raw canonical traits/description are not exposed to the benign Sunburst composer context.
+- Local draft validation prevents synthesized clinical anatomy from being reintroduced; it uses the existing local composition fallback without a provider call/retry. Fal content-policy rejections still fail once, with no wording retry or provider switch.
+- For benign Sunburst only, an explicit latest barefoot request replaces stale footwear in the transient image state. Canonical visual-state inputs are not mutated.
+- Grok/Kling and sexualized requests retain the original detailed identity serialization. No global sanitization, DB migration, Supabase production-data repair, moderation bypass, direct OpenAI image transport, reference removal, or cognition/chat change was made.
+- **Canonical `iris_physical_identity.body_description`, `traits`, and explicit-user memory persistence remain untouched.** Face references still define face only; canonical identity remains body authority.
+
+Regression coverage: `tools/check-image-physical-identity.mjs`, included in `npm run test:image-context`, checks the final Fal payload for the morning-bed request and the barefoot short-floral-dress bamboo-garden scene, silhouette/trait retention, provider isolation, frozen-object and serialized-data immutability, legacy/partial identity handling, local fallback/draft validation, three references, prompt budgets, private logging and exactly one transport call on moderation rejection. Existing image-context, all-provider budget and canonical physical-identity checks remain green.
+
+Validation before release: full `npm test` passed, with the existing unrelated `TypingIndicator.tsx` hook-dependency lint warning; updated image regressions and server syntax passed. **Production verification remains pending until the new release is deployed and an ordinary non-sexual Sunburst image succeeds with the three-reference pack. Tests alone do not close this incident.** `[IMAGE_GEN_PAYLOAD]` now logs the public Fal endpoint name; `[IMAGE_HANDLER] generation succeeded` records provider/reference count/private-persistence success without private prompts or media URLs.
 
 ### Three-view Iris identity pack
 Up to three private facial references are sent in deterministic order:

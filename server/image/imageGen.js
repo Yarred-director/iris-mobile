@@ -77,7 +77,7 @@ async function callFal(url, body, label, provider, mode = 'edit') {
   // is transported through Fal. There is intentionally no direct OpenAI image API path.
   const metrics = validateImagePrompt(provider, body.prompt);
   const referenceCount = Array.isArray(body.image_urls) ? body.image_urls.length : 0;
-  console.log('[IMAGE_GEN_PAYLOAD]', { provider, mode, ...metrics, referenceCount });
+  console.log('[IMAGE_GEN_PAYLOAD]', { provider, mode, endpoint: url.slice('https://fal.run/'.length), ...metrics, referenceCount });
   const response = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Key ${getFalKey()}`, 'Content-Type': 'application/json' },

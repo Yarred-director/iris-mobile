@@ -1,6 +1,7 @@
 // server/image/imageIntentDetector.js
 
 import { classifyImageRequestScope } from './imageRequestScope.js';
+import { NEUTRAL_PHYSICAL_IDENTITY_PROMPT_RULE, serializePhysicalIdentityForImageProvider, usesNeutralPhysicalIdentity, validatePhysicalIdentityImagePrompt } from './physicalIdentitySerialization.js';
 
 const ADULT_IDENTITY_RULE = `Iris is a clearly adult woman. Never depict her as a minor, underage, childlike, teen-like, or with minor-like body proportions.`;
 const BODY_PROPORTION_GUARDRAILS = `Natural adult female anatomy and realistic head-to-body scale. Preserve the proportions defined by USER_DEFINED_PHYSICAL_IDENTITY when present. Never enlarge the head relative to shoulders or torso merely to preserve the face reference. No chibi, bobblehead, childlike or doll-like proportions, distorted anatomy, shortened torso, or malformed limbs.`;
@@ -127,11 +128,14 @@ function contextPayload(sceneContext, visualState, physicalIdentity, activitySta
   };
 }
 
-function visualStateForRequest(visualState, requestScope) {
+function visualStateForRequest(visualState, requestScope, text = '', provider = null) {
   const state = compactObject(visualState?.state || visualState || {});
   if (requestScope?.signal === 'specified_scene') delete state.other_details;
   const outfitOverride = String(requestScope?.outfit_override || '').trim();
   if (outfitOverride) state.outfit = outfitOverride.slice(0, 300);
+  // The latest explicit barefoot instruction is authoritative for this image.
+  // Keep this fix scoped to benign Sunburst; do not change other providers.
+  if (usesNeutralPhysicalIdentity(provider, requestScope?.sexualized) && /\bbarefoot\b|bare\s+feet|\bbos[aáyý]\b/iu.test(text)) state.footwear = 'barefoot';
   return { ...(visualState || {}), state };
 }
 
@@ -207,6 +211,7 @@ export async function extractImageIntent({
   physicalIdentity = null,
   activityState = null,
   visualPreferences = [],
+  provider = null,
   llmClient,
   model,
 }) {
@@ -222,14 +227,18 @@ export async function extractImageIntent({
   // props/vehicles/locations into the new composition.
   const shouldUseHistory = requestScope.request_scope === 'scene_continuation' && requestScope.signal !== 'specified_scene';
   const history = cleanHistory(shouldUseHistory ? conversationHistory : []);
+  const imagePhysicalIdentity = usesNeutralPhysicalIdentity(provider, requestScope.sexualized)
+    ? { body_description: serializePhysicalIdentityForImageProvider({ physicalIdentity, provider, sexualized: requestScope.sexualized }) }
+    : physicalIdentity;
   try {
-    const requestVisualState = visualStateForRequest(visualState, requestScope);
-    const context = contextPayload(sceneContext, requestVisualState, physicalIdentity, activityState, visualPreferences, requestScope);
+    const requestVisualState = visualStateForRequest(visualState, requestScope, text, provider);
+    const context = contextPayload(sceneContext, requestVisualState, imagePhysicalIdentity, activityState, visualPreferences, requestScope);
     const sceneAuthority = requestScope.signal === 'specified_scene'
       ? 'SCENE AUTHORITY: The latest user message defines a new self-contained visual scene. Use older context only through the supplied identity and filtered visual-state blocks. Do not add any older vehicle, prop, landmark, person, animal, building exterior, location, action or time of day unless the latest message itself explicitly requests it. If no setting is specified, choose a simple unobtrusive spatially plausible setting with no salient vehicle or inherited prop. An explicit latest outfit is exhaustive and replaces all old visible clothing layers.'
       : 'SCENE AUTHORITY: Resolve only explicit references to the immediate planned scene. Never add unrelated entities merely because they appeared earlier in conversation.';
     const input = [
       { role: 'system', content: SYSTEM_EXTRACT },
+      ...(usesNeutralPhysicalIdentity(provider, requestScope.sexualized) ? [{ role: 'system', content: NEUTRAL_PHYSICAL_IDENTITY_PROMPT_RULE }] : []),
       ...history,
       { role: 'system', content: `IMAGE_REQUEST_SCOPE: ${requestScope.request_scope}. REQUEST_IS_SEXUALIZED: ${requestScope.sexualized}. For standalone requests, do not import actions, poses or interaction from older conversation.` },
       { role: 'system', content: sceneAuthority },
@@ -246,16 +255,19 @@ export async function extractImageIntent({
 
     const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    const sexualized = Boolean(requestScope.sexualized || parsed.explicit);
+    const finalPhysicalIdentity = sexualized ? physicalIdentity : imagePhysicalIdentity;
     const requestedFraming = normalizeFraming(parsed.framing);
     const scenePrompt = parsed.prompt?.trim() ||
-      `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, physicalIdentity, requestVisualState, Boolean(requestScope.sexualized || parsed.explicit));
+      `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(finalPhysicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
+    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, finalPhysicalIdentity, requestVisualState, sexualized);
+    validatePhysicalIdentityImagePrompt({ prompt: framed.prompt, provider, sexualized });
 
     return {
       prompt: framed.prompt,
       caption: String(parsed.caption || '📸').trim().slice(0, 280) || '📸',
       explicit: !!parsed.explicit,
-      sexualized: Boolean(requestScope.sexualized || parsed.explicit),
+      sexualized,
       requestScope: requestScope.request_scope,
       outfitOverride: requestScope.outfit_override || null,
       resetsSceneDetails: requestScope.signal === 'specified_scene',
@@ -265,9 +277,10 @@ export async function extractImageIntent({
   } catch (e) {
     console.log('[IMAGE_INTENT_ERROR]', e?.message);
     const fallbackFraming = 'three_quarter';
-    const requestVisualState = visualStateForRequest(visualState, requestScope);
-    const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(physicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, physicalIdentity, requestVisualState, Boolean(requestScope.sexualized));
+    const requestVisualState = visualStateForRequest(visualState, requestScope, text, provider);
+    const scene = `Iris, a clearly adult woman, taking a natural photo matching the latest requested scene: ${String(text || '').slice(0, 500)}.${physicalFallbackText(imagePhysicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
+    const framed = applyConversationFramingGuardrails(scene, text, history, fallbackFraming, imagePhysicalIdentity, requestVisualState, Boolean(requestScope.sexualized));
+    validatePhysicalIdentityImagePrompt({ prompt: framed.prompt, provider, sexualized: Boolean(requestScope.sexualized) });
     return {
       prompt: framed.prompt,
       caption: '📸',
