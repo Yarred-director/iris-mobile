@@ -144,6 +144,7 @@ export async function handleImageRequest({
     referenceSlots: references.map((item) => item.slot),
     requestScope: intent.requestScope || null,
     sexualized: Boolean(intent.sexualized),
+    imageDiagnostics: intent.imageDiagnostics || null,
     provider,
   });
 
