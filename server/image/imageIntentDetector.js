@@ -215,12 +215,30 @@ export async function extractImageIntent({
   llmClient,
   model,
 }) {
+  let scopeStatus = 'completed';
+  let composerExplicit = null;
   let requestScope = { request_scope: 'scene_continuation', sexualized: false, confidence: 0, signal: 'specified_scene', outfit_override: null };
   try {
     requestScope = await classifyImageRequestScope({ text, conversationHistory, llmClient, model });
   } catch (error) {
+    scopeStatus = 'fallback';
     console.log('[IMAGE_SCOPE_ERROR]', error?.code || error?.message);
   }
+
+  // Metadata only: preserve the existing decision, including composer escalation.
+  // Never put user text, state values, identity data or provider URLs into this block.
+  const diagnostics = (sexualized, compositionStatus) => ({
+    scopeStatus,
+    scopeSignal: requestScope.signal,
+    scopeConfidence: requestScope.confidence,
+    scopeSexualized: requestScope.sexualized,
+    composerExplicit,
+    compositionStatus,
+    sexualizationSource: compositionStatus === 'fallback'
+      ? (requestScope.sexualized ? 'scope' : 'none')
+      : (requestScope.sexualized ? (composerExplicit ? 'both' : 'scope') : (composerExplicit ? 'composer' : 'none')),
+    physicalIdentitySerialization: usesNeutralPhysicalIdentity(provider, sexualized) ? 'neutral' : 'canonical',
+  });
 
   // A fully specified current scene is self-contained. Identity and outfit continuity
   // come from their authoritative state layers, so older turns must not leak vivid
@@ -255,6 +273,7 @@ export async function extractImageIntent({
 
     const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    composerExplicit = Boolean(parsed.explicit);
     const sexualized = Boolean(requestScope.sexualized || parsed.explicit);
     const finalPhysicalIdentity = sexualized ? physicalIdentity : imagePhysicalIdentity;
     const requestedFraming = normalizeFraming(parsed.framing);
@@ -268,6 +287,7 @@ export async function extractImageIntent({
       caption: String(parsed.caption || '📸').trim().slice(0, 280) || '📸',
       explicit: !!parsed.explicit,
       sexualized,
+      imageDiagnostics: diagnostics(sexualized, 'completed'),
       requestScope: requestScope.request_scope,
       outfitOverride: requestScope.outfit_override || null,
       resetsSceneDetails: requestScope.signal === 'specified_scene',
@@ -286,6 +306,7 @@ export async function extractImageIntent({
       caption: '📸',
       explicit: false,
       sexualized: Boolean(requestScope.sexualized),
+      imageDiagnostics: diagnostics(Boolean(requestScope.sexualized), 'fallback'),
       requestScope: requestScope.request_scope,
       outfitOverride: requestScope.outfit_override || null,
       resetsSceneDetails: requestScope.signal === 'specified_scene',

@@ -412,6 +412,18 @@ Validation before release: full `npm test` passed, with the existing unrelated `
 
 Release status: PR #54 passed GitHub CI run `37102628329` and the Vercel PR deployment check, then merged to `main` as `ff5d7b3490cfe527b98b40137d4400c3967b381e`. Render deployment `dep-db0b32eq1p3s73e5sqrg` is verified **live** at 2026-10-03 07:41:22 UTC. **The incident remains open: no post-fix real Sunburst generation success is yet verified.** The production app required login in the verification browser; secure sign-in timed out and the browser session could not be recovered. No authenticated image test was sent, no identity/reference/provider data was changed for verification, and deployment/unit-test success must not be reported as a real generation success. Next exact step: submit an ordinary non-sexual image request on the account already selecting OpenAI, then correlate `[IMAGE_HANDLER]` / `[IMAGE_GEN_PAYLOAD]` with endpoint `openai/gpt-image-2.5/sunburst/edit`, `sexualized=false`, all three ordered references, and `generation succeeded` with private persistence. If Fal still rejects it, retain that exact request evidence; do not switch providers or retry altered sexual wording.
 
+### 2026-10-04 follow-up: image sexualization provenance (diagnostic release)
+
+After PR #54, the Oct 3 car-photo attempt still failed: Fal request `01a100ff-1c5a-7dd3-a8c2-250cd4ed4dec`, 09:01 UTC, Sunburst edit via Fal, three references, final prompt 3402 chars / 3420 bytes, `scene_continuation`, `sexualized=true`, HTTP 422 `content_policy_violation` at `body.prompt`. Existing logs cannot distinguish the scope classifier from the composer's `explicit` output. Do not claim a proven false-positive source from the screenshot alone.
+
+Code inspection confirms final sexualization is `requestScope.sexualized || parsed.explicit`. Either source can make the final identity directive canonical rather than neutral. A `specified_scene` already excludes chat history from composition; the classifier still sees up to four immediate turns. The proposed second repair must be evidence-led, not a blanket forced `false` or a moderation workaround.
+
+This diagnostic phase adds `imageDiagnostics` to the internal intent and generation-request log: scope status/signal/confidence/sexualized, composer explicit value, composition status, effective source (`none`, `scope`, `composer`, `both`) and effective identity serialization (`neutral`, `canonical`). Only fixed metadata is emitted; no private prompt, identity values, conversation text, signed URLs or new persistence. Existing classification, local fallbacks, provider selection, transport and moderation behavior are unchanged. Canonical physical identity remains untouched.
+
+Regression `tools/check-image-sexualization-provenance.mjs` covers the screenshot's newly specified clothed car scene after old sexual touching and a generation error, all four flag combinations across Sunburst/Grok/Kling, scene-history exclusion, neutral versus canonical identity, canonical immutability and scope/composer fallback provenance. These are mocked contract checks, not proof of live classifier accuracy or provider success.
+
+Full local `npm test` passed, including server syntax and the complete image regression suite; only the pre-existing unrelated `TypingIndicator.tsx` hook-dependency warning remains. Release and real-image verification are pending. After deployment, obtain a fresh ordinary photo request and inspect provenance before changing classification/composition semantics. The incident remains OPEN until real Sunburst generation succeeds with its normal three-reference pack.
+
 ### Three-view Iris identity pack
 Up to three private facial references are sent in deterministic order:
 1. front;
