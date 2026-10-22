@@ -1,4 +1,6 @@
 import { getIrisTheme, IRIS_THEME_STORAGE_KEY, type IrisThemeMode } from '@/constants/irisTheme';
+import { useI18n } from '@/lib/i18n';
+import { clearLocalUserCache } from '@/lib/localCache';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/providers/AuthProvider';
 import * as Crypto from 'expo-crypto';
@@ -53,12 +55,16 @@ const IMAGE_PROVIDER_OPTIONS: { value: ImageProvider; label: string }[] = [
 ];
 const IMAGE_PROVIDER_LABELS = Object.fromEntries(IMAGE_PROVIDER_OPTIONS.map((option) => [option.value, option.label])) as Record<ImageProvider, string>;
 
-const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; label: string; hint: string }[] = [
-  { slot: 'front', label: 'Spredu', hint: 'Tvár rovno ku kamere' },
-  { slot: 'three-quarter', label: '3/4 uhol', hint: 'Tvár jemne otočená' },
-  { slot: 'side', label: 'Profil', hint: 'Čistý pohľad zboku' },
+const FACE_REFERENCE_STEPS: { slot: FaceReferenceSlot; labelKey: string; hintKey: string }[] = [
+  { slot: 'front', labelKey: 'face.front', hintKey: 'face.front_hint' },
+  { slot: 'three-quarter', labelKey: 'face.three_quarter', hintKey: 'face.three_quarter_hint' },
+  { slot: 'side', labelKey: 'face.side', hintKey: 'face.side_hint' },
 ];
 
+const API_PERSONA = `${API_BASE}/me/persona`;
+const API_ME_DATA = `${API_BASE}/me/data`;
+const API_ME_ACCOUNT = `${API_BASE}/me/account`;
+const API_ME_EXPORT = `${API_BASE}/me/export`;
 function storageKey(userId: string) { return `iris.chat.history.v3:${userId}`; }
 function irisAvatarPath(userId: string) { return `ui-avatar/${userId}/avatar`; }
 function faceReferencePath(userId: string, slot: FaceReferenceSlot) { return `iris-ref/${userId}/face-${slot}`; }
@@ -145,6 +151,7 @@ function Bubble({ message, themeMode }: { message: Message; themeMode: IrisTheme
 
 function ImageBubble({ message, refreshUrl, themeMode }: { message: Message; refreshUrl: () => Promise<string | null>; themeMode: IrisThemeMode }) {
   const theme = getIrisTheme(themeMode);
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState(message.imageUrl || '');
   const refreshing = useRef(false);
@@ -161,7 +168,7 @@ function ImageBubble({ message, refreshUrl, themeMode }: { message: Message; ref
         <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={16} /></View>
         <Pressable onPress={() => setOpen(true)} accessibilityRole="button">
           <Image source={{ uri: url }} style={[styles.generatedImage, { backgroundColor: theme.surfaceSoft }]} contentFit="cover" onError={() => void refresh()} />
-          <Text style={[styles.imageHint, { color: theme.textFaint }]}>klikni pre celú veľkosť 🔍</Text>
+          <Text style={[styles.imageHint, { color: theme.textFaint }]}>{t('chat.image_hint')}</Text>
         </Pressable>
         {!!message.text && <RichText text={message.text} style={[styles.text, styles.imageCaption, { color: theme.text }]} />}
       </LinearGradient>
@@ -177,6 +184,7 @@ function ImageBubble({ message, refreshUrl, themeMode }: { message: Message; ref
 
 function AttachmentBubble({ message, refreshUrl, themeMode }: { message: Message; refreshUrl: (attachment: ChatAttachment) => Promise<string | null>; themeMode: IrisThemeMode }) {
   const theme = getIrisTheme(themeMode);
+  const { t } = useI18n();
   const [openId, setOpenId] = useState<string | null>(null);
   const [urls, setUrls] = useState<Record<string, string>>(() => Object.fromEntries((message.attachments || []).map((attachment) => [attachment.id, attachment.imageUrl])));
   const refreshing = useRef(new Set<string>());
@@ -200,9 +208,9 @@ function AttachmentBubble({ message, refreshUrl, themeMode }: { message: Message
         <View pointerEvents="none" style={StyleSheet.absoluteFillObject}><GlassShimmer borderRadius={16} /></View>
         <View style={styles.attachmentGrid}>
           {(message.attachments || []).map((attachment) => (
-            <Pressable key={attachment.id} accessibilityRole="button" accessibilityLabel="Otvoriť priložený obrázok" onPress={() => setOpenId(attachment.id)}>
+            <Pressable key={attachment.id} accessibilityRole="button" accessibilityLabel={t('chat.open_attachment_label')} onPress={() => setOpenId(attachment.id)}>
               <Image source={{ uri: urls[attachment.id] || attachment.imageUrl }} style={[styles.attachmentImage, { backgroundColor: theme.surfaceSoft }]} contentFit="cover" onError={() => void refresh(attachment)} />
-              {attachment.retention === 'user_appearance' && <View style={styles.permanentBadge}><Text style={styles.permanentBadgeText}>vzhľad ✓</Text></View>}
+              {attachment.retention === 'user_appearance' && <View style={styles.permanentBadge}><Text style={styles.permanentBadgeText}>{t('chat.attachment_permanent_badge')}</Text></View>}
             </Pressable>
           ))}
         </View>
@@ -223,7 +231,10 @@ export default function ChatScreen() {
   const router = useRouter();
   const scrollRef = useRef<ScrollView>(null);
   const { loading, user, accessToken, signOut } = useAuth();
-  const [messages, setMessages] = useState<Message[]>([{ role: 'iris', text: 'Ahoj. Som Iris.' }]);
+  const { t } = useI18n();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [companionName, setCompanionName] = useState('Iris');
+  const [faceConsent, setFaceConsent] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -263,7 +274,7 @@ export default function ChatScreen() {
     (async () => {
       try {
         const token = await getToken();
-        if (!token) throw new Error('Chýba prihlásenie.');
+        if (!token) throw new Error(t('common.not_signed_in'));
         const response = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
         if (!response.ok) throw new Error('Provider unavailable');
         const provider = (await response.json())?.provider;
@@ -280,7 +291,7 @@ export default function ChatScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [getToken, user?.id, menuOpen]);
+  }, [getToken, user?.id, menuOpen, t]);
 
   const selectImageProvider = async (provider: ImageProvider) => {
     if (providerSavingRef.current) return;
@@ -289,19 +300,19 @@ export default function ChatScreen() {
     setImageProviderSaving(true);
     try {
       const token = await getToken();
-      if (!token) throw new Error('Chýba prihlásenie.');
+      if (!token) throw new Error(t('common.not_signed_in'));
       const response = await fetchTimed(API_IMAGE_PROVIDER, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ provider }),
       });
-      if (!response.ok) throw new Error(`Uloženie zlyhalo (${response.status}).`);
+      if (!response.ok) throw new Error(t('menu.photo_engine_save_status', { status: response.status }));
       const saved = (await response.json())?.provider;
-      if (saved !== provider) throw new Error('Server nepotvrdil zvolený model.');
+      if (saved !== provider) throw new Error(t('menu.photo_engine_not_confirmed'));
       const verifyResponse = await fetchTimed(API_IMAGE_PROVIDER, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
-      if (!verifyResponse.ok) throw new Error(`Overenie zlyhalo (${verifyResponse.status}).`);
+      if (!verifyResponse.ok) throw new Error(t('menu.photo_engine_verify_status', { status: verifyResponse.status }));
       const verified = (await verifyResponse.json())?.provider;
-      if (verified !== provider) throw new Error('Uložený model sa nezhoduje so zvoleným.');
+      if (verified !== provider) throw new Error(t('menu.photo_engine_mismatch'));
       if (request !== providerRequestRef.current) return;
       setImageProvider(provider);
       setImageProviderError(false);
@@ -310,7 +321,7 @@ export default function ChatScreen() {
       if (request !== providerRequestRef.current) return;
       setImageProvider(null);
       setImageProviderError(true);
-      Alert.alert('Iris', `Generátor fotiek sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
+      Alert.alert(companionName, t('menu.photo_engine_save_failed', { error: error?.message || t('common.unknown_error') }));
     } finally {
       if (request === providerRequestRef.current) {
         providerSavingRef.current = false;
@@ -474,19 +485,19 @@ export default function ChatScreen() {
     try {
       const status = await enableWebPush(token);
       setPushStatus(status);
-      if (status === 'enabled') Alert.alert('Iris', 'Notifikácie sú zapnuté. Keď odpíšem na pozadí, iPhone ťa upozorní.');
-      else if (status === 'needs_home_screen') Alert.alert('Iris', 'Na iPhone fungujú web push notifikácie pre Iris pridanú na plochu ako web appku.');
-      else if (status === 'blocked') Alert.alert('Iris', 'Notifikácie sú v iOS zablokované. Povoľ ich v Nastavenia → Notifikácie → Iris.');
-      else if (status === 'unsupported') Alert.alert('Iris', 'Tento prehliadač nepodporuje web push pre Iris.');
+      if (status === 'enabled') Alert.alert(companionName, t('notifications.enabled'));
+      else if (status === 'needs_home_screen') Alert.alert(companionName, t('notifications.needs_home_screen'));
+      else if (status === 'blocked') Alert.alert(companionName, t('notifications.blocked'));
+      else if (status === 'unsupported') Alert.alert(companionName, t('notifications.unsupported'));
     } catch (error: any) {
-      Alert.alert('Iris', `Notifikácie sa nepodarilo zapnúť: ${error?.message || 'neznáma chyba'}`);
+      Alert.alert(companionName, t('notifications.failed', { error: error?.message || t('common.unknown_error') }));
     }
   };
 
   const uploadAvatar = async () => {
     setMenuOpen(false);
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
+    if (!permission.granted) { Alert.alert(companionName, t('common.gallery_permission')); return; }
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.9 });
     if (result.canceled || !result.assets?.[0] || !user?.id) return;
     setAvatarUploading(true);
@@ -498,10 +509,10 @@ export default function ChatScreen() {
       const { error } = await supabase.storage.from(IRIS_AVATAR_BUCKET).upload(path, blob, { upsert: true, contentType, cacheControl: '3600' });
       if (error) throw new Error(error.message);
       const signedUrl = await signCustomAvatar(user.id);
-      if (!signedUrl) throw new Error('Nepodarilo sa načítať nový avatar.');
+      if (!signedUrl) throw new Error(t('avatar.load_failed'));
       setAvatarUrl(signedUrl);
     } catch (error: any) {
-      Alert.alert('Iris', `Avatar sa nepodarilo zmeniť: ${error?.message || 'neznáma chyba'}`);
+      Alert.alert(companionName, t('avatar.failed', { error: error?.message || t('common.unknown_error') }));
     } finally {
       setAvatarUploading(false);
     }
@@ -509,6 +520,7 @@ export default function ChatScreen() {
 
   const uploadFaceReference = async (slot: FaceReferenceSlot, label: string) => {
     if (!user?.id || facePackUploading) return;
+    if (!faceConsent) { Alert.alert(companionName, t('face.consent_required')); return; }
     try {
       // On web/iOS PWA the file picker MUST be the first asynchronous action after a tap.
       // Waiting for permission dialogs/alerts first loses the browser user gesture and Safari blocks the picker.
@@ -517,7 +529,7 @@ export default function ChatScreen() {
         result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
       } else {
         const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!permission.granted) { Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.'); return; }
+        if (!permission.granted) { Alert.alert(companionName, t('common.gallery_permission')); return; }
         result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.92 });
       }
 
@@ -536,12 +548,12 @@ export default function ChatScreen() {
       // Keep front as the legacy single-reference fallback for older image paths.
       if (slot === 'front') {
         const token = await getToken();
-        if (!token) throw new Error('Nie si prihlásený.');
+        if (!token) throw new Error(t('common.not_signed_in'));
         const response = await fetchTimed(API_REF_PHOTO, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ bucket, path }) });
-        if (!response.ok) throw new Error(`Fotka spredu je uložená, ale legacy reference sync zlyhal: ${(await response.text()).slice(0, 120)}`);
+        if (!response.ok) throw new Error(t('face.legacy_sync_failed'));
       }
     } catch (error: any) {
-      Alert.alert('Iris', `${label} sa nepodarilo uložiť: ${error?.message || 'neznáma chyba'}`);
+      Alert.alert(companionName, t('face.save_failed', { label, error: error?.message || t('common.unknown_error') }));
     } finally {
       setFacePackUploading(null);
     }
@@ -551,7 +563,7 @@ export default function ChatScreen() {
     setMenuOpen(false);
     const token = await getToken();
     if (token) await fetchTimed(API_HISTORY, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
-    setMessages([{ role: 'iris', text: 'Ahoj. Som Iris.' }]);
+    setMessages([]);
   };
 
   const discardPendingAttachments = useCallback(async (token: string, clientMessageId: string, attachmentIds: string[]) => {
@@ -562,6 +574,77 @@ export default function ChatScreen() {
       body: JSON.stringify({ client_message_id: clientMessageId, attachment_ids: attachmentIds }),
     }).catch(() => null);
   }, []);
+
+  const refreshPersona = useCallback(async () => {
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const response = await fetchTimed(API_PERSONA, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) return;
+      const persona = await response.json();
+      if (persona?.name) setCompanionName(String(persona.name));
+    } catch {}
+  }, [getToken]);
+
+  useEffect(() => { if (user?.id) void refreshPersona(); }, [refreshPersona, user?.id]);
+
+  const signOutAndForgetDevice = async () => {
+    setMenuOpen(false);
+    if (user?.id) await clearLocalUserCache(user.id);
+    await signOut();
+    router.replace('/auth');
+  };
+
+  const exportData = async () => {
+    setMenuOpen(false);
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const response = await fetchTimed(API_ME_EXPORT, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = await response.text();
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'iris-export.json';
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+      Alert.alert(companionName, t('menu.export_ready'));
+    } catch (error: any) {
+      Alert.alert(companionName, t('menu.action_failed', { error: error?.message || t('common.unknown_error') }));
+    }
+  };
+
+  const runDestructive = async (endpoint: string) => {
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const response = await fetchTimed(endpoint, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (user?.id) await clearLocalUserCache(user.id);
+      setMessages([]);
+      if (endpoint === API_ME_ACCOUNT) { await signOut(); router.replace('/auth'); return; }
+      setCompanionName('Iris');
+      void refreshPersona();
+    } catch (error: any) {
+      Alert.alert(companionName, t('menu.action_failed', { error: error?.message || t('common.unknown_error') }));
+    }
+  };
+
+  const confirmDestructive = (messageKey: string, endpoint: string) => {
+    setMenuOpen(false);
+    const message = t(messageKey, { name: companionName });
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(message)) void runDestructive(endpoint);
+      return;
+    }
+    Alert.alert(companionName, message, [
+      { text: t('menu.cancel'), style: 'cancel' },
+      { text: t('menu.confirm'), style: 'destructive', onPress: () => void runDestructive(endpoint) },
+    ]);
+  };
 
   const sendMessage = async (draft: ChatDraft) => {
     const text = draft.text.trim();
@@ -631,6 +714,7 @@ export default function ChatScreen() {
       }
       // A completed image reports its request's provider, not the current preference.
       pendingAssistantIdRef.current = null;
+      if (payload.persona_status) void refreshPersona();
       setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: payload.reply ?? '…', imageUrl: payload.image_url || null, imageBucket: payload.image_bucket || null, imagePath: payload.image_path || null, createdAt: new Date().toISOString(), clientMessageId: assistantClientId }]);
     } catch (error: any) {
       const cleanupToken = await getToken().catch(() => null);
@@ -643,13 +727,13 @@ export default function ChatScreen() {
 
       pendingAssistantIdRef.current = null;
       const message = String(error?.message || '');
-      let errorText = 'Nastala chyba pri spojení s Iris.';
-      if (message.startsWith('LIMIT:')) { const [, used, limit] = message.split(':'); errorText = `Dnešný limit je vyčerpaný (${used}/${limit}).`; }
-      else if (message.includes('401')) errorText = 'Prihlásenie neprešlo (401).';
-      else if (message.includes('ATTACHMENT_SIZE')) errorText = 'Obrázok je väčší než 8 MB.';
-      else if (message.includes('ATTACHMENT_')) errorText = 'Obrázok sa nepodarilo bezpečne nahrať. Skús ho pridať znova.';
-      else if (message.includes('HTTP 5')) errorText = 'Backend je dočasne nedostupný.';
-      else if (error?.name === 'AbortError') errorText = 'Odpoveď trvala príliš dlho. Skús to znova.';
+      let errorText = t('chat.error_connection', { name: companionName });
+      if (message.startsWith('LIMIT:')) { const [, used, limit] = message.split(':'); errorText = t('chat.error_limit', { used, limit }); }
+      else if (message.includes('401')) errorText = t('chat.error_auth');
+      else if (message.includes('ATTACHMENT_SIZE')) errorText = t('chat.error_attachment_size');
+      else if (message.includes('ATTACHMENT_')) errorText = t('chat.error_attachment_upload');
+      else if (message.includes('HTTP 5')) errorText = t('chat.error_backend');
+      else if (error?.name === 'AbortError') errorText = t('chat.error_timeout');
       setMessages((old) => [...old, { role: 'iris', text: errorText }]);
     } finally {
       activeRequestRef.current = false;
@@ -663,22 +747,22 @@ export default function ChatScreen() {
       {menuOpen && <Pressable onPress={() => setMenuOpen(false)} style={styles.menuOverlay} />}
       <View style={[styles.header, glassWeb, { borderBottomColor: theme.headerBorder, backgroundColor: theme.header, shadowColor: theme.shadow }]}> 
         <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-        <View><Text style={[styles.headerName, { color: theme.text }]}>Iris</Text><Text style={[styles.headerStatus, { color: theme.textMuted }]}>with you</Text></View>
+        <View><Text style={[styles.headerName, { color: theme.text }]}>{companionName}</Text><Text style={[styles.headerStatus, { color: theme.textMuted }]}>{t('chat.header_status')}</Text></View>
         <View style={styles.menuWrap}>
           <Pressable onPress={() => setMenuOpen((open) => !open)} style={[styles.menuBtn, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}><Text style={[styles.menuDots, { color: theme.text }]}>⋯</Text></Pressable>
           {menuOpen && <View style={[styles.menu, glassWeb, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}> 
-            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>Vzhľad</Text>
+            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>{t('menu.appearance')}</Text>
             <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}>
               {(['dark', 'light'] as IrisThemeMode[]).map((mode) => {
                 const selected = themeMode === mode;
                 return (
                   <Pressable key={mode} onPress={() => setThemeMode(mode)} style={[styles.themeOption, selected && { backgroundColor: theme.accent }]}> 
-                    <Text style={[styles.themeOptionText, { color: selected ? '#fff' : theme.text }]}>{mode === 'dark' ? 'Dark' : 'Light'}</Text>
+                    <Text style={[styles.themeOptionText, { color: selected ? '#fff' : theme.text }]}>{mode === 'dark' ? t('menu.theme_dark') : t('menu.theme_light')}</Text>
                   </Pressable>
                 );
               })}
             </View>
-            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>Generátor fotiek</Text>
+            <Text style={[styles.menuLabel, { color: theme.textMuted }]}>{t('menu.photo_engine')}</Text>
             <View style={[styles.themeSwitch, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}>
               {IMAGE_PROVIDER_OPTIONS.map((option) => {
                 const selected = imageProvider === option.value;
@@ -689,13 +773,16 @@ export default function ChatScreen() {
                 );
               })}
             </View>
-            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? 'Ukladám…' : imageProvider ? `Aktívny: ${IMAGE_PROVIDER_LABELS[imageProvider]}` : imageProviderError ? 'Model sa nepodarilo načítať. Vyber ho znova.' : 'Načítavam model…'}</Text>
+            <Text style={[styles.providerActiveText, { color: theme.textMuted }]}>{imageProviderSaving ? t('common.saving') : imageProvider ? t('menu.photo_engine_active', { provider: IMAGE_PROVIDER_LABELS[imageProvider] }) : imageProviderError ? t('menu.photo_engine_error') : t('menu.photo_engine_loading')}</Text>
             <View style={[styles.menuDivider, { backgroundColor: theme.surfaceBorder }]} />
-            {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? '🔔 Notifikácie zapnuté' : '🔔 Povoliť notifikácie'}</Text></Pressable>}
-            <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>🖼️ Zmeniť avatar Iris</Text>}</Pressable>
-            <Pressable onPress={openFacePack} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>🧬 Face reference pack (3)</Text></Pressable>
-            <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Vymazať históriu</Text></Pressable>
-            <Pressable onPress={async () => { setMenuOpen(false); await signOut(); router.replace('/auth'); }} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>Odhlásiť sa</Text></Pressable>
+            {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? t('menu.notifications_on') : t('menu.notifications_enable')}</Text></Pressable>}
+            <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>{t('menu.change_avatar', { name: companionName })}</Text>}</Pressable>
+            <Pressable onPress={openFacePack} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.face_pack')}</Text></Pressable>
+            <Pressable onPress={() => void exportData()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.export')}</Text></Pressable>
+            <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.clear_history')}</Text></Pressable>
+            <Pressable onPress={() => confirmDestructive('menu.forget_confirm', API_ME_DATA)} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.forget_me')}</Text></Pressable>
+            <Pressable onPress={() => confirmDestructive('menu.delete_account_confirm', API_ME_ACCOUNT)} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.delete_account')}</Text></Pressable>
+            <Pressable onPress={() => void signOutAndForgetDevice()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.sign_out')}</Text></Pressable>
           </View>}
         </View>
       </View>
@@ -706,8 +793,8 @@ export default function ChatScreen() {
           <View style={[styles.facePackCard, glassWeb, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}> 
             <View style={styles.facePackHeader}>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.facePackTitle, { color: theme.text }]}>Face reference pack</Text>
-                <Text style={[styles.facePackSubtitle, { color: theme.textMuted }]}>Tri pohľady na tú istú tvár Iris. Každú fotku vyber samostatným kliknutím.</Text>
+                <Text style={[styles.facePackTitle, { color: theme.text }]}>{t('face.title')}</Text>
+                <Text style={[styles.facePackSubtitle, { color: theme.textMuted }]}>{t('face.subtitle')}</Text>
               </View>
               <Pressable disabled={!!facePackUploading} onPress={() => setFacePackOpen(false)} style={[styles.facePackClose, { backgroundColor: theme.surfaceSoft, borderColor: theme.surfaceBorder }]}><Text style={[styles.facePackCloseText, { color: theme.text }]}>✕</Text></Pressable>
             </View>
@@ -720,23 +807,27 @@ export default function ChatScreen() {
                   <Pressable
                     key={step.slot}
                     disabled={!!facePackUploading}
-                    onPress={() => void uploadFaceReference(step.slot, step.label)}
+                    onPress={() => void uploadFaceReference(step.slot, t(step.labelKey))}
                     style={({ pressed }) => [styles.facePackSlot, { backgroundColor: theme.surfaceSoft, borderColor: saved ? theme.accent : theme.surfaceBorder, opacity: pressed ? 0.78 : 1 }]}
                   >
                     <View style={[styles.facePackNumber, { backgroundColor: saved ? theme.accent : theme.surface, borderColor: saved ? theme.accent : theme.surfaceBorder }]}><Text style={[styles.facePackNumberText, { color: saved ? '#fff' : theme.text }]}>{saved ? '✓' : index + 1}</Text></View>
                     <View style={styles.facePackSlotCopy}>
-                      <Text style={[styles.facePackSlotLabel, { color: theme.text }]}>{step.label}</Text>
-                      <Text style={[styles.facePackSlotHint, { color: theme.textMuted }]}>{step.hint}</Text>
+                      <Text style={[styles.facePackSlotLabel, { color: theme.text }]}>{t(step.labelKey)}</Text>
+                      <Text style={[styles.facePackSlotHint, { color: theme.textMuted }]}>{t(step.hintKey)}</Text>
                     </View>
                     {active
                       ? <ActivityIndicator color={theme.text} />
-                      : <Text style={[styles.facePackAction, { color: saved ? theme.accent : theme.text }]}>{saved ? 'Nahradiť' : 'Vybrať'}</Text>}
+                      : <Text style={[styles.facePackAction, { color: saved ? theme.accent : theme.text }]}>{saved ? t('common.replace') : t('common.choose')}</Text>}
                   </Pressable>
                 );
               })}
             </View>
 
-            <Text style={[styles.facePackFootnote, { color: theme.textFaint }]}>Odporúčanie: čistá tvár + ramená, rovnaká identita, bez beauty filtrov. Fotky zostávajú oddelené od UI avataru.</Text>
+            <Text style={[styles.facePackFootnote, { color: theme.textFaint }]}>{t('face.footnote')}</Text>
+            <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: faceConsent }} onPress={() => setFaceConsent((value) => !value)} style={styles.consentRow}>
+              <Text style={[styles.consentBox, { color: faceConsent ? theme.accent : theme.textMuted }]}>{faceConsent ? '☑' : '☐'}</Text>
+              <Text style={[styles.consentText, { color: theme.textMuted }]}>{t('face.consent')}</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>
@@ -749,7 +840,7 @@ export default function ChatScreen() {
             : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} themeMode={themeMode} />)}
         {isTyping && <View style={styles.typing}><TypingIndicator themeMode={themeMode} /></View>}
       </ScrollView>
-      <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} themeMode={themeMode} /></View>
+      <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} themeMode={themeMode} companionName={companionName} /></View>
     </View>
   );
 
@@ -801,6 +892,9 @@ const styles = StyleSheet.create({
   facePackSlotLabel: { fontSize: 15, fontWeight: '700' },
   facePackSlotHint: { fontSize: 12, marginTop: 3 },
   facePackAction: { fontSize: 13, fontWeight: '800' },
+  consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 },
+  consentBox: { fontSize: 18, lineHeight: 20 },
+  consentText: { flex: 1, fontSize: 12, lineHeight: 17 },
   facePackFootnote: { fontSize: 11, lineHeight: 16, marginTop: 13 },
   messages: { flex: 1, paddingHorizontal: 12, paddingTop: 10 },
   messagesContent: { paddingBottom: 12 },

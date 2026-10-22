@@ -7,6 +7,7 @@ export const SOURCE_LINES = Object.freeze({
   image_generation_failed: 'Oops, something went wrong with the photo. Try again in a moment.',
   image_daily_limit_reached: "Today's photo limit is used up ({used}/{limit}).",
   image_face_missing: "I don't have a face to start from yet. Describe how I look, or add a face reference pack in the menu.",
+  push_new_message: '{name} sent you a message.',
   people_image_failed: "I couldn't create {name} right now. Try again in a moment.",
 });
 

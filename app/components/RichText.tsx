@@ -1,5 +1,6 @@
 import React from 'react';
 import { Linking, StyleProp, Text, TextStyle } from 'react-native';
+import { useI18n } from '../../lib/i18n';
 
 type Props = {
   text: string;
@@ -20,13 +21,15 @@ function cleanExternalUrl(raw: string) {
   }
 }
 
-function friendlyLabel(label: string) {
+function friendlyLabel(label: string, linkLabel: string) {
   const value = label.trim();
-  if (/^(?:https?:\/\/)?(?:www\.)?[\w.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(value)) return 'Otvoriť odkaz ↗';
+  if (/^(?:https?:\/\/)?(?:www\.)?[\w.-]+\.[a-z]{2,}(?:\/.*)?$/i.test(value)) return linkLabel;
   return value.endsWith('↗') ? value : `${value} ↗`;
 }
 
 export default function RichText({ text, style }: Props) {
+  const { t } = useI18n();
+  const linkLabel = t('chat.link_label');
   const value = String(text || '');
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -51,7 +54,7 @@ export default function RichText({ text, style }: Props) {
           onPress={() => void Linking.openURL(href)}
           style={{ textDecorationLine: 'underline', fontWeight: '700' }}
         >
-          {friendlyLabel(markdownLabel)}
+          {friendlyLabel(markdownLabel, linkLabel)}
         </Text>,
       );
     } else if (boldText) {
@@ -65,7 +68,7 @@ export default function RichText({ text, style }: Props) {
           onPress={() => void Linking.openURL(href)}
           style={{ textDecorationLine: 'underline', fontWeight: '700' }}
         >
-          Otvoriť odkaz ↗
+          {linkLabel}
         </Text>,
       );
     }

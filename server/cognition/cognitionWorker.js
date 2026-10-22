@@ -11,7 +11,8 @@ import { processProactiveUser, deliverPendingProactiveNotifications } from './pr
 import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
 import { loadSelfModel } from '../memory/selfAwareness.js';
 import { sendExpoPush } from '../push/expoPush.js';
-import { ensurePersona } from '../persona/personaStore.js';
+import { ensurePersona, loadPersona, personaDisplayName } from '../persona/personaStore.js';
+import { localizedLine } from '../i18n/localize.js';
 import {
   loadCognitiveContinuity,
   runBackgroundReflection,
@@ -72,9 +73,13 @@ async function loadRecentEpisodicMemories(supabase, userId) {
   return data || [];
 }
 
-async function sendExpoProactivePush(supabase, userId, message) {
+// The lock screen never shows message content; intimate text stays inside the app.
+async function sendExpoProactivePush(supabase, userId) {
   const summary = { subscriptions: 0, accepted: 0, failed: 0 };
   try {
+    const persona = await loadPersona(supabase, userId);
+    const name = personaDisplayName(persona) || 'Iris';
+    const body = await localizedLine('push_new_message', persona?.language, { name });
     const { data, error } = await supabase
       .from('push_tokens')
       .select('id, expo_push_token')
@@ -87,8 +92,8 @@ async function sendExpoProactivePush(supabase, userId, message) {
     for (const token of data || []) {
       const result = await sendExpoPush({
         to: token.expo_push_token,
-        title: 'Iris',
-        body: message,
+        title: name,
+        body,
         data: { type: 'iris_proactive_message' },
       });
       if (result?.ok) { summary.accepted += 1; continue; }
@@ -182,8 +187,8 @@ export async function runCognitionSweep() {
     const supabase = getSupabaseAdmin();
     const llmClient = getLLMClient('openai');
     const model = MODELS.openaiUtility || MODELS.openai;
-    const notify = async (userId, message) => {
-      const summaries = await Promise.all([notifyWebPushReply(userId), sendExpoProactivePush(supabase, userId, message)]);
+    const notify = async (userId) => {
+      const summaries = await Promise.all([notifyWebPushReply(userId), sendExpoProactivePush(supabase, userId)]);
       return summaries.reduce((total, item) => ({
         subscriptions: total.subscriptions + (item?.subscriptions || 0),
         accepted: total.accepted + (item?.accepted || 0), failed: total.failed + (item?.failed || 0),

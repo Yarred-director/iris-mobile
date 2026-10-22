@@ -87,7 +87,7 @@ assert.match(imageRoutesSource, /router\.get\('\/iris\/image-provider'/, 'The ap
 assert.match(imageRoutesSource, /router\.put\('\/iris\/image-provider'/, 'The app must be able to update the persisted image engine.');
 
 const appSource = fs.readFileSync(new URL('../app/(tabs)/index.tsx', import.meta.url), 'utf8');
-assert.match(appSource, /Generátor fotiek/, 'The image engine selector must be visible in the Iris menu.');
+assert.match(appSource, /menu\.photo_engine/, 'The image engine selector must be visible in the Iris menu.');
 assert.match(appSource, /label: 'OpenAI'.*label: 'Grok'.*label: 'Kling'/s, 'The selector must present OpenAI, Grok and Kling.');
 
 const migrationSource = fs.readFileSync(new URL('../supabase/migrations/20260826113024_image_provider_preference.sql', import.meta.url), 'utf8');

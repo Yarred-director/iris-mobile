@@ -1,3 +1,4 @@
+import { useI18n } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/providers/AuthProvider';
 import { useRouter } from 'expo-router';
@@ -7,6 +8,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 export default function SetPasswordScreen() {
   const router = useRouter();
   const { loading, user } = useAuth();
+  const { t } = useI18n();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [working, setWorking] = useState(false);
@@ -24,11 +26,11 @@ export default function SetPasswordScreen() {
     setErrorMessage(null);
 
     if (password.length < 8) {
-      setErrorMessage('Heslo musí mať aspoň 8 znakov.');
+      setErrorMessage(t('auth.password_too_short'));
       return;
     }
     if (password !== confirmPassword) {
-      setErrorMessage('Heslá sa nezhodujú.');
+      setErrorMessage(t('auth.password_mismatch'));
       return;
     }
 
@@ -41,7 +43,7 @@ export default function SetPasswordScreen() {
       setConfirmPassword('');
       setDone(true);
     } catch (error: any) {
-      setErrorMessage(error?.message || 'Heslo sa nepodarilo nastaviť.');
+      setErrorMessage(error?.message || t('password.failed'));
     } finally {
       submitRef.current = false;
       setWorking(false);
@@ -51,7 +53,7 @@ export default function SetPasswordScreen() {
   if (loading || !user) {
     return (
       <View style={styles.root}>
-        <Text style={styles.hint}>Kontrolujem účet…</Text>
+        <Text style={styles.hint}>{t('auth.checking_session')}</Text>
       </View>
     );
   }
@@ -59,10 +61,8 @@ export default function SetPasswordScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.card}>
-        <Text style={styles.title}>Nastaviť heslo</Text>
-        <Text style={styles.sub}>
-          Nastavíš heslo priamo svojmu existujúcemu Iris účtu. User ID ani žiadne spomienky či história sa nemenia.
-        </Text>
+        <Text style={styles.title}>{t('password.title')}</Text>
+        <Text style={styles.sub}>{t('password.subtitle')}</Text>
 
         {!done ? (
           <>
@@ -72,12 +72,12 @@ export default function SetPasswordScreen() {
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="Nové heslo"
+              placeholder={t('password.new')}
               placeholderTextColor="rgba(255,255,255,0.35)"
               style={styles.input}
               textContentType="newPassword"
               autoComplete="new-password"
-              accessibilityLabel="Nové heslo"
+              accessibilityLabel={t('password.new')}
             />
             <TextInput
               value={confirmPassword}
@@ -85,23 +85,23 @@ export default function SetPasswordScreen() {
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="Zopakuj heslo"
+              placeholder={t('auth.password_repeat')}
               placeholderTextColor="rgba(255,255,255,0.35)"
               style={styles.input}
               textContentType="newPassword"
               autoComplete="new-password"
-              accessibilityLabel="Zopakuj heslo"
+              accessibilityLabel={t('auth.password_repeat')}
               onSubmitEditing={() => void submit()}
             />
             <Pressable onPress={() => void submit()} style={styles.btn} disabled={working}>
-              <Text style={styles.btnText}>{working ? 'Ukladám…' : 'Nastaviť heslo'}</Text>
+              <Text style={styles.btnText}>{working ? t('common.saving') : t('password.set')}</Text>
             </Pressable>
           </>
         ) : (
           <>
-            <Text style={styles.ok}>Heslo je nastavené. Odteraz sa môžeš prihlasovať emailom a heslom.</Text>
+            <Text style={styles.ok}>{t('password.done')}</Text>
             <Pressable onPress={() => router.replace('/(tabs)')} style={styles.btn}>
-              <Text style={styles.btnText}>Späť do Iris</Text>
+              <Text style={styles.btnText}>{t('password.back', { name: 'Iris' })}</Text>
             </Pressable>
           </>
         )}

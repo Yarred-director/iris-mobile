@@ -1,3 +1,4 @@
+import { useI18n } from '@/lib/i18n';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/providers/AuthProvider';
 import { useRouter } from 'expo-router';
@@ -10,6 +11,7 @@ type Status = 'idle' | 'working' | 'sent' | 'confirm' | 'error';
 export default function AuthScreen() {
   const router = useRouter();
   const { loading, user } = useAuth();
+  const { t } = useI18n();
   const [mode, setMode] = useState<Mode>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -48,22 +50,22 @@ export default function AuthScreen() {
     const cleanName = name.trim();
 
     if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMessage('Zadaj platný email.');
+      setErrorMessage(t('auth.invalid_email'));
       setStatus('error');
       return;
     }
     if (password.length < 8) {
-      setErrorMessage('Heslo musí mať aspoň 8 znakov.');
+      setErrorMessage(t('auth.password_too_short'));
       setStatus('error');
       return;
     }
     if (mode === 'register' && cleanName.length < 2) {
-      setErrorMessage('Zadaj svoje meno.');
+      setErrorMessage(t('auth.name_required'));
       setStatus('error');
       return;
     }
     if (mode === 'register' && password !== confirmPassword) {
-      setErrorMessage('Heslá sa nezhodujú.');
+      setErrorMessage(t('auth.password_mismatch'));
       setStatus('error');
       return;
     }
@@ -103,7 +105,7 @@ export default function AuthScreen() {
         setStatus('confirm');
       }
     } catch (error: any) {
-      setErrorMessage(error?.message || (mode === 'login' ? 'Prihlásenie sa nepodarilo.' : 'Registrácia sa nepodarila.'));
+      setErrorMessage(error?.message || (mode === 'login' ? t('auth.login_failed') : t('auth.register_failed')));
       setStatus('error');
     } finally {
       sendingRef.current = false;
@@ -115,7 +117,7 @@ export default function AuthScreen() {
     if (sendingRef.current) return;
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMessage('Najprv zadaj svoj email.');
+      setErrorMessage(t('auth.email_first'));
       setStatus('error');
       return;
     }
@@ -132,7 +134,7 @@ export default function AuthScreen() {
       if (error) throw error;
       setStatus('sent');
     } catch (error: any) {
-      setErrorMessage(error?.message || 'Odoslanie odkazu sa nepodarilo.');
+      setErrorMessage(error?.message || t('auth.magic_link_failed'));
       setStatus('error');
     } finally {
       sendingRef.current = false;
@@ -144,18 +146,18 @@ export default function AuthScreen() {
   return (
     <View style={styles.root}>
       <Text style={styles.title}>Iris</Text>
-      <Text style={styles.sub}>{mode === 'login' ? 'Prihlás sa do svojho účtu.' : 'Vytvor si účet pre Iris.'}</Text>
+      <Text style={styles.sub}>{mode === 'login' ? t('auth.login_subtitle') : t('auth.register_subtitle')}</Text>
 
       <View style={styles.tabs}>
         <Pressable onPress={() => switchMode('login')} style={[styles.tab, mode === 'login' && styles.tabActive]}>
-          <Text style={[styles.tabText, mode === 'login' && styles.tabTextActive]}>Login</Text>
+          <Text style={[styles.tabText, mode === 'login' && styles.tabTextActive]}>{t('auth.tab_login')}</Text>
         </Pressable>
         <Pressable onPress={() => switchMode('register')} style={[styles.tab, mode === 'register' && styles.tabActive]}>
-          <Text style={[styles.tabText, mode === 'register' && styles.tabTextActive]}>Register</Text>
+          <Text style={[styles.tabText, mode === 'register' && styles.tabTextActive]}>{t('auth.tab_register')}</Text>
         </Pressable>
       </View>
 
-      {loading && <Text style={styles.hint}>Kontrolujem session…</Text>}
+      {loading && <Text style={styles.hint}>{t('auth.checking_session')}</Text>}
 
       {mode === 'register' && (
         <TextInput
@@ -163,10 +165,10 @@ export default function AuthScreen() {
           onChangeText={setName}
           autoCapitalize="words"
           autoCorrect={false}
-          placeholder="Meno"
+          placeholder={t('auth.name')}
           placeholderTextColor="rgba(255,255,255,0.35)"
           style={styles.input}
-          accessibilityLabel="Meno"
+          accessibilityLabel={t('auth.name')}
           textContentType="name"
         />
       )}
@@ -191,10 +193,10 @@ export default function AuthScreen() {
         autoCapitalize="none"
         autoCorrect={false}
         secureTextEntry
-        placeholder="Heslo"
+        placeholder={t('auth.password')}
         placeholderTextColor="rgba(255,255,255,0.35)"
         style={styles.input}
-        accessibilityLabel="Heslo"
+        accessibilityLabel={t('auth.password')}
         textContentType={mode === 'register' ? 'newPassword' : 'password'}
         autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
         onSubmitEditing={() => mode === 'login' && void submitPassword()}
@@ -207,10 +209,10 @@ export default function AuthScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           secureTextEntry
-          placeholder="Zopakuj heslo"
+          placeholder={t('auth.password_repeat')}
           placeholderTextColor="rgba(255,255,255,0.35)"
           style={styles.input}
-          accessibilityLabel="Zopakuj heslo"
+          accessibilityLabel={t('auth.password_repeat')}
           textContentType="newPassword"
           autoComplete="new-password"
           onSubmitEditing={() => void submitPassword()}
@@ -218,17 +220,17 @@ export default function AuthScreen() {
       )}
 
       <Pressable onPress={() => void submitPassword()} style={styles.btn} disabled={working}>
-        <Text style={styles.btnText}>{working ? 'Pracujem…' : mode === 'login' ? 'Prihlásiť sa' : 'Vytvoriť účet'}</Text>
+        <Text style={styles.btnText}>{working ? t('common.working') : mode === 'login' ? t('auth.login') : t('auth.register')}</Text>
       </Pressable>
 
       {mode === 'login' && (
         <Pressable onPress={() => void sendMagicLink()} disabled={working} style={styles.linkBtn}>
-          <Text style={styles.linkText}>Nemáš ešte heslo? Pošli mi starý magic link</Text>
+          <Text style={styles.linkText}>{t('auth.magic_link')}</Text>
         </Pressable>
       )}
 
-      {status === 'sent' && <Text style={styles.ok}>Magic link je odoslaný. Toto je len prechodný fallback pre starší účet.</Text>}
-      {status === 'confirm' && <Text style={styles.ok}>Účet je vytvorený. Ak má projekt zapnuté potvrdenie emailu, dokonči jednorazové overenie z emailu.</Text>}
+      {status === 'sent' && <Text style={styles.ok}>{t('auth.magic_link_sent')}</Text>}
+      {status === 'confirm' && <Text style={styles.ok}>{t('auth.account_created')}</Text>}
       {!!errorMessage && <Text style={styles.error}>{errorMessage}</Text>}
     </View>
   );

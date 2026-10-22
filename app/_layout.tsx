@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Linking } from "react-native";
 
 import { UI_MANIFEST_URL } from "../constants/ui";
+import { I18nProvider } from "../lib/i18n";
 import { supabase } from "../lib/supabase";
 import { AuthProvider, useAuth } from "../providers/AuthProvider";
 
@@ -103,12 +104,14 @@ export default function RootLayout() {
   if (!booted) return null;
 
   return (
-    <AuthProvider>
-      {/* 🔔 MUST run inside AuthProvider so it can read accessToken */}
-      <PushBootstrap />
+    <I18nProvider>
+      <AuthProvider>
+        {/* 🔔 MUST run inside AuthProvider so it can read accessToken */}
+        <PushBootstrap />
 
-      <Gate />
-      <StatusBar style="light" />
-    </AuthProvider>
+        <Gate />
+        <StatusBar style="light" />
+      </AuthProvider>
+    </I18nProvider>
   );
 }

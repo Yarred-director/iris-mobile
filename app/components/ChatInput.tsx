@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useI18n } from '../../lib/i18n';
 
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
@@ -26,6 +27,7 @@ type Props = {
   onSend: (draft: ChatDraft) => void | Promise<void>;
   disabled?: boolean;
   themeMode?: IrisThemeMode;
+  companionName?: string;
 };
 
 function normalizedMimeType(asset: ImagePicker.ImagePickerAsset) {
@@ -38,7 +40,8 @@ function normalizedMimeType(asset: ImagePicker.ImagePickerAsset) {
   return null;
 }
 
-export default function ChatInput({ onSend, disabled = false, themeMode = 'dark' }: Props) {
+export default function ChatInput({ onSend, disabled = false, themeMode = 'dark', companionName = 'Iris' }: Props) {
+  const { t } = useI18n();
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState<PendingChatAttachment[]>([]);
   const theme = getIrisTheme(themeMode);
@@ -49,7 +52,7 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
     if (Platform.OS !== 'web') {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Iris', 'Potrebujem prístup k fotogalérii.');
+        Alert.alert(companionName, t('common.gallery_permission'));
         return;
       }
     }
@@ -81,9 +84,9 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
         retention: 'temporary',
       });
     });
-    if (rejected) Alert.alert('Iris', 'Podporujem JPG, PNG a WebP do 8 MB na obrázok.');
+    if (rejected) Alert.alert(companionName, t('chat.attachment_unsupported'));
     setAttachments((current) => [...current, ...accepted].slice(0, MAX_ATTACHMENTS));
-  }, [attachments.length, disabled]);
+  }, [attachments.length, companionName, disabled, t]);
 
   const submit = useCallback(() => {
     const clean = text.trim();
@@ -109,11 +112,11 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
             return (
               <View key={attachment.localId} style={[styles.previewCard, { backgroundColor: theme.surfaceSoft, borderColor: permanent ? theme.accent : theme.surfaceBorder }]}>
                 <Image source={{ uri: attachment.uri }} style={styles.previewImage} contentFit="cover" />
-                <Pressable accessibilityLabel="Odstrániť obrázok" onPress={() => setAttachments((current) => current.filter((item) => item.localId !== attachment.localId))} style={styles.removeButton}>
+                <Pressable accessibilityLabel={t('chat.remove_image_label')} onPress={() => setAttachments((current) => current.filter((item) => item.localId !== attachment.localId))} style={styles.removeButton}>
                   <Text style={styles.removeText}>×</Text>
                 </Pressable>
                 <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: permanent }} onPress={() => toggleRetention(attachment.localId)} style={styles.retentionButton}>
-                  <Text style={[styles.retentionText, { color: permanent ? theme.accent : theme.textMuted }]}>{permanent ? '✓ Môj vzhľad · trvalo' : '○ Zmizne o 30 dní'}</Text>
+                  <Text style={[styles.retentionText, { color: permanent ? theme.accent : theme.textMuted }]}>{permanent ? t('chat.attachment_permanent') : t('chat.attachment_temporary')}</Text>
                 </Pressable>
               </View>
             );
@@ -123,7 +126,7 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
       <View style={styles.inputRow}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Pridať obrázok"
+          accessibilityLabel={t('chat.add_image_label')}
           disabled={disabled || attachments.length >= MAX_ATTACHMENTS}
           onPress={() => void pickImages()}
           style={[styles.attachButton, { backgroundColor: theme.inputBackground, borderColor: theme.surfaceBorder }, (disabled || attachments.length >= MAX_ATTACHMENTS) && styles.buttonDisabled]}
@@ -133,12 +136,12 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
         <TextInput
           value={text}
           onChangeText={setText}
-          placeholder={attachments.length ? 'Napíš niečo k obrázku…' : 'Napíš Iris...'}
+          placeholder={attachments.length ? t('chat.placeholder_with_image') : t('chat.placeholder', { name: companionName })}
           placeholderTextColor={theme.placeholder}
           style={[styles.input, { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.surfaceBorder }]}
           multiline
           editable={!disabled}
-          accessibilityLabel="Správa pre Iris"
+          accessibilityLabel={t('chat.input_label', { name: companionName })}
           returnKeyType={Platform.OS === 'web' ? 'send' : 'default'}
           blurOnSubmit={false}
           onKeyPress={(event: any) => {
@@ -153,7 +156,7 @@ export default function ChatInput({ onSend, disabled = false, themeMode = 'dark'
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Odoslať správu"
+          accessibilityLabel={t('chat.send_label')}
           disabled={disabled || !hasDraft}
           style={({ pressed }) => [styles.button, { backgroundColor: theme.accent }, (disabled || !hasDraft) && styles.buttonDisabled, pressed && !disabled && styles.buttonPressed]}
           onPress={submit}

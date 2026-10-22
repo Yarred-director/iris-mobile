@@ -39,8 +39,8 @@ assert.match(cleanupWorker, /\.remove\(supported\.map/);
 assert.match(cleanupWorker, /expires_at/);
 
 const inputSource = readFileSync(new URL('../app/components/ChatInput.tsx', import.meta.url), 'utf8');
-assert.match(inputSource, /Môj vzhľad · trvalo/);
-assert.match(inputSource, /Zmizne o 30 dní/);
+assert.match(inputSource, /chat\.attachment_permanent/);
+assert.match(inputSource, /chat\.attachment_temporary/);
 assert.match(inputSource, /MAX_ATTACHMENTS = 4/);
 
 const migration = readFileSync(new URL('../supabase/migrations/20260826135358_chat_attachments.sql', import.meta.url), 'utf8');
