@@ -90,7 +90,7 @@ export async function loadCognitiveContinuity(supabase, userId) {
     const [thoughtResult, autobiographicalResult] = await Promise.all([
       supabase
         .from('iris_thoughts')
-        .select('id, thought_type, subject, content, salience, emotional_weight, status, created_at, expires_at, last_considered_at')
+        .select('id, thought_type, subject, content, salience, emotional_weight, status, created_at, expires_at, last_considered_at, metadata')
         .eq('user_id', userId)
         .eq('status', 'active')
         .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)

@@ -54,3 +54,20 @@ assert.doesNotMatch(serverSources, /Yarred/, 'No user name may be hardcoded in s
 assert.doesNotMatch(serverSources, /looksLikeImageRequest|detectState|applySubjectLock/, 'Keyword gates must not return');
 
 console.log('turn classifier, persona and awakening checks passed');
+
+// Life loop: interests are data, slots follow her waking day, explored topics strengthen.
+const { chooseInterest, lifeSlotsForDay, nextInterests } = await import('../server/life/lifeLoop.js');
+const morning = new Date('2026-10-22T05:00:00Z');
+const slots = lifeSlotsForDay({ userId: 'u1', timezone: 'UTC', now: morning, count: 3 });
+assert.equal(slots.length, 3);
+assert.ok(slots.every((slot) => slot.runAt > morning && slot.dedupeKey.startsWith('life:u1:2026-10-22:')));
+assert.equal(lifeSlotsForDay({ userId: 'u1', timezone: 'UTC', now: new Date('2026-10-22T23:00:00Z'), count: 3 }).length, 0);
+assert.equal(lifeSlotsForDay({ userId: 'u1', timezone: 'UTC', now: morning, count: 0 }).length, 0);
+const picked = chooseInterest([{ topic: 'Jazz', strength: 0.9, last_explored_at: new Date().toISOString() }, { topic: 'Space', strength: 0.6 }], () => 0.5);
+assert.equal(picked.topic, 'Space', 'An unexplored interest wins over one explored minutes ago');
+const grown = nextInterests([{ topic: 'Space', strength: 0.6 }, { topic: 'Jazz', strength: 0.5 }], 'space', 'Black holes', '2026-10-22T10:00:00Z');
+assert.equal(grown.find((i) => i.topic === 'Space').strength, 0.63);
+assert.equal(grown.find((i) => i.topic === 'Space').last_explored_at, '2026-10-22T10:00:00Z');
+assert.ok(grown.find((i) => i.topic === 'Black holes'));
+assert.ok(grown.find((i) => i.topic === 'Jazz').strength < 0.5);
+console.log('life loop checks passed');

@@ -13,6 +13,7 @@ import { loadSelfModel } from '../memory/selfAwareness.js';
 import { sendExpoPush } from '../push/expoPush.js';
 import { ensurePersona, loadPersona, personaDisplayName } from '../persona/personaStore.js';
 import { localizedLine } from '../i18n/localize.js';
+import { scheduleLifeForUser } from '../life/lifeLoop.js';
 import {
   loadCognitiveContinuity,
   runBackgroundReflection,
@@ -118,6 +119,8 @@ async function processUser({ supabase, profile, llmClient, model }) {
   // A companion that has not finished awakening has no inner life to reflect on yet.
   const persona = await ensurePersona(supabase, userId);
   if (persona?.status !== 'alive') return { claimed: false, sent: false, reason: 'persona_not_awake' };
+  // Her own day is planned independently of conversation; duplicate slots are ignored.
+  scheduleLifeForUser(supabase, { userId, timezone: profile.user_timezone }).catch((error) => console.log('[LIFE_SCHEDULE_ERROR]', userId, error?.message));
 
   const cognitionIntervalMinutes = intEnv(
     'IRIS_COGNITION_MIN_INTERVAL_MINUTES',

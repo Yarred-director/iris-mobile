@@ -4,6 +4,8 @@ import './config/env.js';
 
 import { startScheduledActionLoop } from './actions/scheduledActionWorker.js';
 import { startCognitionLoop } from './cognition/cognitionWorker.js';
+import { startJobLoop } from './jobs/jobQueue.js';
+import { registerLifeHandlers } from './life/lifeLoop.js';
 import { startAttachmentCleanupLoop } from './media/attachmentCleanupWorker.js';
 import { createIpRateLimit } from './middleware/rateLimit.js';
 import { sessionMiddleware } from './middleware/session.js';
@@ -75,4 +77,6 @@ app.listen(port, () => {
   startCognitionLoop();
   startScheduledActionLoop();
   startAttachmentCleanupLoop();
+  registerLifeHandlers();
+  startJobLoop();
 });

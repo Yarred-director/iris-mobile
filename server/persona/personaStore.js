@@ -57,6 +57,7 @@ export function sanitizeInterests(value) {
       strength: Number.isFinite(strength) ? Math.max(0, Math.min(1, Number(strength.toFixed(3)))) : 0.5,
       source: cleanText(item?.source, 40) || 'conversation',
       since: cleanText(item?.since, 40) || new Date().toISOString(),
+      last_explored_at: cleanText(item?.last_explored_at, 40),
     });
     if (out.length >= MAX_INTERESTS) break;
   }
@@ -174,7 +175,7 @@ export function mergeInterests(existing, incoming) {
   for (const item of sanitizeInterests(incoming)) {
     const key = item.topic.toLowerCase();
     const previous = byTopic.get(key);
-    byTopic.set(key, previous ? { ...previous, strength: item.strength, source: item.source } : item);
+    byTopic.set(key, previous ? { ...previous, strength: item.strength, source: item.source, last_explored_at: item.last_explored_at || previous.last_explored_at } : item);
   }
   return [...byTopic.values()]
     .filter((item) => item.strength > 0.05)

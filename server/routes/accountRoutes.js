@@ -87,6 +87,39 @@ router.get('/me/persona', async (req, res) => {
   }
 });
 
+// Her diary: what she really experienced on her own, each entry with its source.
+router.get('/iris/diary', async (req, res) => {
+  try {
+    const userId = await requireUserId(req, res);
+    if (!userId) return;
+    const limit = Math.max(1, Math.min(Number(req.query?.limit) || 30, 100));
+    const { data, error } = await req.supabaseAdmin
+      .from('iris_autobiographical_memory')
+      .select('id, title, narrative, self_meaning, source_context, created_at')
+      .eq('user_id', userId)
+      .eq('event_type', 'life_experience')
+      .is('consolidated_into', null)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.json({
+      entries: (data || []).map((row) => ({
+        id: row.id,
+        title: row.title,
+        narrative: row.narrative,
+        reflection: row.self_meaning,
+        topic: row.source_context?.topic || null,
+        source_url: row.source_context?.source_url || null,
+        created_at: row.created_at,
+      })),
+    });
+  } catch (error) {
+    console.error('[DIARY_ERROR]', error?.message || error);
+    return res.status(500).json({ error: 'diary_failed' });
+  }
+});
+
 // "Forget me": removes the companion and every memory, keeping only the login account.
 router.delete('/me/data', async (req, res) => {
   try {
