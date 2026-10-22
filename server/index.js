@@ -6,10 +6,12 @@ import { startScheduledActionLoop } from './actions/scheduledActionWorker.js';
 import { startCognitionLoop } from './cognition/cognitionWorker.js';
 import { startJobLoop } from './jobs/jobQueue.js';
 import { registerLifeHandlers } from './life/lifeLoop.js';
+import { registerFacePackHandler } from './persona/facePack.js';
 import { startAttachmentCleanupLoop } from './media/attachmentCleanupWorker.js';
 import { createIpRateLimit } from './middleware/rateLimit.js';
 import { sessionMiddleware } from './middleware/session.js';
 import accountRouter from './routes/accountRoutes.js';
+import awakenRouter from './routes/awakenRoutes.js';
 import chatRouter from './routes/chat.js';
 import historyRouter from './routes/historyRoutes.js';
 import i18nRouter from './routes/i18nRoutes.js';
@@ -65,6 +67,7 @@ app.use(pushRouter);
 app.use(usageRouter);
 app.use(accountRouter);
 app.use(i18nRouter);
+app.use(awakenRouter);
 app.use((_req, res) => res.status(404).json({ error: 'not_found' }));
 app.use((error, _req, res, _next) => {
   if (error?.message === 'origin_not_allowed') return res.status(403).json({ error: 'origin_not_allowed' });
@@ -78,5 +81,6 @@ app.listen(port, () => {
   startScheduledActionLoop();
   startAttachmentCleanupLoop();
   registerLifeHandlers();
+  registerFacePackHandler();
   startJobLoop();
 });

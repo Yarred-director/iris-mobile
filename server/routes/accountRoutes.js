@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireUserId } from '../middleware/auth.js';
 import { ensurePersona, personaDisplayName } from '../persona/personaStore.js';
+import { hasConsent } from './awakenRoutes.js';
 
 const router = Router();
 
@@ -80,7 +81,7 @@ router.get('/me/persona', async (req, res) => {
     if (!userId) return;
     const persona = await ensurePersona(req.supabaseAdmin, userId);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ status: persona?.status || null, name: personaDisplayName(persona), language: persona?.language || null });
+    return res.json({ status: persona?.status || null, name: personaDisplayName(persona), language: persona?.language || null, consent: hasConsent(persona) });
   } catch (error) {
     console.error('[PERSONA_STATUS_ERROR]', error?.message || error);
     return res.status(500).json({ error: 'persona_status_failed' });

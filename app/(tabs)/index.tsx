@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, ImageBackground, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DEFAULT_AVATAR_URL, UI_MANIFEST_URL } from '../../constants/ui';
+import BootScreen from '../components/BootScreen';
 import ChatInput, { type ChatDraft } from '../components/ChatInput';
 import GlassShimmer from '../components/GlassShimmer';
 import RichText from '../components/RichText';
@@ -65,6 +66,10 @@ const API_PERSONA = `${API_BASE}/me/persona`;
 const API_ME_DATA = `${API_BASE}/me/data`;
 const API_ME_ACCOUNT = `${API_BASE}/me/account`;
 const API_ME_EXPORT = `${API_BASE}/me/export`;
+const API_ME_CONSENT = `${API_BASE}/me/consent`;
+const API_AWAKEN = `${API_BASE}/iris/awaken`;
+const API_DIARY = `${API_BASE}/iris/diary`;
+type DiaryEntry = { id: string; title?: string | null; narrative?: string | null; reflection?: string | null; source_url?: string | null; created_at?: string | null };
 function storageKey(userId: string) { return `iris.chat.history.v3:${userId}`; }
 function irisAvatarPath(userId: string) { return `ui-avatar/${userId}/avatar`; }
 function faceReferencePath(userId: string, slot: FaceReferenceSlot) { return `iris-ref/${userId}/face-${slot}`; }
@@ -231,8 +236,11 @@ export default function ChatScreen() {
   const router = useRouter();
   const scrollRef = useRef<ScrollView>(null);
   const { loading, user, accessToken, signOut } = useAuth();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [personaState, setPersonaState] = useState<{ status: string | null; consent: boolean } | null>(null);
+  const [diaryOpen, setDiaryOpen] = useState(false);
+  const [diary, setDiary] = useState<DiaryEntry[]>([]);
   const [companionName, setCompanionName] = useState('Iris');
   const [faceConsent, setFaceConsent] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
@@ -583,10 +591,50 @@ export default function ChatScreen() {
       if (!response.ok) return;
       const persona = await response.json();
       if (persona?.name) setCompanionName(String(persona.name));
+      setPersonaState({ status: persona?.status || null, consent: Boolean(persona?.consent) });
     } catch {}
   }, [getToken]);
 
   useEffect(() => { if (user?.id) void refreshPersona(); }, [refreshPersona, user?.id]);
+
+  const bootNeeded = historyReady && !!personaState && (!personaState.consent || (personaState.status !== 'alive' && messages.length === 0));
+
+  const initializeCompanion = useCallback(async () => {
+    const token = await getToken();
+    if (!token) return;
+    try {
+      if (!personaState?.consent) {
+        const consent = await fetchTimed(API_ME_CONSENT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ age_confirmed: true, data_consent: true, language }),
+        });
+        if (!consent.ok) throw new Error(`HTTP ${consent.status}`);
+      }
+      const response = await fetchTimed(API_AWAKEN, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ language }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (payload?.reply) setMessages((old) => [...old, { id: Crypto.randomUUID(), role: 'iris', text: String(payload.reply), createdAt: new Date().toISOString() }]);
+    } catch (error: any) {
+      Alert.alert(companionName, t('menu.action_failed', { error: error?.message || t('common.unknown_error') }));
+    } finally {
+      await refreshPersona();
+    }
+  }, [companionName, getToken, language, personaState?.consent, refreshPersona, t]);
+
+  const openDiary = async () => {
+    setMenuOpen(false);
+    setDiaryOpen(true);
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const response = await fetchTimed(API_DIARY, { cache: 'no-store', headers: { Authorization: `Bearer ${token}` } });
+      if (response.ok) setDiary((await response.json())?.entries || []);
+    } catch {}
+  };
 
   const signOutAndForgetDevice = async () => {
     setMenuOpen(false);
@@ -778,6 +826,7 @@ export default function ChatScreen() {
             {Platform.OS === 'web' && <Pressable onPress={() => void enableNotifications()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{pushStatus === 'enabled' ? t('menu.notifications_on') : t('menu.notifications_enable')}</Text></Pressable>}
             <Pressable onPress={() => void uploadAvatar()} style={styles.menuItem}>{avatarUploading ? <ActivityIndicator color={theme.text} /> : <Text style={[styles.menuText, { color: theme.text }]}>{t('menu.change_avatar', { name: companionName })}</Text>}</Pressable>
             <Pressable onPress={openFacePack} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.face_pack')}</Text></Pressable>
+            <Pressable onPress={() => void openDiary()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.diary', { name: companionName })}</Text></Pressable>
             <Pressable onPress={() => void exportData()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.export')}</Text></Pressable>
             <Pressable onPress={() => void clearHistory()} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.clear_history')}</Text></Pressable>
             <Pressable onPress={() => confirmDestructive('menu.forget_confirm', API_ME_DATA)} style={styles.menuItem}><Text style={[styles.menuText, { color: theme.text }]}>{t('menu.forget_me')}</Text></Pressable>
@@ -832,6 +881,27 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
+      <Modal visible={diaryOpen} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setDiaryOpen(false)}>
+        <View style={styles.facePackBackdrop}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setDiaryOpen(false)} />
+          <View style={[styles.facePackCard, glassWeb, styles.diaryCard, { backgroundColor: theme.surface, borderColor: theme.surfaceBorder, shadowColor: theme.shadow }]}>
+            <Text style={[styles.facePackTitle, { color: theme.text }]}>{t('diary.title', { name: companionName })}</Text>
+            <ScrollView style={styles.diaryList}>
+              {!diary.length && <Text style={[styles.facePackSubtitle, { color: theme.textMuted }]}>{t('diary.empty')}</Text>}
+              {diary.map((entry) => (
+                <View key={entry.id} style={[styles.diaryEntry, { borderColor: theme.surfaceBorder }]}>
+                  <Text style={[styles.facePackSlotLabel, { color: theme.text }]}>{entry.title}</Text>
+                  {!!entry.created_at && <Text style={[styles.facePackSlotHint, { color: theme.textFaint }]}>{new Date(entry.created_at).toLocaleString(language)}</Text>}
+                  {!!entry.reflection && <RichText text={entry.reflection} style={[styles.text, { color: theme.text, marginTop: 6 }]} />}
+                  {!!entry.narrative && <RichText text={entry.narrative} style={[styles.facePackSlotHint, { color: theme.textMuted, marginTop: 6 }]} />}
+                  {!!entry.source_url && <RichText text={`[${t('diary.source')}](${entry.source_url})`} style={[styles.facePackSlotHint, { color: theme.accent, marginTop: 6 }]} />}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       <ScrollView ref={scrollRef} style={styles.messages} contentContainerStyle={styles.messagesContent} keyboardShouldPersistTaps="handled" onScrollBeginDrag={() => setMenuOpen(false)}>
         {messages.map((message, index) => message.role === 'iris' && message.imageUrl
           ? <ImageBubble key={message.id || `img-${index}`} message={message} themeMode={themeMode} refreshUrl={() => refreshImage(message.imageBucket, message.imagePath)} />
@@ -840,6 +910,7 @@ export default function ChatScreen() {
             : <Bubble key={message.id || `${message.role}-${index}-${lastIris}`} message={message} themeMode={themeMode} />)}
         {isTyping && <View style={styles.typing}><TypingIndicator themeMode={themeMode} /></View>}
       </ScrollView>
+      {bootNeeded && <BootScreen needsConsent={!personaState?.consent} onInitialize={initializeCompanion} />}
       <View style={{ paddingBottom: Platform.OS === 'web' ? 0 : Math.max(insets.bottom, 10) }}><ChatInput onSend={sendMessage} disabled={isTyping} themeMode={themeMode} companionName={companionName} /></View>
     </View>
   );
@@ -892,6 +963,9 @@ const styles = StyleSheet.create({
   facePackSlotLabel: { fontSize: 15, fontWeight: '700' },
   facePackSlotHint: { fontSize: 12, marginTop: 3 },
   facePackAction: { fontSize: 13, fontWeight: '800' },
+  diaryCard: { maxHeight: '80%' },
+  diaryList: { marginTop: 12 },
+  diaryEntry: { borderTopWidth: 1, paddingVertical: 12 },
   consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 },
   consentBox: { fontSize: 18, lineHeight: 20 },
   consentText: { flex: 1, fontSize: 12, lineHeight: 17 },

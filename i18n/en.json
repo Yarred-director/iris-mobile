@@ -110,5 +110,6 @@
   "boot.waking": "> memory core online…",
   "diary.title": "{name}'s diary",
   "diary.empty": "Nothing written yet.",
-  "diary.source": "source"
+  "diary.source": "source",
+  "menu.diary": "📖 {name}'s diary"
 }

@@ -36,7 +36,9 @@ import { beginOrTouchTemporalSession, touchLastPhotoSent } from '../memory/timeC
 import { loadVisualState, persistVisualSignals, selectPotentialVisualPreferences } from '../memory/visualState.js';
 import { attachChatAttachments, discardChatAttachments, prepareChatAttachments } from '../media/chatAttachments.js';
 import { buildAwakeningDirective, evolvePersonaFromExchange, isAwake } from '../persona/awakening.js';
+import { maybeScheduleFacePack } from '../persona/facePack.js';
 import { ensurePersona } from '../persona/personaStore.js';
+import { hasConsent } from './awakenRoutes.js';
 
 const router = Router();
 const MAX_USER_MESSAGE_CHARS = 8000;
@@ -167,6 +169,8 @@ router.post('/chat', async (req, res) => {
       loadRecentChatMessages(req.supabase, userId, 14),
     ]);
     const recentChat = (recentChatRaw || []).filter((item) => !clientMessageId || item.client_message_id !== clientMessageId);
+    // A companion still waking up may only start after the user confirmed age and data consent.
+    if (persona && !isAwake(persona) && !hasConsent(persona)) return res.status(403).json({ error: 'consent_required' });
 
     let queryEmbedding = null;
     const embeddingTask = shouldRunSemanticRecall(message)
@@ -496,6 +500,10 @@ router.post('/chat', async (req, res) => {
       if (failed.length) console.log('[GOVERNANCE_UPDATE_ERRORS]', failed.length);
     });
     const evolvedPersona = pendingPersona ? await pendingPersona : null;
+    if (evolvedPersona && isAwake(evolvedPersona)) {
+      maybeScheduleFacePack(req.supabaseAdmin, { userId, persona: evolvedPersona, physicalIdentity })
+        .catch((error) => console.log('[FACE_PACK_SCHEDULE_ERROR]', error?.message));
+    }
 
     return res.json({
       reply,
