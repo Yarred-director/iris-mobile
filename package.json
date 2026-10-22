@@ -23,7 +23,8 @@
     "test:notifications": "node tools/check-notifications.mjs",
     "test:companion-continuity": "node tools/check-companion-continuity.mjs",
     "test:multimodal-chat": "node tools/check-multimodal-chat.mjs",
-    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing && npm run test:visual-state && npm run test:physical-identity && npm run test:memory-quality && npm run test:cognition && npm run test:people-agents && npm run test:notifications && npm run test:companion-continuity && npm run test:multimodal-chat"
+    "test": "npm run typecheck && npm run lint && npm run check:server && npm run test:image-context && npm run test:live-assistance && npm run test:heat-routing && npm run test:visual-state && npm run test:physical-identity && npm run test:memory-quality && npm run test:cognition && npm run test:people-agents && npm run test:notifications && npm run test:companion-continuity && npm run test:multimodal-chat && npm run test:turn-classifier",
+    "test:turn-classifier": "node tools/check-turn-classifier.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

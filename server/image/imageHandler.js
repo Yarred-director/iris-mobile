@@ -5,6 +5,7 @@ import { generateIrisImage } from './imageGen.js';
 import { extractImageIntent } from './imageIntentDetector.js';
 import { loadUserImageProvider } from './imageProvider.js';
 import { persistVisualSignals } from '../memory/visualState.js';
+import { localizedLine } from '../i18n/localize.js';
 
 const FACE_REFERENCE_FILES = [
   { slot: 'front', name: 'face-front' },
@@ -89,6 +90,7 @@ export async function handleImageRequest({
   physicalIdentity = null,
   activityState = null,
   visualPreferences = [],
+  language = null,
 }) {
   // Select once, before composing any provider-facing identity text. Immediate
   // and scheduled requests share this same authoritative persisted selection.
@@ -125,12 +127,12 @@ export async function handleImageRequest({
 
   const references = await getIrisReferencePhotos(supabase, userId);
   if (!references.length) {
-    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: 'Ešte nemám svoju tvár ako základ. Pridaj mi face reference pack cez menu 📸' };
+    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: await localizedLine('image_face_missing', language) };
   }
 
   const usage = await consumeDailyUsage(supabase, userId, 'image');
   if (!usage.allowed) {
-    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`, usage };
+    return { handled: true, imageUrl: null, imageBucket: null, imagePath: null, irisMessage: await localizedLine('image_daily_limit_reached', language, { used: usage.used, limit: usage.limit }), usage };
   }
 
   console.log('[IMAGE_HANDLER] generation requested', {
@@ -184,7 +186,7 @@ export async function handleImageRequest({
       imageUrl: null,
       imageBucket: null,
       imagePath: null,
-      irisMessage: 'Ojoj, niečo sa pokazilo 🙈 Skús znova o chvíľu!',
+      irisMessage: await localizedLine('image_generation_failed', language),
       usage,
       errorCode: error?.code || 'image_generation_failed',
     };

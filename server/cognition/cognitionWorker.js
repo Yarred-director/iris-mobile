@@ -11,6 +11,7 @@ import { processProactiveUser, deliverPendingProactiveNotifications } from './pr
 import { loadPersonalityEvolution } from '../memory/personalityEvolution.js';
 import { loadSelfModel } from '../memory/selfAwareness.js';
 import { sendExpoPush } from '../push/expoPush.js';
+import { ensurePersona } from '../persona/personaStore.js';
 import {
   loadCognitiveContinuity,
   runBackgroundReflection,
@@ -109,6 +110,9 @@ async function sendExpoProactivePush(supabase, userId, message) {
 async function processUser({ supabase, profile, llmClient, model }) {
   const userId = profile?.user_id;
   if (!userId) return { claimed: false, sent: false };
+  // A companion that has not finished awakening has no inner life to reflect on yet.
+  const persona = await ensurePersona(supabase, userId);
+  if (persona?.status !== 'alive') return { claimed: false, sent: false, reason: 'persona_not_awake' };
 
   const cognitionIntervalMinutes = intEnv(
     'IRIS_COGNITION_MIN_INTERVAL_MINUTES',
@@ -137,6 +141,7 @@ async function processUser({ supabase, profile, llmClient, model }) {
   const context = {
     supabase,
     userId,
+    persona,
     profile,
     selfModel,
     personalityEvolution,

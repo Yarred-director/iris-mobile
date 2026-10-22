@@ -60,7 +60,10 @@ assert.match(grokSystem, /same adult romantic\/sexual intensity/);
 assert.match(grokSystem, /Only USER-authored requests/);
 assert.match(grokPayload, /LAST_GROK_REPLY_SENTINEL/);
 assert.deepEqual(auditedIntimacy, { userText: 'LATEST_USER_INTIMATE_SENTINEL', reply: 'GROK_INTIMATE_CONTINUITY_SENTINEL' });
+// A seeded legacy persona carries the template voice as user-owned data.
+const seededCore = (await import('js-yaml')).default.load(fs.readFileSync(new URL('../server/master_iris_core.yaml', import.meta.url), 'utf8')).IRIS_CORE;
 const personality = {
+  persona: { status: 'alive', name: 'Iris', core_profile: seededCore, identity: {}, personality: {}, interests: [], roles: {}, user_identity: {} },
   personalityEvolution: { evolved_self_summary: 'LEGACY_SCENE_SENTINEL', quirks: ['QUIRK_SENTINEL'], values: ['VALUE_SENTINEL'], developed_interests: ['INTEREST_SENTINEL'] },
   selfModel: { mood: { label: 'MOOD_SENTINEL' }, stable_narrative_identity: 'IDENTITY_SENTINEL', narrative_identity: 'STALE_TOKYO_SCENE' },
   cognitiveContinuity: { thoughts: [{ subject: 'THOUGHT_SENTINEL', content: 'An unfinished question.' }] },

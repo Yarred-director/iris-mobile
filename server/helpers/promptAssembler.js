@@ -24,6 +24,8 @@ import { currentPeopleDirectory } from '../people/peopleContext.js';
 import { formatHardFactsBlock } from './factualDetector.js';
 
 export function assemblePrompt({
+  persona,
+  awakeningDirective,
   sceneFacts,
   sceneContext,
   visualState,
@@ -44,9 +46,10 @@ export function assemblePrompt({
 }) {
   const parts = [];
 
-  // Core YAML/fallback comes first. Runtime blocks below intentionally have later priority.
+  // Platform rules and the user's persona come first. Runtime blocks below have later priority.
   const coreOriginData = coreOrigin ? [{ narrative: coreOrigin }] : [];
-  parts.push(buildSystemPrompt(coreOriginData, summaries || []));
+  parts.push(buildSystemPrompt({ persona, coreMemories: coreOriginData, summaries: summaries || [] }));
+  if (awakeningDirective) parts.push(awakeningDirective);
 
   parts.push(formatHardFactsBlock(sceneFacts || []));
   parts.push(formatHardSceneContextBlock(sceneContext));
@@ -86,8 +89,6 @@ export function assemblePrompt({
     previousSessionEndedAt: temporalProfile?.previous_session_ended_at,
     sessionGapSeconds: temporalProfile?.session_gap_seconds,
   });
-  if (temporalBlock) parts.push(temporalBlock);
-
   const relationshipBlock = formatRelationshipBlock(relationshipState);
   if (relationshipBlock) parts.push(relationshipBlock);
 
@@ -96,6 +97,9 @@ export function assemblePrompt({
 
   const personalityBlock = buildPersonalityContext({ selfModel, personalityEvolution, cognitiveContinuity });
   if (personalityBlock) parts.push(personalityBlock);
+
+  // Minute-level time changes every turn; keeping it last preserves the cacheable prefix.
+  if (temporalBlock) parts.push(temporalBlock);
 
   if (isFactual) {
     parts.push(

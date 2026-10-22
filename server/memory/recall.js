@@ -75,20 +75,24 @@ export async function loadUserProfile(supabaseClient, userID) {
   }
 }
 
-export async function loadCoreOrigin(supabaseClient) {
+export async function loadCoreOrigin(supabaseClient, userId) {
+  if (!userId) return null;
   const { data, error } = await supabaseClient
     .from('episodic_memory')
     .select('narrative')
+    .eq('user_id', userId)
     .eq('memory_type', 'CORE_ORIGIN')
     .limit(1);
   if (error) return null;
   return data?.[0]?.narrative || null;
 }
 
-export async function loadSummaries(supabaseClient) {
+export async function loadSummaries(supabaseClient, userId) {
+  if (!userId) return [];
   const { data, error } = await supabaseClient
     .from('episodic_memory')
     .select('narrative')
+    .eq('user_id', userId)
     .eq('memory_type', 'SUMMARY')
     .order('created_at', { ascending: false })
     .limit(2);

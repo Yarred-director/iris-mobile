@@ -5,6 +5,7 @@ import { persistRemoteImage, createSignedMediaUrl, isUserOwnedMediaPath } from '
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import { fitImagePrompt, validateImagePrompt } from '../image/imagePromptBudget.js';
 import { loadUserImageProvider, resolveFalImageProvider } from '../image/imageProvider.js';
+import { localizedLine } from '../i18n/localize.js';
 
 const EDIT_ENDPOINTS = Object.freeze({
   openai_gpt_image_2: 'https://fal.run/openai/gpt-image-2/edit',
@@ -104,7 +105,7 @@ async function loadReferenceUrl(person, userId) {
   return null;
 }
 
-async function composePeopleImageIntent({ message, recentChat, context }) {
+async function composePeopleImageIntent({ message, recentChat, context, userName = null }) {
   const client = getLLMClient('openai');
   const physicalIdentity = context.person.metadata?.physical_identity || {};
   const stylePreference = context.person.metadata?.style_preference || null;
@@ -112,7 +113,7 @@ async function composePeopleImageIntent({ message, recentChat, context }) {
     .slice(-6)
     .map((item) => ({
       role: item?.role === 'assistant' ? 'assistant' : 'user',
-      speaker: item?.speaker_name || (item?.role === 'assistant' ? 'Iris' : 'Yarred'),
+      speaker: item?.speaker_name || (item?.role === 'assistant' ? 'Iris' : (userName || 'User')),
       content: clean(item?.content, 600),
     }))
     .filter((item) => item.content);
@@ -284,7 +285,7 @@ async function persistGeneratedVisualAnchor({ supabase, userId, context, result 
   if (error) console.log('[PEOPLE_IMAGE_ANCHOR_ERROR]', error.code || error.message);
 }
 
-export async function handlePeopleImageRequest({ message, userId, supabase, person, recentChat = [] }) {
+export async function handlePeopleImageRequest({ message, userId, supabase, person, recentChat = [], userName = null, language = null }) {
   const context = await loadPeopleImageProfile(supabase, userId, person);
   const usage = await consumeDailyUsage(supabase, userId, 'image');
   if (!usage.allowed) {
@@ -293,13 +294,13 @@ export async function handlePeopleImageRequest({ message, userId, supabase, pers
       imageUrl: null,
       imageBucket: null,
       imagePath: null,
-      caption: `Dnešný limit obrázkov je vyčerpaný (${usage.used}/${usage.limit}).`,
+      caption: await localizedLine('image_daily_limit_reached', language, { used: usage.used, limit: usage.limit }),
       usage,
       person: context.person,
     };
   }
 
-  const intent = await composePeopleImageIntent({ message, recentChat, context });
+  const intent = await composePeopleImageIntent({ message, recentChat, context, userName });
   const referenceUrl = await loadReferenceUrl(context.person, userId);
   const provider = await loadUserImageProvider(getSupabaseAdmin(), userId);
   try {
@@ -330,7 +331,7 @@ export async function handlePeopleImageRequest({ message, userId, supabase, pers
       imageUrl: null,
       imageBucket: null,
       imagePath: null,
-      caption: `${context.person.name} sa mi teraz nepodarilo vytvoriť. Skús to ešte raz o chvíľu.`,
+      caption: await localizedLine('people_image_failed', language, { name: context.person.name }),
       usage,
       provider,
       person: context.person,

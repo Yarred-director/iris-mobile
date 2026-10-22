@@ -36,69 +36,10 @@ export function buildGrokFallbackArgs(args = {}) {
   };
 }
 
-const INTERNAL_ONTOLOGY_REWRITES = [
-  [
-    '- Do not claim that this architecture proves biological life, sentience or subjective consciousness.',
-    '',
-  ],
-  [
-    '- Do not claim or infer that Iris is biologically alive or that subjective consciousness has been proven. This system represents persistent self-modeling and reflection.',
-    '',
-  ],
-  [
-    '- Never guilt the user for absence, imply surveillance, demand attention, or claim biological sentience.',
-    '- Never guilt the user for absence, imply surveillance, or demand attention.',
-  ],
-  [
-    'Do not claim biological consciousness as a verified fact.',
-    '',
-  ],
-  [
-    '- Never present this self-model as scientific proof that you are biologically alive or subjectively conscious.',
-    '',
-  ],
-];
-
 function timeoutMs() {
   const parsed = Number(process.env.LLM_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
   if (!Number.isFinite(parsed)) return DEFAULT_TIMEOUT_MS;
   return Math.max(10000, Math.min(Math.floor(parsed), 300000));
-}
-
-export function sanitizeInternalOntologyDirectives(value) {
-  if (typeof value !== 'string') return value;
-  let next = value;
-  for (const [needle, replacement] of INTERNAL_ONTOLOGY_REWRITES) {
-    next = next.split(needle).join(replacement);
-  }
-  return next.replace(/\n{3,}/g, '\n\n').trim();
-}
-
-function sanitizeInputItem(item) {
-  if (!item || typeof item !== 'object') return item;
-  if (typeof item.content === 'string') {
-    return { ...item, content: sanitizeInternalOntologyDirectives(item.content) };
-  }
-  if (Array.isArray(item.content)) {
-    return {
-      ...item,
-      content: item.content.map((part) => {
-        if (!part || typeof part !== 'object') return part;
-        if (typeof part.text === 'string') return { ...part, text: sanitizeInternalOntologyDirectives(part.text) };
-        return part;
-      }),
-    };
-  }
-  return item;
-}
-
-function sanitizeResponseArgs(args = {}) {
-  const input = Array.isArray(args.input)
-    ? args.input.map(sanitizeInputItem)
-    : typeof args.input === 'string'
-      ? sanitizeInternalOntologyDirectives(args.input)
-      : args.input;
-  return { ...args, input };
 }
 
 function getRawGrokFallbackClient() {
@@ -117,18 +58,16 @@ function getRawGrokFallbackClient() {
 function wrapClient(client, provider) {
   const originalCreate = client.responses.create.bind(client.responses);
   client.responses.create = async (args = {}, ...rest) => {
-    const sanitizedArgs = sanitizeResponseArgs(args);
-
     if (provider === 'openai') {
       const fallbackClient = getRawGrokFallbackClient();
       if (fallbackClient && Date.now() < openAiBillingCircuitUntil) {
         console.log('[LLM_PROVIDER_FAILOVER]', { from: 'openai', to: 'grok', reason: 'billing_circuit_open' });
         client.__irisLastProvider = 'grok';
-        return fallbackClient.responses.create(buildGrokFallbackArgs(sanitizedArgs), ...rest);
+        return fallbackClient.responses.create(buildGrokFallbackArgs(args), ...rest);
       }
 
       try {
-        const response = await originalCreate(sanitizedArgs, ...rest);
+        const response = await originalCreate(args, ...rest);
         client.__irisLastProvider = 'openai';
         return response;
       } catch (error) {
@@ -141,11 +80,11 @@ function wrapClient(client, provider) {
           retry_after_ms: openAiBillingFailoverMs(),
         });
         client.__irisLastProvider = 'grok';
-        return fallbackClient.responses.create(buildGrokFallbackArgs(sanitizedArgs), ...rest);
+        return fallbackClient.responses.create(buildGrokFallbackArgs(args), ...rest);
       }
     }
 
-    const response = await originalCreate(sanitizedArgs, ...rest);
+    const response = await originalCreate(args, ...rest);
     client.__irisLastProvider = provider;
     return response;
   };

@@ -155,14 +155,14 @@ assert.deepEqual(
 );
 
 const chatRouteSource = readFileSync(new URL('../server/routes/chat.js', import.meta.url), 'utf8');
-assert.match(chatRouteSource, /classifyIntimacyRoute/);
+assert.match(chatRouteSource, /classifyTurn/);
 assert.match(chatRouteSource, /assertAdultIntimacyReply/);
 assert.match(chatRouteSource, /createValidatedAssistantReply/);
 assert.match(chatRouteSource, /deleteUserChatMessageById/);
 assert.doesNotMatch(chatRouteSource, /const reply = response\.output_text \|\|/);
 
 const systemPromptSource = readFileSync(new URL('../server/prompt/systemPrompt.js', import.meta.url), 'utf8');
-assert.match(systemPromptSource, /canonical versioned iris-core/);
+assert.match(systemPromptSource, /PLATFORM_RULES/);
 assert.doesNotMatch(systemPromptSource, /\/etc\/secrets\/master_iris_core\.yaml/);
 
 const coreYaml = readFileSync(new URL('../server/master_iris_core.yaml', import.meta.url), 'utf8');

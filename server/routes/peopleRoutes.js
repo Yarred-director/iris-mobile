@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { looksLikeImageRequest } from '../memory/memoryPolicy.js';
+import { classifyTurn } from '../behavior/turnClassifier.js';
 import { requireUserId } from '../middleware/auth.js';
 import { consumeDailyUsage } from '../middleware/usageLimit.js';
 import {
@@ -17,6 +17,7 @@ import {
   runPeopleAgentExchange,
 } from '../people/peopleAgents.js';
 import { runWithPeopleDirectory } from '../people/peopleContext.js';
+import { ensurePersona, userDisplayName } from '../persona/personaStore.js';
 import { handlePeopleImageRequest, resolvePeopleImageTarget } from '../people/peopleImages.js';
 import { classifyPeopleRelayRequest } from '../people/peopleRelay.js';
 
@@ -46,11 +47,21 @@ router.post('/chat', async (req, res, next) => {
 
     const directory = await loadPeopleDirectory(req.supabase, userId);
     if (!directory.length) return runWithPeopleDirectory(directory, () => next());
+    const persona = await ensurePersona(req.supabaseAdmin, userId);
 
     // Direct addressing works with both "@Myno ..." and an unambiguous leading
     // "Myno ..." / alias. The resolver already enforces a name boundary.
     const invocation = resolvePeopleAgentInvocation(rawMessage, directory);
-    const imageTarget = looksLikeImageRequest(rawMessage)
+    const turnContext = await getSceneContext(req.supabase, 'global');
+    const turnHistory = await loadRecentChatMessages(req.supabase, userId, 8);
+    // Classified once here and reused by the main chat route so a turn costs one classification.
+    req.turnClassification = await classifyTurn({
+      text: rawMessage,
+      sceneContext: turnContext || {},
+      conversationHistory: turnHistory,
+      attachmentCount: Array.isArray(req.body?.attachment_ids) ? req.body.attachment_ids.length : 0,
+    });
+    const imageTarget = req.turnClassification.wants_companion_image
       ? resolvePeopleImageTarget(rawMessage, directory)
       : null;
     const relay = !invocation && !imageTarget
@@ -105,6 +116,8 @@ router.post('/chat', async (req, res, next) => {
         supabase: req.supabase,
         person: imageTarget,
         recentChat,
+        userName: userDisplayName(persona),
+        language: req.turnClassification?.language,
       });
       const reply = visibleAgentReply(imageResult.person?.name || imageTarget.name, imageResult.caption);
       const savedAssistantMessage = await saveChatMessage(req.supabase, {
@@ -181,7 +194,7 @@ router.post('/chat', async (req, res, next) => {
     // shared-chat message visibly shows both the relay and the person's answer.
     const relayInvocation = {
       person: relay.person,
-      agentMessage: `[Iris relays Yarred's message] ${relay.relayMessage}`,
+      agentMessage: `[Iris relays ${userDisplayName(persona) || 'the user'}'s message] ${relay.relayMessage}`,
       matchedAlias: relay.person.name,
       explicit: true,
     };

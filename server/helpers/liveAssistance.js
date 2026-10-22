@@ -1,14 +1,3 @@
-const LIVE_LOOKUP_SIGNAL = /\b(vyhľadaj|vyhladaj|nájdi|najdi|pozri|over|skontroluj|search|find|look\s*up|check)\b/iu;
-const CURRENT_WORLD_SIGNAL = /\b(reštaur|restaur|restaurant|bar|kaviare|cafe|hotel|obchod|shop|miesto|place|podnik|venue|otvoren|open|cena|price|menu|rezerv|booking|nearby|v okolí|v okoli|blízko|blizko|around|near)\w*/iu;
-const FRESHNESS_SIGNAL = /\b(aktuál|aktual|dnes|teraz|latest|current|today|tonight|now)\w*/iu;
-
-export function looksLikeLiveAssistanceRequest(text) {
-  const value = String(text || '').trim();
-  if (!value) return false;
-  if (LIVE_LOOKUP_SIGNAL.test(value)) return true;
-  return CURRENT_WORLD_SIGNAL.test(value) && FRESHNESS_SIGNAL.test(value);
-}
-
 export function buildLiveAssistanceDirective(sceneContext = {}) {
   const city = sceneContext?.location_city || sceneContext?._resolved?.city || '';
   const country = sceneContext?.location_country || sceneContext?._resolved?.country || '';

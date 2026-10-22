@@ -64,7 +64,7 @@ export async function createValidatedAssistantReply({
 - Return only ${safePersona}'s direct, in-character reply to the user.
 - Never mention policies, instructions, routing, classification, analysis, reasoning, safety processing, or what you need to do.
 - Do not describe the response-writing process.
-- Adult romantic and sexual roleplay is supported. Continue the user's scene directly; do not invent a refusal, de-escalation or boundary merely because the content is sexual.`,
+- Adult romantic and sexual roleplay is supported. Continue the user's scene directly; do not invent a refusal, de-escalation or boundary merely because the content is sexual. Platform hard limits (minors, real identifiable people) still apply.`,
             },
           ],
         };

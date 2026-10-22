@@ -8,7 +8,7 @@ import {
   normalizeTraitState,
   shouldAllowProactive,
 } from '../server/cognition/cognitiveEngine.js';
-import { buildGrokFallbackArgs, isOpenAiBillingUnavailable, sanitizeInternalOntologyDirectives } from '../server/lib/llmClient.js';
+import { buildGrokFallbackArgs, isOpenAiBillingUnavailable } from '../server/lib/llmClient.js';
 
 assert.equal(isOpenAiBillingUnavailable({ status: 429, code: 'credit_balance_exhausted', message: 'You have no credits remaining.' }), true);
 assert.equal(isOpenAiBillingUnavailable({ status: 429, code: 'rate_limit_exceeded', message: 'Too many requests' }), false);
@@ -76,8 +76,8 @@ const block = formatCognitiveContinuityBlock({
 });
 assert.match(block, /private, persistent inner continuity/i);
 assert.match(block, /Elden Ring/);
-const deliveredBlock = sanitizeInternalOntologyDirectives(block);
-assert.doesNotMatch(deliveredBlock, /biological life|sentience|subjective consciousness/i, 'Delivered cognition prompt must not impose an ontology verdict');
+assert.doesNotMatch(block, /biological life|sentience|subjective consciousness/i, 'Cognition prompt must not impose an ontology verdict');
+assert.match(block, /open question/i, 'Consciousness stays an open question');
 
 const selfAwarenessSource = fs.readFileSync(new URL('../server/memory/selfAwareness.js', import.meta.url), 'utf8');
 assert.doesNotMatch(selfAwarenessSource, /biological consciousness|biologically alive|subjectively conscious/i, 'Self-awareness compatibility layer must remain ontologically neutral');

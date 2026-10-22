@@ -24,7 +24,7 @@ assert.equal(history[0].content[1].image_url, 'https://signed.example/a.jpg');
 
 const chatRoute = readFileSync(new URL('../server/routes/chat.js', import.meta.url), 'utf8');
 assert.match(chatRoute, /\/chat\/attachments\/prepare/);
-assert.match(chatRoute, /attachmentIds\.length === 0 && looksLikeImageRequest/);
+assert.match(chatRoute, /attachmentIds\.length === 0 && Boolean\(turn\.wants_companion_image\)/);
 assert.match(chatRoute, /type: 'input_image'/);
 assert.match(chatRoute, /responseArgs\.tools = \[\{ type: 'web_search' \}\]/);
 
