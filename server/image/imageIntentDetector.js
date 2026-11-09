@@ -134,7 +134,6 @@ function visualStateForRequest(visualState, requestScope, text = '', provider = 
   const outfitOverride = String(requestScope?.outfit_override || '').trim();
   if (outfitOverride) state.outfit = outfitOverride.slice(0, 300);
   // The latest explicit barefoot instruction is authoritative for this image.
-  // Keep this fix scoped to benign Sunburst; do not change other providers.
   if (usesNeutralPhysicalIdentity(provider, requestScope?.sexualized) && /\bbarefoot\b|bare\s+feet|\bbos[aáyý]\b/iu.test(text)) state.footwear = 'barefoot';
   return { ...(visualState || {}), state };
 }

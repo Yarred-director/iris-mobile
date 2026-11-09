@@ -27,7 +27,8 @@ for (const value of ['175 cm', 'tall and slim', 'long slender', 'narrow defined 
 assert.doesNotMatch(neutral, /chest and upper bust/);
 
 for (const provider of ['grok_imagine_2', 'kling_o3', 'qwen_image_max', 'nano-banana-2']) {
-  assert.equal(serializePhysicalIdentityForImageProvider({ physicalIdentity: identity, provider, sexualized: false }), body);
+  assert.equal(serializePhysicalIdentityForImageProvider({ physicalIdentity: identity, provider, sexualized: false }), neutral, 'Every provider receives the same non-sexual projection');
+  assert.equal(serializePhysicalIdentityForImageProvider({ physicalIdentity: identity, provider, sexualized: true }), body);
 }
 for (const sexualized of [true, undefined, null]) {
   assert.equal(serializePhysicalIdentityForImageProvider({ physicalIdentity: identity, provider: 'openai_gpt_image_2', sexualized }), body, 'Only explicit nonsexual requests use neutral serialization');
@@ -47,7 +48,7 @@ assert.match(partial, /175 cm/);
 assert.match(partial, /long slender/);
 assert.throws(() => validatePhysicalIdentityImagePrompt({ prompt: '32DD breasts', provider: 'openai_gpt_image_2', sexualized: false }), { code: 'image_identity_serialization_invalid' });
 validatePhysicalIdentityImagePrompt({ prompt: '32DD breasts', provider: 'openai_gpt_image_2', sexualized: true });
-validatePhysicalIdentityImagePrompt({ prompt: '32DD breasts', provider: 'grok_imagine_2', sexualized: false });
+assert.throws(() => validatePhysicalIdentityImagePrompt({ prompt: '32DD breasts', provider: 'grok_imagine_2', sexualized: false }), { code: 'image_identity_serialization_invalid' });
 
 let capturedContext;
 function composer({ scene, scope = 'standalone', outfit = null, fail = false, empty = false, sexualized = false }) {
@@ -87,19 +88,13 @@ try {
     validateImagePrompt(provider, payload.body.prompt);
     assert.match(payload.body.prompt, /clearly adult woman/i);
     assert.match(payload.body.prompt, /references.*facial|facial identity|facial views/i);
-    if (provider === 'openai_gpt_image_2') {
-      assert.equal(payload.url, 'https://fal.run/openai/gpt-image-2.5/sunburst/edit');
-      assert.doesNotMatch(JSON.stringify(capturedContext.USER_DEFINED_PHYSICAL_IDENTITY), anatomical);
-      assert.doesNotMatch(payload.body.prompt, anatomical);
-      assert.match(payload.body.prompt, /augmented big chest/);
-      assert.match(payload.body.prompt, /tall and slim/);
-      assert.match(payload.body.prompt, /ordinary cotton pajamas.*sleepy morning/);
-    } else {
-      assert.equal(capturedContext.USER_DEFINED_PHYSICAL_IDENTITY.body_description, body.slice(0, 700));
-      assert.match(intent.prompt, /32DD/);
-      assert.match(intent.prompt, /high-projection/);
-      assert.ok(intent.prompt.includes(body), 'Other providers must receive the exact existing identity directive');
-    }
+    if (provider === 'openai_gpt_image_2') assert.equal(payload.url, 'https://fal.run/openai/gpt-image-2.5/sunburst/edit');
+    // Kling rejected the canonical clinical wording in production (2026-11-09); all providers now share the projection.
+    assert.doesNotMatch(JSON.stringify(capturedContext.USER_DEFINED_PHYSICAL_IDENTITY), anatomical);
+    assert.doesNotMatch(payload.body.prompt, anatomical);
+    assert.match(payload.body.prompt, /augmented big chest/);
+    assert.match(payload.body.prompt, /tall and slim/);
+    assert.match(payload.body.prompt, /ordinary cotton pajamas.*sleepy morning/);
   }
   for (const mode of [{ fail: true }, { empty: true }]) {
     const intent = await extractImageIntent({ text: 'send me a sleepy morning photo from bed', provider: 'openai_gpt_image_2', physicalIdentity: identity, llmClient: composer({ scene: bedtime, ...mode }), model: 'mock' });

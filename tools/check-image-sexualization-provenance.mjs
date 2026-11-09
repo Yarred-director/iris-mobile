@@ -26,14 +26,14 @@ try {
         assert.equal(result.imageDiagnostics.scopeSexualized, scopeSexualized);
         assert.equal(result.imageDiagnostics.composerExplicit, composerExplicit);
         assert.equal(result.imageDiagnostics.sexualizationSource, scopeSexualized ? (composerExplicit ? 'both' : 'scope') : (composerExplicit ? 'composer' : 'none'));
-        assert.equal(result.imageDiagnostics.physicalIdentitySerialization, provider === 'openai_gpt_image_2' && !result.sexualized ? 'neutral' : 'canonical');
+        assert.equal(result.imageDiagnostics.physicalIdentitySerialization, !result.sexualized ? 'neutral' : 'canonical');
         assert.equal(result.imageDiagnostics.scopeSignal, 'specified_scene');
         assert.equal(result.imageDiagnostics.compositionStatus, 'completed');
         assert.ok(!input.some((item) => item.content.includes('Prejdem ti prstami')), 'A newly specified scene must not feed old sexual touching into the composer');
         assert.match(result.prompt, /black leggings.*sports crop top/);
         assert.match(result.prompt, /barefoot/);
         assert.match(result.prompt, /dashboard/);
-        if (provider === 'openai_gpt_image_2' && !result.sexualized) {
+        if (!result.sexualized) {
           assert.match(result.prompt, /augmented big chest/);
           assert.doesNotMatch(result.prompt, /32DD|breasts/i);
         } else assert.ok(result.prompt.includes(identity.body_description));

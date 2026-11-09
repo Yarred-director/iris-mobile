@@ -1,7 +1,10 @@
 // Image-only projection. Canonical traits/body_description are never written or
 // modified here. Other providers and sexualized requests retain their raw text.
-export function usesNeutralPhysicalIdentity(provider, sexualized) {
-  return provider === 'openai_gpt_image_2' && sexualized === false;
+// Every provider's content checker reads clinical anatomy as sexual, so any non-sexual request
+// gets the photographic projection. Sexualized requests keep the canonical description.
+// The provider argument stays for call-site compatibility; behavior is provider-independent.
+export function usesNeutralPhysicalIdentity(_provider, sexualized) {
+  return sexualized === false;
 }
 
 const TRAIT_LABELS = Object.freeze({
@@ -61,8 +64,8 @@ export function serializePhysicalIdentityForImageProvider({ physicalIdentity, pr
 // This is a draft validation, never a provider-policy retry or scene rewrite.
 export function validatePhysicalIdentityImagePrompt({ prompt, provider, sexualized }) {
   if (usesNeutralPhysicalIdentity(provider, sexualized) && /\bbreasts?\b|\b\d{2,3}\s*[A-K]{1,3}\b|\b[A-K]{1,3}[- ]cup\b|\bcup[- ]?size\b|\bhigh[- ]projection\b/gi.test(prompt)) {
-    throw Object.assign(new Error('Nonsexual Sunburst draft contains anatomical identity wording'), { code: 'image_identity_serialization_invalid' });
+    throw Object.assign(new Error('Nonsexual draft contains anatomical identity wording'), { code: 'image_identity_serialization_invalid' });
   }
 }
 
-export const NEUTRAL_PHYSICAL_IDENTITY_PROMPT_RULE = 'The supplied physical identity is already serialized for an ordinary non-sexual Sunburst photo. Preserve its visual silhouette without adding cup sizes, breast terminology, surgical details or chest-focused anatomy. Do not infer nudity, intimate posing or exposure from body shape. Describe the requested ordinary scene and complete clothing.';
+export const NEUTRAL_PHYSICAL_IDENTITY_PROMPT_RULE = 'The supplied physical identity is already serialized for an ordinary non-sexual photo. Preserve its visual silhouette without adding cup sizes, breast terminology, surgical details or chest-focused anatomy. Do not infer nudity, intimate posing or exposure from body shape. Describe the requested ordinary scene and complete clothing.';

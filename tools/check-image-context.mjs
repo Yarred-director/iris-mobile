@@ -54,11 +54,13 @@ const result = await extractImageIntent({
 assert.ok(Array.isArray(capturedInput), 'Image prompt composer did not receive Responses API input.');
 const joined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
 assert.match(joined, /black lace swimwear/, 'Resolved current outfit was not passed into image prompt synthesis.');
-assert.match(joined, /full augmented c-cup bust/, 'User-defined body identity was not passed into image prompt synthesis.');
+// Non-sexual photos receive the photographic projection of the same body identity for every provider.
+assert.match(joined, /augmented [a-z]+ chest/, 'User-defined body identity was not passed into image prompt synthesis.');
+assert.doesNotMatch(joined, /c-cup/, 'Clinical cup sizes must not reach a non-sexual image prompt.');
 assert.match(joined, /default personal-photo framing is three_quarter/i, 'Non-closeup default framing rule is missing.');
 assert.match(joined, /current_activity_state/i, 'Activity continuity was not passed into image synthesis.');
 assert.match(result.prompt.toLowerCase(), /mandatory user-defined body identity/, 'Final image prompt must deterministically include persistent body identity.');
-assert.match(result.prompt.toLowerCase(), /full augmented c-cup bust/, 'Final image prompt lost the user-defined body description.');
+assert.match(result.prompt.toLowerCase(), /augmented [a-z]+ chest/, 'Final image prompt lost the user-defined body description.');
 assert.match(result.prompt.toLowerCase(), /mandatory current visual state/, 'Final image prompt must deterministically include current visual state.');
 assert.match(result.prompt.toLowerCase(), /black lace swimwear/, 'Final image prompt lost the exact established outfit/color.');
 assert.match(result.prompt.toLowerCase(), /three-quarter composition/, 'Default/body-oriented framing was not injected into final prompt.');
@@ -274,7 +276,7 @@ assert.equal(await loadUserImageProvider(providerStore, 'user-1'), 'grok_imagine
 const qwenPrompt = compactQwenMaxPrompt(result.prompt, 3);
 assert.ok(qwenPrompt.length <= 800, 'Qwen Image Max prompt must stay within the provider limit.');
 assert.match(qwenPrompt, /Images 1-3 show the same clearly adult woman/i, 'Qwen prompt must identify all three references as one person.');
-assert.match(qwenPrompt, /full augmented C-cup bust/i, 'Qwen compaction must preserve user-defined physical identity.');
+assert.match(qwenPrompt, /augmented [a-z]+ chest/i, 'Qwen compaction must preserve user-defined physical identity.');
 assert.match(qwenPrompt, /black lace swimwear/i, 'Qwen compaction must preserve current outfit continuity.');
 assert.match(qwenPrompt, /balcony at sunset/i, 'Qwen compaction must preserve the requested scene.');
 
