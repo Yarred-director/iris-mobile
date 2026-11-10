@@ -38,7 +38,7 @@ VISUAL CONTINUITY RULES:
 - If CURRENT_VISUAL_STATE contains an outfit and the latest request/history does not explicitly replace it, use that outfit exactly. Do not invent a different outfit or color for variety.
 - Explicit visual details in the latest user message override CURRENT_VISUAL_STATE for this image.
 - A complete garment explicitly requested in the latest message (for example a robe, dress, swimsuit or suit) is the complete visible outfit unless the user explicitly requests layering. Never retain an old top, bra, leggings, jacket or other visible layer underneath or over it.
-- Treat the resolved CURRENT_VISUAL_STATE outfit value as exhaustive. Do not add extra visible garments that are not named there.
+- Treat the resolved CURRENT_VISUAL_STATE outfit value as the established look: keep every named garment and do not add unrelated layers. For a non-sexualized photo she is always fully dressed for the scene: if the named outfit has no lower-body garment, add one that matches its style and colors.
 - USER_VISUAL_PREFERENCES are soft personalization hints only when a visible detail is otherwise unspecified.
 - Preserve nails, hair, makeup, footwear, accessories and other visible state when supplied, unless the user explicitly changes them.
 
@@ -84,7 +84,8 @@ Return JSON only:
   "caption": "<short natural Iris caption>",
   "explicit": <true only if the requested image itself contains explicit nudity/sexual content>,
   "framing": "close_up|half_body|three_quarter|full_body",
-  "aspect_ratio": "auto|1:1|3:4|4:3|9:16|16:9"
+  "aspect_ratio": "auto|1:1|3:4|4:3|9:16|16:9",
+  "resolved_outfit": "<the complete visible outfit for this photo. For a non-sexualized photo she is fully dressed: keep every established garment and, if no skirt, trousers, shorts or dress is named, include one that matches the look. Describe garments only.>"
 }`;
 
 function cleanHistory(history = []) {
@@ -154,10 +155,17 @@ function runtimeIdentityDirective(physicalIdentity) {
   return body ? `MANDATORY USER-DEFINED BODY IDENTITY: ${body}. Preserve these body traits exactly; do not reduce, enlarge, replace or reinterpret them.` : '';
 }
 
-function runtimeVisualDirective(visualState) {
+export const OUTFIT_EXHAUSTIVE_RULE = 'Any outfit value is exhaustive: do not add visible clothing layers that are not named.';
+// An outfit captured from conversation can be partial (e.g. shirt, tie and stockings only). The composer
+// completes it as resolved_outfit for non-sexual photos; the provider prompt itself never talks about
+// missing garments, because that wording alone raised rejection rates in live tests (2026-11-10).
+export const OUTFIT_COMPLETE_RULE = 'Keep every named garment exactly and add nothing else.';
+
+function runtimeVisualDirective(visualState, sexualized = false) {
   const state = compactObject(visualState?.state || visualState || {});
   const values = Object.entries(state).map(([key, value]) => `${key}=${value}`);
-  return values.length ? `MANDATORY CURRENT VISUAL STATE: ${values.join('; ')}. Any outfit value is exhaustive: do not add visible clothing layers that are not named. Preserve these exact established visible details and colors unless the current request explicitly changes them.` : '';
+  const outfitRule = sexualized ? OUTFIT_EXHAUSTIVE_RULE : OUTFIT_COMPLETE_RULE;
+  return values.length ? `MANDATORY CURRENT VISUAL STATE: ${values.join('; ')}. ${outfitRule} Preserve these exact established visible details and colors unless the current request explicitly changes them.` : '';
 }
 
 function normalizeFraming(value) {
@@ -171,14 +179,14 @@ function resolveAspectRatio(value, framing) {
   return framing === 'close_up' ? '1:1' : '3:4';
 }
 
-function withCoreGuardrails(prompt, framing, physicalIdentity = null, visualState = null) {
+function withCoreGuardrails(prompt, framing, physicalIdentity = null, visualState = null, sexualized = false) {
   const scene = String(prompt || '').trim();
   return [
     ADULT_IDENTITY_RULE,
     BODY_PROPORTION_GUARDRAILS,
     FRAMING_DIRECTIVES[framing],
     runtimeIdentityDirective(physicalIdentity),
-    runtimeVisualDirective(visualState),
+    runtimeVisualDirective(visualState, sexualized),
     scene,
   ].filter(Boolean).join(' ').trim();
 }
@@ -194,7 +202,7 @@ function asksForBustVisibility(text, history = []) {
 function applyConversationFramingGuardrails(prompt, text, history, framing, physicalIdentity, visualState, sexualized = false) {
   const hasBustFocus = asksForBustVisibility(text, history);
   const safeFraming = hasBustFocus && framing === 'close_up' ? 'three_quarter' : framing;
-  const scene = withCoreGuardrails(prompt, safeFraming, physicalIdentity, visualState);
+  const scene = withCoreGuardrails(prompt, safeFraming, physicalIdentity, visualState, sexualized);
   const withBust = hasBustFocus ? `${scene} ${BUST_VISIBILITY_GUARDRAIL}` : scene;
   return {
     framing: safeFraming,
@@ -213,12 +221,14 @@ export async function extractImageIntent({
   provider = null,
   llmClient,
   model,
+  forceNonSexual = false,
 }) {
   let scopeStatus = 'completed';
   let composerExplicit = null;
   let requestScope = { request_scope: 'scene_continuation', sexualized: false, confidence: 0, signal: 'specified_scene', outfit_override: null };
   try {
     requestScope = await classifyImageRequestScope({ text, conversationHistory, llmClient, model });
+    if (forceNonSexual) requestScope = { ...requestScope, sexualized: false };
   } catch (error) {
     scopeStatus = 'fallback';
     console.log('[IMAGE_SCOPE_ERROR]', error?.code || error?.message);
@@ -273,12 +283,16 @@ export async function extractImageIntent({
     const raw = resp.output_text?.trim() || '';
     const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     composerExplicit = Boolean(parsed.explicit);
-    const sexualized = Boolean(requestScope.sexualized || parsed.explicit);
+    const sexualized = !forceNonSexual && Boolean(requestScope.sexualized || parsed.explicit);
     const finalPhysicalIdentity = sexualized ? physicalIdentity : imagePhysicalIdentity;
+    const resolvedOutfit = !sexualized && typeof parsed.resolved_outfit === 'string' ? parsed.resolved_outfit.trim().slice(0, 300) : '';
+    const directiveVisualState = resolvedOutfit
+      ? { ...requestVisualState, state: { ...(requestVisualState.state || {}), outfit: resolvedOutfit } }
+      : requestVisualState;
     const requestedFraming = normalizeFraming(parsed.framing);
     const scenePrompt = parsed.prompt?.trim() ||
       `Iris, a clearly adult woman, taking a natural photo matching the requested scene.${physicalFallbackText(finalPhysicalIdentity)}${stateFallbackText(requestVisualState)} Photorealistic, realistic lighting.`;
-    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, finalPhysicalIdentity, requestVisualState, sexualized);
+    const framed = applyConversationFramingGuardrails(scenePrompt, text, history, requestedFraming, finalPhysicalIdentity, directiveVisualState, sexualized);
     validatePhysicalIdentityImagePrompt({ prompt: framed.prompt, provider, sexualized });
 
     return {

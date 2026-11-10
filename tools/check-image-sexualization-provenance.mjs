@@ -34,7 +34,7 @@ try {
         assert.match(result.prompt, /barefoot/);
         assert.match(result.prompt, /dashboard/);
         if (!result.sexualized) {
-          assert.match(result.prompt, /augmented big chest/);
+          assert.doesNotMatch(result.prompt, /augmented big chest|bombshell/);
           assert.doesNotMatch(result.prompt, /32DD|breasts/i);
         } else assert.ok(result.prompt.includes(identity.body_description));
         assert.doesNotMatch(JSON.stringify(result.imageDiagnostics), /32DD|palubovke|Prejdem|https:/);

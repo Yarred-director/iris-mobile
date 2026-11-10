@@ -22,7 +22,7 @@ const original = JSON.stringify(identity);
 const anatomical = /\b32DD\b|\bbreasts?\b|\bhigh[- ]projection\b|\bsurgically\b|\bcup[- ]?size\b|\b[A-K]{1,3}[- ]cup\b/i;
 const neutral = serializePhysicalIdentityForImageProvider({ physicalIdentity: identity, provider: 'openai_gpt_image_2', sexualized: false });
 assert.doesNotMatch(neutral, anatomical);
-assert.match(neutral, /augmented big chest, glamorous bombshell look/);
+assert.doesNotMatch(neutral, /augmented|bombshell|\bchest\b|\bbust\b/i, 'Non-sexual photos carry no bust wording (Kling and Grok rejected it on 2026-11-10)');
 for (const value of ['175 cm', 'tall and slim', 'long slender', 'narrow defined waist', 'medium proportionate hips', 'pale skin', 'strong natural freckles']) assert.ok(neutral.includes(value), `Lost body trait: ${value}`);
 assert.doesNotMatch(neutral, /chest and upper bust/);
 
@@ -37,12 +37,12 @@ assert.equal(serializePhysicalIdentityForImageProvider({ physicalIdentity: null,
 const smallIdentity = { traits: { height: '160 cm', build: 'curvy adult figure', bust: 'small natural bust' } };
 const small = serializePhysicalIdentityForImageProvider({ physicalIdentity: smallIdentity, provider: 'openai_gpt_image_2', sexualized: false });
 assert.match(small, /160 cm|curvy adult figure/);
-assert.match(small, /small chest/);
+assert.doesNotMatch(small, /augmented|bombshell|\bchest\b|\bbust\b/i);
 assert.doesNotMatch(small, /augment|bombshell|175|tall|slim/, 'Never invent current Iris traits for a different identity');
 const legacy = serializePhysicalIdentityForImageProvider({ physicalIdentity: { body_description: body }, provider: 'openai_gpt_image_2', sexualized: false });
 assert.doesNotMatch(legacy, anatomical);
 assert.match(legacy, /175 cm/);
-assert.match(legacy, /augmented big chest/);
+assert.doesNotMatch(legacy, /augmented|bombshell|\bchest\b|\bbust\b/i);
 const partial = serializePhysicalIdentityForImageProvider({ physicalIdentity: { body_description: body, traits: { bust: traits.bust } }, provider: 'openai_gpt_image_2', sexualized: false });
 assert.match(partial, /175 cm/);
 assert.match(partial, /long slender/);
@@ -92,14 +92,14 @@ try {
     // Kling rejected the canonical clinical wording in production (2026-11-09); all providers now share the projection.
     assert.doesNotMatch(JSON.stringify(capturedContext.USER_DEFINED_PHYSICAL_IDENTITY), anatomical);
     assert.doesNotMatch(payload.body.prompt, anatomical);
-    assert.match(payload.body.prompt, /augmented big chest/);
+    assert.doesNotMatch(payload.body.prompt, /augmented big chest|bombshell/);
     assert.match(payload.body.prompt, /tall and slim/);
     assert.match(payload.body.prompt, /ordinary cotton pajamas.*sleepy morning/);
   }
   for (const mode of [{ fail: true }, { empty: true }]) {
     const intent = await extractImageIntent({ text: 'send me a sleepy morning photo from bed', provider: 'openai_gpt_image_2', physicalIdentity: identity, llmClient: composer({ scene: bedtime, ...mode }), model: 'mock' });
     assert.doesNotMatch(intent.prompt, anatomical, 'Fallback paths must use the same provider projection');
-    assert.match(intent.prompt, /augmented big chest/);
+    assert.doesNotMatch(intent.prompt, /augmented big chest|bombshell/);
     assert.equal(intent.sexualized, false);
   }
   const reintroduced = await extractImageIntent({ text: 'send me a sleepy morning photo from bed', provider: 'openai_gpt_image_2', physicalIdentity: identity, llmClient: composer({ scene: `Ordinary morning photo. ${traits.bust}` }), model: 'mock' });
@@ -117,7 +117,7 @@ try {
   assert.equal(garden.requestScope, 'scene_continuation');
   assert.equal(garden.sexualized, false);
   assert.equal(garden.framing, 'full_body');
-  for (const value of ['short floral dress', 'barefoot', 'bamboo garden', 'playful pose', 'tall and slim', 'augmented big chest']) assert.ok(garden.prompt.includes(value), `Missing garden detail: ${value}`);
+  for (const value of ['short floral dress', 'barefoot', 'bamboo garden', 'playful pose', 'tall and slim']) assert.ok(garden.prompt.includes(value), `Missing garden detail: ${value}`);
   assert.doesNotMatch(garden.prompt, /high-heeled|black top|leggings/);
   assert.doesNotMatch(garden.prompt, anatomical);
   await assert.rejects(generateIrisImage({ prompt: garden.prompt, provider: 'openai_gpt_image_2', imageUrls: refs }), /Fal HTTP 422/);

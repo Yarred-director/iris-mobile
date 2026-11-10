@@ -86,7 +86,11 @@ async function callFal(url, body, label, provider, mode = 'edit') {
   });
   if (!response.ok) {
     // Don't log Fal's raw validation body: it can echo private prompts/URLs.
-    const details = await response.json().catch(() => null);
+    const rawBody = await response.text().catch(() => '');
+    let details = null;
+    try { details = JSON.parse(rawBody); } catch { details = null; }
+    // Providers that moderate the finished image surface it as a bare 502 "upstream request failed"; the
+    // same prompt passes on a later attempt (1 of 4 in live tests), so it is marked retryable moderation.
     const issues = Array.isArray(details?.detail) ? details.detail : [];
     const limitIssue = issues.find((item) =>
       /^(?:prompt: )?size must be between \d+ and \d+$/.test(item?.msg || ''));
@@ -100,7 +104,8 @@ async function callFal(url, body, label, provider, mode = 'edit') {
     error.transport = 'fal';
     error.mode = mode;
     error.validationReason = limitIssue?.msg || null;
-    error.moderationStage = policyIssue ? (policyPath || 'provider_content_checker') : null;
+    const upstreamRejection = response.status === 502 && /upstream request failed/i.test(rawBody);
+    error.moderationStage = policyIssue ? (policyPath || 'provider_content_checker') : upstreamRejection ? 'provider_upstream_rejection' : null;
     error.moderationCategories = policyIssue ? ['content_policy_violation'] : [];
     error.requestId = response.headers.get('x-fal-request-id') || response.headers.get('x-request-id') || null;
     throw error;

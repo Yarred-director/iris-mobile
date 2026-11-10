@@ -55,12 +55,15 @@ assert.ok(Array.isArray(capturedInput), 'Image prompt composer did not receive R
 const joined = capturedInput.map((message) => String(message.content || '')).join('\n').toLowerCase();
 assert.match(joined, /black lace swimwear/, 'Resolved current outfit was not passed into image prompt synthesis.');
 // Non-sexual photos receive the photographic projection of the same body identity for every provider.
-assert.match(joined, /augmented [a-z]+ chest/, 'User-defined body identity was not passed into image prompt synthesis.');
+assert.match(joined, /slim waist and long legs/, 'User-defined body identity was not passed into image prompt synthesis.');
+const identityContext = capturedInput.map((message) => String(message.content || '')).find((content) => content.startsWith('Resolved visual/activity context')) || '';
+assert.doesNotMatch(identityContext.toLowerCase(), /bust|augmented/, 'Bust wording must not reach a non-sexual image prompt.');
+assert.doesNotMatch(result.prompt.toLowerCase(), /c-cup|augmented/, 'Bust wording must not reach the final provider prompt.');
 assert.doesNotMatch(joined, /c-cup/, 'Clinical cup sizes must not reach a non-sexual image prompt.');
 assert.match(joined, /default personal-photo framing is three_quarter/i, 'Non-closeup default framing rule is missing.');
 assert.match(joined, /current_activity_state/i, 'Activity continuity was not passed into image synthesis.');
 assert.match(result.prompt.toLowerCase(), /mandatory user-defined body identity/, 'Final image prompt must deterministically include persistent body identity.');
-assert.match(result.prompt.toLowerCase(), /augmented [a-z]+ chest/, 'Final image prompt lost the user-defined body description.');
+assert.match(result.prompt.toLowerCase(), /slim waist and long legs/, 'Final image prompt lost the user-defined body description.');
 assert.match(result.prompt.toLowerCase(), /mandatory current visual state/, 'Final image prompt must deterministically include current visual state.');
 assert.match(result.prompt.toLowerCase(), /black lace swimwear/, 'Final image prompt lost the exact established outfit/color.');
 assert.match(result.prompt.toLowerCase(), /three-quarter composition/, 'Default/body-oriented framing was not injected into final prompt.');
@@ -276,7 +279,7 @@ assert.equal(await loadUserImageProvider(providerStore, 'user-1'), 'grok_imagine
 const qwenPrompt = compactQwenMaxPrompt(result.prompt, 3);
 assert.ok(qwenPrompt.length <= 800, 'Qwen Image Max prompt must stay within the provider limit.');
 assert.match(qwenPrompt, /Images 1-3 show the same clearly adult woman/i, 'Qwen prompt must identify all three references as one person.');
-assert.match(qwenPrompt, /augmented [a-z]+ chest/i, 'Qwen compaction must preserve user-defined physical identity.');
+assert.match(qwenPrompt, /slim waist and long legs/i, 'Qwen compaction must preserve user-defined physical identity.');
 assert.match(qwenPrompt, /black lace swimwear/i, 'Qwen compaction must preserve current outfit continuity.');
 assert.match(qwenPrompt, /balcony at sunset/i, 'Qwen compaction must preserve the requested scene.');
 

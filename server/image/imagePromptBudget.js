@@ -69,7 +69,7 @@ function compactSections(source) {
       parts.push(`Body identity (preserve exactly): ${body}.`);
       return '';
     })
-    .replace(/MANDATORY CURRENT VISUAL STATE: ([\s\S]*?)\. (?:Any outfit value is exhaustive: do not add visible clothing layers that are not named\. )?Preserve these exact established visible details and colors unless the current request explicitly changes them\./, (_, appearance) => {
+    .replace(/MANDATORY CURRENT VISUAL STATE: ([\s\S]*?)\. (?:Any outfit value is exhaustive: do not add visible clothing layers that are not named\. |Keep every named garment exactly and add nothing else\. )?Preserve these exact established visible details and colors unless the current request explicitly changes them\./, (_, appearance) => {
       parts.push(`Appearance: ${appearance}.`);
       return '';
     })
@@ -91,7 +91,7 @@ export function fitImagePrompt({ provider, prompt, prefix = '', suffix = '' }) {
   const join = (parts) => parts.filter(Boolean).map((part) => part.trim()).join(' ');
   let output = join([prefix, source, suffix]);
   if (imagePromptMetrics(output).utf8Bytes > policy.maxUtf8Bytes) {
-    const guard = 'Iris is a clearly adult woman, never a minor. Preserve facial identity and established body proportions; references define face only. Realistic anatomy and head/body scale. Outfit is exhaustive: no unrequested visible layers. Latest explicit scene details override older appearance.';
+    const guard = 'Iris is a clearly adult woman, never a minor. Preserve facial identity and established body proportions; references define face only. Realistic anatomy and head/body scale. Keep every named garment exactly and add nothing else. Latest explicit scene details override older appearance.';
     const fixed = join([prefix, guard, suffix]);
     const parts = compactSections(source);
     const budget = policy.maxUtf8Bytes - Buffer.byteLength(fixed, 'utf8') - parts.length;

@@ -82,7 +82,7 @@ try {
         assert.match(finalPrompt, /black platform boots/);
         assert.match(finalPrompt, /Tokyo neon ramen stall/);
         assert.match(finalPrompt, /smiling at the camera/);
-        assert.match(finalPrompt, /no unrequested visible layers|do not add visible clothing layers/i);
+        assert.match(finalPrompt, /keep every named garment|do not add visible clothing layers/i);
       }
     }
     for (const count of [1, 2]) {

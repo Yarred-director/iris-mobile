@@ -9,20 +9,12 @@ export function usesNeutralPhysicalIdentity(_provider, sexualized) {
 
 const TRAIT_LABELS = Object.freeze({
   height: 'Height', build: 'Build', legs: 'Legs', waist: 'Waist',
-  hips: 'Hips', bust: 'Silhouette', skin: 'Skin', freckles: 'Freckles',
+  hips: 'Hips', bust: 'Bust', skin: 'Skin', freckles: 'Freckles',
   other: 'Other enduring traits',
 });
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function chestSilhouette(value) {
-  const augmented = /augment|implant/i.test(value);
-  const large = /\b(?:big|large|full|voluminous|ample|high[- ]projection|[3-5]\d\s*(?:DD|[D-K]))\b/i.test(value);
-  const small = /\b(?:small|petite|flat)\b/i.test(value);
-  const size = small ? 'small' : large ? 'big' : 'proportionate';
-  return `${augmented ? 'augmented ' : ''}${size} chest${large && !small ? ', glamorous bombshell look' : ''}, proportionate to her established adult figure`;
 }
 
 function freckleDistribution(value) {
@@ -31,11 +23,17 @@ function freckleDistribution(value) {
 
 // Compatibility with pre-structured identity snapshots. Translate only local
 // anatomical phrases, preserving unrelated height/build/skin/leg information.
+const BUST_WORDING = /\b(?:bust|breasts?|chest|cleavage|cup[- ]size)\b|\b\d{2,3}\s*[A-K]{1,3}\b|\b[A-K]{1,3}[- ]cup\b/i;
+
+// Drops only the clauses that describe the bust, keeping height, build, legs, waist, skin and freckles.
 function neutralLegacyDescription(value) {
-  return value.replace(/[^.;]*\bfreckles\b[^.;]*/gi, (phrase) => freckleDistribution(phrase))
-    .replace(/\b(?:(?:surgically|naturally|very|natural[- ]looking|augmented|full|rounded|round|high[- ]projection|large|big|ample|small|petite)\s*[,/]?\s*|\d{2,3}\s*[A-K]{1,3}\s*[,/]?\s*|[A-K]{1,3}[- ]cup\s*[,/]?\s*)+(?:breasts?|bust|chest)\b/gi, (phrase) => chestSilhouette(phrase))
-    .replace(/\bbreasts?\b/gi, 'chest')
-    .replace(/\b\d{2,3}\s*[A-K]{1,3}\b|\b[A-K]{1,3}[- ]cup\b|\bcup[- ]size\b/gi, 'established chest proportions');
+  const freckles = value.replace(/[^.;]*\bfreckles\b[^.;]*/gi, (phrase) => freckleDistribution(phrase));
+  return freckles
+    .split(/(?<=[.;,])/)
+    .filter((clause) => !BUST_WORDING.test(clause))
+    .join('')
+    .replace(/^[\s,;]+|[\s,;]+$/g, '')
+    .trim();
 }
 
 export function serializePhysicalIdentityForImageProvider({ physicalIdentity, provider, sexualized }) {
@@ -52,9 +50,10 @@ export function serializePhysicalIdentityForImageProvider({ physicalIdentity, pr
   const parts = Object.entries(TRAIT_LABELS).flatMap(([key, label]) => {
     const value = text(traits[key]) || text(physicalIdentity?.[key]) || text(legacyTraits[key]);
     if (!value) return [];
-    const description = key === 'bust' ? chestSilhouette(value)
-      : key === 'freckles' ? freckleDistribution(value)
-        : neutralLegacyDescription(value);
+    // Bust wording of any kind trips provider content checkers on ordinary photos (verified against
+    // Kling and Grok on 2026-11-10); the face references and remaining traits carry her look instead.
+    if (key === 'bust') return [];
+    const description = key === 'freckles' ? freckleDistribution(value) : neutralLegacyDescription(value);
     return [`${label}: ${description}.`];
   });
   return parts.length ? parts.join(' ') : neutralLegacyDescription(body);

@@ -150,14 +150,46 @@ export async function handleImageRequest({
     provider,
   });
 
+  const generate = (prompt, aspectRatio) => generateIrisImage({
+    prompt,
+    imageUrls: references.map((item) => item.url),
+    provider,
+    aspectRatio: aspectRatio || 'auto',
+    userId,
+  });
+
   try {
-    const result = await generateIrisImage({
-      prompt: intent.prompt,
-      imageUrls: references.map((item) => item.url),
-      provider,
-      aspectRatio: intent.aspect_ratio || 'auto',
-      userId,
-    });
+    let result;
+    try {
+      try {
+        result = await generate(intent.prompt, intent.aspect_ratio);
+      } catch (error) {
+        // Output-stage moderation is non-deterministic: the same prompt is worth one more attempt.
+        if (error?.moderationStage !== 'provider_upstream_rejection') throw error;
+        console.log('[IMAGE_HANDLER] upstream rejection, repeating once', { provider, requestId: error.requestId || null });
+        result = await generate(intent.prompt, intent.aspect_ratio);
+      }
+    } catch (error) {
+      if (!error?.moderationStage) throw error;
+      // One conservative recomposition of the same shot after a content-checker rejection: no body
+      // description and a non-sexualized, fully dressed outfit. The face references keep her identity.
+      console.log('[IMAGE_HANDLER] moderation rejection, retrying conservatively', { provider, moderationStage: error.moderationStage, requestId: error.requestId || null });
+      const conservative = await extractImageIntent({
+        text: message,
+        conversationHistory,
+        sceneContext,
+        visualState,
+        physicalIdentity: null,
+        activityState,
+        visualPreferences,
+        provider,
+        llmClient,
+        model,
+        forceNonSexual: true,
+      });
+      if (!conservative) throw error;
+      result = await generate(conservative.prompt, conservative.aspect_ratio);
+    }
     console.log('[IMAGE_HANDLER] generation succeeded', { provider: result.provider, referenceCount: references.length, persisted: Boolean(result.imagePath) });
     return {
       handled: true,
